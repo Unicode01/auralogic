@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; background-color: #f5f5f5; }
+        .container { max-width: 600px; margin: 0 auto; background-color: #fff; }
+        .header { background-color: #673AB7; color: white; padding: 30px 20px; text-align: center; }
+        .header h2 { margin: 0; font-size: 22px; }
+        .content { padding: 30px 20px; }
+        .info-box { background-color: #f8f9fa; padding: 15px; margin: 15px 0; border-radius: 8px; border-left: 4px solid #673AB7; }
+        .info-box p { margin: 5px 0; }
+        .button { display: inline-block; padding: 12px 30px; background-color: #673AB7; color: white; text-decoration: none; border-radius: 6px; font-weight: bold; }
+        .footer { text-align: center; padding: 20px; color: #999; font-size: 12px; border-top: 1px solid #eee; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h2>Welcome to {{.AppName}}</h2>
+        </div>
+        <div class="content">
+            <p>Hi {{.Name}},</p>
+            <p>Welcome! Your account has been successfully created. We are excited to have you on board.</p>
+            <div class="info-box">
+                <p><strong>Email:</strong> {{.Email}}</p>
+            </div>
+            <p>You can now log in and start exploring all the features available to you.</p>
+            <p style="text-align: center; margin: 30px 0;">
+                <a href="{{.AppURL}}" class="button" style="color: white;">Log In</a>
+            </p>
+            <p>If you did not create this account, please ignore this email or contact our support team.</p>
+        </div>
+        <div class="footer">
+            <p>&copy; {{.AppName}}. All rights reserved.</p>
+        </div>
+    </div>
+</body>
+</html>

@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+        .header { background-color: #673AB7; color: white; padding: 20px; text-align: center; }
+        .content { padding: 20px; background-color: #f9f9f9; }
+        .footer { text-align: center; padding: 20px; color: #666; font-size: 12px; }
+        .credentials { background-color: #EDE7F6; padding: 15px; margin: 10px 0; border-radius: 5px; }
+        .warning { background-color: #FFEBEE; padding: 10px; margin: 10px 0; border-radius: 5px; color: #C62828; }
+        .button { display: inline-block; padding: 10px 20px; background-color: #673AB7; color: white; text-decoration: none; border-radius: 5px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h2>🎉 Welcome to AuraLogic</h2>
+        </div>
+        <div class="content">
+            <p>Dear {{.Name}},</p>
+            <p>Your account has been successfully created. Here are your login credentials:</p>
+            <div class="credentials">
+                <p><strong>Email:</strong> {{.Email}}</p>
+                <p><strong>Initial Password:</strong> {{.Password}}</p>
+            </div>
+            <div class="warning">
+                <p><strong>⚠️ Security Notice:</strong> Please change your password immediately after first login!</p>
+            </div>
+            <p style="text-align: center;">
+                <a href="{{.AppURL}}/login" class="button">Login Now</a>
+            </p>
+        </div>
+        <div class="footer">
+            <p>If you did not create an account, please ignore this email.</p>
+            <p>&copy; 2026 AuraLogic. All rights reserved.</p>
+        </div>
+    </div>
+</body>
+</html>
+

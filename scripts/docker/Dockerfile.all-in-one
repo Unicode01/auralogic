@@ -1,0 +1,75 @@
+# ============================================
+# AuraLogic All-in-One Docker Image
+# 包含: Nginx + Frontend (Next.js) + Backend (Go)
+# ============================================
+
+# ----------------
+# 阶段 1: 构建后端
+# ----------------
+FROM golang:1.24-alpine AS backend-builder
+WORKDIR /build
+# 安装 CGO 依赖
+RUN apk add --no-cache gcc musl-dev sqlite-dev
+COPY backend/go.mod backend/go.sum ./
+RUN go mod download
+COPY backend/ ./
+# 使用 CGO 编译，添加 musl libc 兼容标志
+ENV CGO_ENABLED=1
+ENV CGO_CFLAGS="-D_LARGEFILE64_SOURCE"
+RUN go build -o /build/bin/api cmd/api/main.go
+RUN go build -o /build/bin/init_admin scripts/init_admin.go
+
+# ----------------
+# 阶段 2: 构建前端
+# ----------------
+FROM node:18-alpine AS frontend-builder
+WORKDIR /build
+COPY frontend/package.json frontend/package-lock.json* ./
+RUN npm install
+COPY frontend/ ./
+# 覆盖前端配置为构建脚本生成的版本
+COPY docker-build/next.config.js ./next.config.js
+COPY docker-build/frontend.env.production ./.env.production
+ARG NEXT_PUBLIC_API_URL
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+RUN npm run build
+
+# ----------------
+# 阶段 3: 最终镜像
+# ----------------
+FROM node:18-alpine
+
+# 安装必要工具 (包含 SQLite 运行时库和 Redis)
+RUN apk add --no-cache nginx ca-certificates tzdata supervisor netcat-openbsd sqlite-libs musl redis \
+    && mkdir -p /run/nginx /var/log/nginx /var/lib/redis
+
+WORKDIR /app
+
+# 复制后端二进制
+COPY --from=backend-builder /build/bin/api /app/backend/api
+COPY --from=backend-builder /build/bin/init_admin /app/backend/init_admin
+
+# 复制后端模板文件
+COPY --from=backend-builder /build/templates /app/backend/templates
+
+# 复制前端构建产物 (standalone 模式)
+COPY --from=frontend-builder /build/.next/standalone /app/frontend/
+COPY --from=frontend-builder /build/.next/static /app/frontend/.next/static
+COPY --from=frontend-builder /build/public /app/frontend/public
+
+# 创建必要目录
+RUN mkdir -p /app/backend/config /app/backend/data /app/backend/logs /app/backend/uploads
+
+# 复制构建脚本生成的配置文件
+COPY docker-build/config.json /app/backend/config/config.json
+COPY docker-build/admin.json /app/backend/config/admin.json
+
+# 复制运行时配置
+COPY docker-build/nginx.conf /etc/nginx/nginx.conf
+COPY docker-build/supervisord.conf /etc/supervisord.conf
+COPY docker-build/entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
+EXPOSE 80
+
+ENTRYPOINT ["/app/entrypoint.sh"]

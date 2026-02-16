@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; background-color: #f5f5f5; }
+        .container { max-width: 600px; margin: 0 auto; background-color: #fff; }
+        .header { background-color: #4CAF50; color: white; padding: 30px 20px; text-align: center; }
+        .header h2 { margin: 0; font-size: 22px; }
+        .content { padding: 30px 20px; }
+        .info-box { background-color: #f8f9fa; padding: 15px; margin: 15px 0; border-radius: 8px; border-left: 4px solid #4CAF50; }
+        .info-box p { margin: 5px 0; }
+        .button { display: inline-block; padding: 12px 30px; background-color: #4CAF50; color: white; text-decoration: none; border-radius: 6px; font-weight: bold; }
+        .footer { text-align: center; padding: 20px; color: #999; font-size: 12px; border-top: 1px solid #eee; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h2>订单提交成功</h2>
+        </div>
+        <div class="content">
+            <p>您好！</p>
+            <p>您的订单已成功提交，以下是订单详情：</p>
+            <div class="info-box">
+                <p><strong>订单号：</strong>{{.OrderNo}}</p>
+                <p><strong>创建时间：</strong>{{.CreatedAt}}</p>
+            </div>
+            <p>请尽快完成付款，以便我们为您处理订单。</p>
+            <p style="text-align: center; margin: 30px 0;">
+                <a href="{{.AppURL}}" class="button" style="color: white;">查看订单</a>
+            </p>
+        </div>
+        <div class="footer">
+            <p>&copy; {{.AppName}}. 保留所有权利。</p>
+            <p>此邮件由系统自动发送，请勿直接回复。</p>
+        </div>
+    </div>
+</body>
+</html>
