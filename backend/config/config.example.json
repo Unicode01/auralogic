@@ -1,0 +1,181 @@
+{
+    "app": {
+        "name": "AuraLogic",
+        "env": "development",
+        "port": 8080,
+        "url": "http://localhost:3000",
+        "debug": true,
+        "default_theme": "system"
+    },
+    "database": {
+        "driver": "postgres",
+        "host": "localhost",
+        "port": 5432,
+        "name": "auralogic",
+        "user": "postgres",
+        "password": "postgres",
+        "ssl_mode": "disable",
+        "max_idle_conns": 10,
+        "max_open_conns": 100,
+        "conn_max_lifetime": 3600
+    },
+    "redis": {
+        "host": "localhost",
+        "port": 6379,
+        "password": "",
+        "db": 0,
+        "pool_size": 10
+    },
+    "jwt": {
+        "secret": "please_change_this_to_random_32_characters_or_more",
+        "expire_hours": 24,
+        "refresh_expire_hours": 168
+    },
+    "oauth": {
+        "google": {
+            "enabled": false,
+            "client_id": "",
+            "client_secret": "",
+            "redirect_url": "http://localhost:8080/api/user/auth/oauth/google/callback"
+        },
+        "github": {
+            "enabled": false,
+            "client_id": "",
+            "client_secret": "",
+            "redirect_url": "http://localhost:8080/api/user/auth/oauth/github/callback"
+        }
+    },
+    "smtp": {
+        "enabled": false,
+        "host": "smtp.gmail.com",
+        "port": 587,
+        "user": "",
+        "password": "",
+        "from_email": "noreply@yourdomain.com",
+        "from_name": "AuraLogic"
+    },
+    "security": {
+        "ip_header": "",
+        "trusted_proxies": [],
+        "cors": {
+            "allowed_origins": [
+                "http://localhost:3000",
+                "http://localhost:3001"
+            ],
+            "allowed_methods": [
+                "GET",
+                "POST",
+                "PUT",
+                "PATCH",
+                "DELETE",
+                "OPTIONS"
+            ],
+            "allowed_headers": [
+                "Origin",
+                "Content-Type",
+                "Accept",
+                "Authorization",
+                "X-API-Key",
+                "X-API-Secret"
+            ],
+            "max_age": 86400
+        },
+        "login": {
+            "allow_password_login": true,
+            "allow_registration": true,
+            "require_email_verification": false
+        },
+        "password_policy": {
+            "min_length": 8,
+            "require_uppercase": true,
+            "require_lowercase": true,
+            "require_number": true,
+            "require_special": false
+        },
+        "captcha": {
+            "provider": "none",
+            "site_key": "",
+            "secret_key": "",
+            "enable_for_login": false,
+            "enable_for_register": false,
+            "enable_for_serial_verify": false
+        }
+    },
+    "rate_limit": {
+        "enabled": true,
+        "api": 1000,
+        "user_login": 10,
+        "user_request": 60,
+        "admin_request": 200
+    },
+    "log": {
+        "level": "info",
+        "format": "json",
+        "output": "stdout",
+        "file_path": "logs/app.log"
+    },
+    "order": {
+        "no_prefix": "ORD",
+        "auto_cancel_hours": 72,
+        "currency": "CNY",
+        "stock_display": {
+            "mode": "exact",
+            "low_stock_threshold": 10,
+            "high_stock_threshold": 50
+        },
+        "virtual_delivery_order": "random"
+    },
+    "magic_link": {
+        "expire_minutes": 15,
+        "max_uses": 1
+    },
+    "form": {
+        "expire_hours": 24
+    },
+    "upload": {
+        "dir": "uploads",
+        "max_size": 5242880,
+        "allowed_types": [".jpg", ".jpeg", ".png", ".gif", ".webp"]
+    },
+    "ticket": {
+        "enabled": true,
+        "categories": ["订单问题", "支付问题", "售后服务", "技术支持", "其他问题"],
+        "template": "",
+        "max_content_length": 0,
+        "auto_close_hours": 0,
+        "attachment": {
+            "enable_image": true,
+            "enable_voice": true,
+            "max_image_size": 5242880,
+            "max_voice_size": 10485760,
+            "max_voice_duration": 60,
+            "allowed_image_types": [".jpg", ".jpeg", ".png", ".gif", ".webp"],
+            "retention_days": 0
+        }
+    },
+    "serial": {
+        "enabled": true
+    },
+    "customization": {
+        "primary_color": "",
+        "logo_url": "",
+        "favicon_url": "",
+        "page_rules": []
+    },
+    "email_notifications": {
+        "user_register": false,
+        "order_created": false,
+        "order_paid": false,
+        "order_shipped": false,
+        "order_completed": false,
+        "order_cancelled": false,
+        "order_resubmit": false,
+        "ticket_created": false,
+        "ticket_admin_reply": false,
+        "ticket_user_reply": false,
+        "ticket_resolved": false
+    },
+    "analytics": {
+        "enabled": false
+    }
+}

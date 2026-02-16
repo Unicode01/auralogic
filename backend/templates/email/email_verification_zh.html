@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; background-color: #f5f5f5; }
+        .container { max-width: 600px; margin: 0 auto; background-color: #fff; }
+        .header { background-color: #673AB7; color: white; padding: 30px 20px; text-align: center; }
+        .header h2 { margin: 0; font-size: 22px; }
+        .content { padding: 30px 20px; }
+        .info-box { background-color: #f8f9fa; padding: 15px; margin: 15px 0; border-radius: 8px; border-left: 4px solid #673AB7; }
+        .info-box p { margin: 5px 0; }
+        .button { display: inline-block; padding: 12px 30px; background-color: #673AB7; color: white; text-decoration: none; border-radius: 6px; font-weight: bold; }
+        .footer { text-align: center; padding: 20px; color: #999; font-size: 12px; border-top: 1px solid #eee; }
+        .note { color: #666; font-size: 13px; margin-top: 20px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h2>验证您的邮箱</h2>
+        </div>
+        <div class="content">
+            <p>尊敬的 {{.Name}}，您好！</p>
+            <p>感谢您注册 {{.AppName}}！请点击下方按钮验证您的邮箱地址以激活账户。</p>
+            <div class="info-box">
+                <p><strong>注册邮箱：</strong>{{.Email}}</p>
+            </div>
+            <p style="text-align: center; margin: 30px 0;">
+                <a href="{{.VerifyURL}}" class="button" style="color: white;">验证邮箱</a>
+            </p>
+            <p class="note">如果按钮无法点击，请复制以下链接到浏览器中打开：</p>
+            <p class="note" style="word-break: break-all;">{{.VerifyURL}}</p>
+            <p class="note">此链接将在 24 小时后失效。如果您没有注册过 {{.AppName}}，请忽略此邮件。</p>
+        </div>
+        <div class="footer">
+            <p>&copy; {{.AppName}}. 保留所有权利。</p>
+            <p>此邮件由系统自动发送，请勿直接回复。</p>
+        </div>
+    </div>
+</body>
+</html>

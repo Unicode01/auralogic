@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8">
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+        }
+
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .header {
+            background-color: #FF9800;
+            color: white;
+            padding: 20px;
+            text-align: center;
+        }
+
+        .content {
+            padding: 20px;
+            background-color: #f9f9f9;
+        }
+
+        .footer {
+            text-align: center;
+            padding: 20px;
+            color: #666;
+            font-size: 12px;
+        }
+
+        .warning {
+            background-color: #FFF3E0;
+            padding: 15px;
+            margin: 10px 0;
+            border-left: 4px solid #FF9800;
+        }
+
+        .button {
+            display: inline-block;
+            padding: 10px 20px;
+            background-color: #FF9800;
+            color: white;
+            text-decoration: none;
+            border-radius: 5px;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <div class="header">
+            <h2>⚠️ Order Information Needs Correction</h2>
+        </div>
+        <div class="content">
+            <p>Dear Customer,</p>
+            <p>Your order (<strong>{{.OrderNo}}</strong>) information needs to be resubmitted.</p>
+            <div class="warning">
+                <p><strong>Reason:</strong> {{.Reason}}</p>
+            </div>
+            <p>Please click the button below to resubmit your shipping information:</p>
+            <p style="text-align: center;">
+                <a href="{{.FormURL}}" class="button">Resubmit Information</a>
+            </p>
+        </div>
+        <div class="footer">
+            <p>If you have any questions, please contact customer service.</p>
+            <p>&copy; 2026 AuraLogic. All rights reserved.</p>
+        </div>
+    </div>
+</body>
+
+</html>

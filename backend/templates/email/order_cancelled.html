@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8">
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+        }
+
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .header {
+            background-color: #f44336;
+            color: white;
+            padding: 20px;
+            text-align: center;
+        }
+
+        .content {
+            padding: 20px;
+            background-color: #f9f9f9;
+        }
+
+        .footer {
+            text-align: center;
+            padding: 20px;
+            color: #666;
+            font-size: 12px;
+        }
+
+        .order-info {
+            background-color: white;
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 5px;
+        }
+
+        .reason-box {
+            background-color: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 10px;
+            margin: 10px 0;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <div class="header">
+            <h2>❌ Order Cancelled</h2>
+        </div>
+        <div class="content">
+            <p>Dear Customer,</p>
+            <p>Your order (<strong>{{.OrderNo}}</strong>) has been cancelled.</p>
+            <div class="order-info">
+                <p><strong>Order Number:</strong> {{.OrderNo}}</p>
+                <p><strong>Cancelled At:</strong> {{.CancelledAt}}</p>
+            </div>
+            {{if .Reason}}
+            <div class="reason-box">
+                <p><strong>Cancellation Reason:</strong></p>
+                <p>{{.Reason}}</p>
+            </div>
+            {{end}}
+            <p>If you have any questions, please contact customer service.</p>
+            <p>Thank you for your support!</p>
+        </div>
+        <div class="footer">
+            <p>&copy; 2026 AuraLogic. All rights reserved.</p>
+        </div>
+    </div>
+</body>
+
+</html>

@@ -1,0 +1,212 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+    :root {
+        --background: 0 0% 96%;
+        --foreground: 0 0% 10%;
+        --card: 0 0% 100%;
+        --card-foreground: 0 0% 10%;
+        --popover: 0 0% 100%;
+        --popover-foreground: 0 0% 10%;
+        --primary: 217.2 91% 50%;
+        --primary-foreground: 0 0% 100%;
+        --secondary: 0 0% 90%;
+        --secondary-foreground: 0 0% 10%;
+        --muted: 0 0% 92%;
+        --muted-foreground: 0 0% 45%;
+        --accent: 0 0% 92%;
+        --accent-foreground: 0 0% 10%;
+        --destructive: 0 84.2% 60.2%;
+        --destructive-foreground: 0 0% 100%;
+        --border: 0 0% 89%;
+        --input: 0 0% 89%;
+        --ring: 217.2 91% 50%;
+        --radius: 0.5rem;
+    }
+
+    .dark {
+        --background: 222.2 84% 4.9%;
+        --foreground: 210 40% 98%;
+        --card: 222.2 84% 4.9%;
+        --card-foreground: 210 40% 98%;
+        --popover: 222.2 84% 4.9%;
+        --popover-foreground: 210 40% 98%;
+        --primary: 217.2 91% 60%;
+        --primary-foreground: 210 40% 98%;
+        --secondary: 217.2 32.6% 17.5%;
+        --secondary-foreground: 210 40% 98%;
+        --muted: 217.2 32.6% 17.5%;
+        --muted-foreground: 215 20.2% 65.1%;
+        --accent: 217.2 32.6% 17.5%;
+        --accent-foreground: 210 40% 98%;
+        --destructive: 0 62.8% 30.6%;
+        --destructive-foreground: 210 40% 98%;
+        --border: 217.2 32.6% 17.5%;
+        --input: 217.2 32.6% 17.5%;
+        --ring: 224.3 76.3% 48%;
+    }
+}
+
+@layer base {
+    * {
+        @apply border-border;
+    }
+
+    body {
+        @apply bg-background text-foreground;
+    }
+}
+
+@layer utilities {
+
+    /* 自定义工具类 */
+    .text-balance {
+        text-wrap: balance;
+    }
+
+    /* 隐藏滚动条 */
+    .scrollbar-hide {
+        -ms-overflow-style: none;
+        scrollbar-width: none;
+    }
+
+    .scrollbar-hide::-webkit-scrollbar {
+        display: none;
+    }
+
+    /* 渐变文字 */
+    .gradient-text {
+        @apply bg-gradient-to-r from-primary to-purple-600 bg-clip-text text-transparent;
+    }
+}
+
+/* 修复 Radix UI Dialog/Select 滚动锁定问题 */
+/* Radix UI 会在打开 Dialog/Select 时锁定滚动，这会导致问题 */
+/* 因为我们的滚动容器不是 body 而是 main 元素 */
+
+/* 只在有侧边栏布局的页面禁用 body 滚动 */
+/* 使用类名选择器，而不是全局设置 */
+body:has(.sidebar-layout) {
+    overflow: hidden !important;
+    padding-right: 0px !important;
+}
+
+/* 完全禁用 Radix UI 对 body 的样式修改（仅针对有侧边栏的布局） */
+body:has(.sidebar-layout) {
+    pointer-events: auto !important;
+}
+
+/* 确保 Dialog 和 Select 的 Portal 容器配置正确 */
+[data-radix-portal] {
+    pointer-events: none;
+}
+
+[data-radix-portal]>* {
+    pointer-events: auto;
+}
+
+/* 防止 Dialog Overlay 阻止页面滚动 */
+[data-radix-dialog-overlay],
+[data-radix-alert-dialog-overlay] {
+    position: fixed !important;
+}
+
+/* 移动端安全区域适配 - iPhone X 及以上机型 */
+.safe-area-bottom {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.safe-area-top {
+    padding-top: env(safe-area-inset-top, 0px);
+}
+
+/* 移动端底部导航栏样式 */
+@media (max-width: 767px) {
+    /* 主内容区域预留底部导航空间 */
+    .mobile-content-padding {
+        padding-bottom: calc(4rem + env(safe-area-inset-bottom, 0px));
+    }
+}
+
+/* 移动端触摸优化 */
+@media (hover: none) and (pointer: coarse) {
+    /* 增大可点击区域 */
+    .touch-target {
+        min-height: 44px;
+        min-width: 44px;
+    }
+
+    /* 禁用悬停效果（移动端无需） */
+    .no-hover:hover {
+        background-color: transparent;
+    }
+}
+
+/* 自定义滚动条样式 */
+/* Webkit 浏览器 (Chrome, Safari, Edge) */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: hsl(var(--muted));
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+    background: hsl(var(--muted-foreground) / 0.5);
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--muted-foreground) / 0.7);
+}
+
+/* 暗色模式滚动条 */
+.dark::-webkit-scrollbar-track {
+    background: hsl(217.2 32.6% 12%);
+}
+
+.dark::-webkit-scrollbar-thumb {
+    background: hsl(215 20.2% 40%);
+}
+
+.dark::-webkit-scrollbar-thumb:hover {
+    background: hsl(215 20.2% 50%);
+}
+
+/* Firefox */
+* {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--muted-foreground) / 0.5) hsl(var(--muted));
+}
+
+.dark * {
+    scrollbar-color: hsl(215 20.2% 40%) hsl(217.2 32.6% 12%);
+}
+
+/* 付款卡片多语言支持 */
+/* 容器使用 data-locale 属性来控制语言显示 */
+.payment-card-content[data-locale="zh"] .lang-en,
+.payment-card-content[data-locale="en"] .lang-zh {
+    display: none !important;
+}
+
+.payment-card-content[data-locale="zh"] .lang-zh,
+.payment-card-content[data-locale="en"] .lang-en {
+    display: inline !important;
+}
+
+/* 块级元素版本 */
+.payment-card-content[data-locale="zh"] .lang-en-block,
+.payment-card-content[data-locale="en"] .lang-zh-block {
+    display: none !important;
+}
+
+.payment-card-content[data-locale="zh"] .lang-zh-block,
+.payment-card-content[data-locale="en"] .lang-en-block {
+    display: block !important;
+}

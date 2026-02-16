@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; background-color: #f5f5f5; }
+        .container { max-width: 600px; margin: 0 auto; background-color: #fff; }
+        .header { background-color: #673AB7; color: white; padding: 30px 20px; text-align: center; }
+        .header h2 { margin: 0; font-size: 22px; }
+        .content { padding: 30px 20px; }
+        .info-box { background-color: #f8f9fa; padding: 15px; margin: 15px 0; border-radius: 8px; border-left: 4px solid #673AB7; }
+        .info-box p { margin: 5px 0; }
+        .button { display: inline-block; padding: 12px 30px; background-color: #673AB7; color: white; text-decoration: none; border-radius: 6px; font-weight: bold; }
+        .footer { text-align: center; padding: 20px; color: #999; font-size: 12px; border-top: 1px solid #eee; }
+        .note { color: #666; font-size: 13px; margin-top: 20px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h2>Verify Your Email</h2>
+        </div>
+        <div class="content">
+            <p>Hi {{.Name}},</p>
+            <p>Thanks for signing up for {{.AppName}}! Please click the button below to verify your email address and activate your account.</p>
+            <div class="info-box">
+                <p><strong>Email:</strong> {{.Email}}</p>
+            </div>
+            <p style="text-align: center; margin: 30px 0;">
+                <a href="{{.VerifyURL}}" class="button" style="color: white;">Verify Email</a>
+            </p>
+            <p class="note">If the button doesn't work, copy and paste the following link into your browser:</p>
+            <p class="note" style="word-break: break-all;">{{.VerifyURL}}</p>
+            <p class="note">This link will expire in 24 hours. If you didn't sign up for {{.AppName}}, please ignore this email.</p>
+        </div>
+        <div class="footer">
+            <p>&copy; {{.AppName}}. All rights reserved.</p>
+            <p>This is an automated message. Please do not reply directly.</p>
+        </div>
+    </div>
+</body>
+</html>

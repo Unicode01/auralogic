@@ -1,0 +1,61 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+bin/
+dist/
+
+# Test binary
+*.test
+
+# Output of the go coverage tool
+*.out
+
+# Go workspace file
+go.work
+go.work.sum
+
+# Config files with secrets
+config/config.json
+config/config.prod.json
+config/admin.json
+config/docker-compose.json
+*.local.json
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Logs
+logs/
+*.log
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Database
+*.db
+*.sqlite
+*.db-shm
+*.db-wal
+
+# Storage (runtime data)
+storage/payments/
+storage/uploads/
+
+# Uploads (ignore files but keep directory structure)
+uploads/**/*
+!uploads/.gitkeep
+!uploads/products/.gitkeep
+
