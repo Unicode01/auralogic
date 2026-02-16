@@ -63,15 +63,9 @@ AuraLogic 是一个自托管的电商平台，支持实体商品和虚拟商品�
 - **系统设置** - SMTP 邮件、登录策略、验证码、落地页编辑等
 - **操作日志** - 管理员操作记录、邮件发送日志
 
-### 第三方集成
+### API 接入
 
-第三方平台可通过 API 创建订单草稿并获取表单链接：
-
-```
-POST /api/admin/orders/draft  →  返回 form_url，引导用户填写收货信息
-```
-
-用户填写后系统自动创建账号，订单进入待发货状态。
+第三方平台通过 API 密钥（`X-API-Key` + `X-API-Secret`）访问管理端接口（`/api/admin/*`），按分配的权限范围（scopes）操作订单、商品、用户等资源。管理员在后台创建 API 密钥时指定允许的权限和速率限制。
 
 ---
 
@@ -90,8 +84,8 @@ POST /api/admin/orders/draft  →  返回 form_url，引导用户填写收货信
 ### 一键 Docker 部署（推荐）
 
 ```bash
-git clone <your-repo-url>
-cd AuraLogic
+git clone https://github.com/Unicode01/auralogic
+cd auralogic
 bash scripts/build_docker.sh
 ```
 
