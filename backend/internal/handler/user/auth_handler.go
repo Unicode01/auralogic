@@ -580,3 +580,229 @@ func (h *AuthHandler) ResendVerification(c *gin.Context) {
 		"message": "If the email exists, a verification email has been sent.",
 	})
 }
+
+// SendLoginCodeRequest 发送登录验证码请求
+type SendLoginCodeRequest struct {
+	Email        string `json:"email" binding:"required,email"`
+	CaptchaToken string `json:"captcha_token"`
+}
+
+// SendLoginCode 发送邮箱登录验证码
+func (h *AuthHandler) SendLoginCode(c *gin.Context) {
+	cfg := config.GetConfig()
+	if !cfg.SMTP.Enabled {
+		response.BadRequest(c, "Email login is not available")
+		return
+	}
+
+	var req SendLoginCodeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request parameters")
+		return
+	}
+	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
+
+	// 先检查冷却，避免浪费验证码
+	ip := utils.GetRealIP(c)
+	ipKey := fmt.Sprintf("email_login_cooldown:ip:%s", ip)
+	emailKey := fmt.Sprintf("email_login_cooldown:email:%s", req.Email)
+	if n, _ := cache.Exists(ipKey); n > 0 {
+		response.Error(c, 429, response.CodeCooldown, "Please wait 60 seconds before requesting again")
+		return
+	}
+	if n, _ := cache.Exists(emailKey); n > 0 {
+		response.Error(c, 429, response.CodeCooldown, "Please wait 60 seconds before requesting again")
+		return
+	}
+
+	// 验证码校验
+	if h.captchaService.NeedCaptcha("login") {
+		if req.CaptchaToken == "" {
+			response.Error(c, 400, response.CodeParamMissing, "Captcha is required")
+			return
+		}
+		if err := h.captchaService.VerifyCaptcha(req.CaptchaToken, utils.GetRealIP(c)); err != nil {
+			response.Error(c, 400, response.CodeParamError, "Captcha verification failed")
+			return
+		}
+	}
+
+	// 设置冷却
+	cache.Set(ipKey, "1", 60*time.Second)
+	cache.Set(emailKey, "1", 60*time.Second)
+
+	code, err := h.authService.SendLoginCode(req.Email)
+	if err != nil {
+		// 不暴露用户是否存在
+		response.Success(c, gin.H{"message": "If the email is registered, a verification code has been sent"})
+		return
+	}
+
+	// 查找用户locale用于邮件语言
+	db := database.GetDB()
+	var user models.User
+	locale := "en"
+	if err := db.Select("locale").Where("email = ?", req.Email).First(&user).Error; err == nil && user.Locale != "" {
+		locale = user.Locale
+	}
+
+	if h.emailService != nil {
+		go h.emailService.SendLoginCodeEmail(req.Email, code, locale)
+	}
+
+	response.Success(c, gin.H{"message": "If the email is registered, a verification code has been sent"})
+}
+
+// ForgotPasswordRequest 忘记密码请求
+type ForgotPasswordRequest struct {
+	Email        string `json:"email" binding:"required,email"`
+	CaptchaToken string `json:"captcha_token"`
+}
+
+// ForgotPassword 发送密码重置邮件
+func (h *AuthHandler) ForgotPassword(c *gin.Context) {
+	cfg := config.GetConfig()
+	if !cfg.SMTP.Enabled {
+		response.BadRequest(c, "Email service is not available")
+		return
+	}
+
+	var req ForgotPasswordRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request parameters")
+		return
+	}
+	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
+
+	// 冷却检查
+	ip := utils.GetRealIP(c)
+	ipKey := fmt.Sprintf("password_reset_cooldown:ip:%s", ip)
+	emailKey := fmt.Sprintf("password_reset_cooldown:email:%s", req.Email)
+	if n, _ := cache.Exists(ipKey); n > 0 {
+		response.Error(c, 429, response.CodeCooldown, "Please wait 60 seconds before requesting again")
+		return
+	}
+	if n, _ := cache.Exists(emailKey); n > 0 {
+		response.Error(c, 429, response.CodeCooldown, "Please wait 60 seconds before requesting again")
+		return
+	}
+
+	// 验证码校验
+	if h.captchaService.NeedCaptcha("login") {
+		if req.CaptchaToken == "" {
+			response.Error(c, 400, response.CodeParamMissing, "Captcha is required")
+			return
+		}
+		if err := h.captchaService.VerifyCaptcha(req.CaptchaToken, ip); err != nil {
+			response.Error(c, 400, response.CodeParamError, "Captcha verification failed")
+			return
+		}
+	}
+
+	// 设置冷却
+	cache.Set(ipKey, "1", 60*time.Second)
+	cache.Set(emailKey, "1", 60*time.Second)
+
+	// 生成token并发送邮件（不暴露用户是否存在）
+	token, err := h.authService.GeneratePasswordResetToken(req.Email)
+	if err == nil && h.emailService != nil {
+		// 查找用户locale
+		db := database.GetDB()
+		var user models.User
+		locale := "en"
+		if err := db.Select("locale").Where("email = ?", req.Email).First(&user).Error; err == nil && user.Locale != "" {
+			locale = user.Locale
+		}
+		go h.emailService.SendPasswordResetEmail(req.Email, token, locale)
+	}
+
+	response.Success(c, gin.H{"message": "If the email is registered, a password reset link has been sent"})
+}
+
+// ResetPasswordRequest 重置密码请求
+type ResetPasswordRequest struct {
+	Token       string `json:"token" binding:"required"`
+	NewPassword string `json:"new_password" binding:"required,min=8"`
+}
+
+// ResetPassword 使用token重置密码
+func (h *AuthHandler) ResetPassword(c *gin.Context) {
+	var req ResetPasswordRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request parameters")
+		return
+	}
+
+	if err := h.authService.ResetPassword(req.Token, req.NewPassword); err != nil {
+		msg := err.Error()
+		if msg == "Reset token expired or invalid" {
+			response.BadRequest(c, msg)
+			return
+		}
+		response.BadRequest(c, msg)
+		return
+	}
+
+	response.Success(c, gin.H{"message": "Password reset successfully"})
+}
+
+// LoginWithCodeRequest 验证码登录请求
+type LoginWithCodeRequest struct {
+	Email string `json:"email" binding:"required,email"`
+	Code  string `json:"code" binding:"required,len=6"`
+}
+
+// LoginWithCode 使用邮箱验证码登录
+func (h *AuthHandler) LoginWithCode(c *gin.Context) {
+	var req LoginWithCodeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request parameters")
+		return
+	}
+	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
+
+	token, user, err := h.authService.LoginWithCode(req.Email, req.Code)
+	if err != nil {
+		db := database.GetDB()
+		logger.LogLoginAttempt(db, c, req.Email, false, nil)
+		response.Unauthorized(c, err.Error())
+		return
+	}
+
+	user.LastLoginIP = utils.GetRealIP(c)
+	h.authService.UpdateLoginIP(user)
+
+	db := database.GetDB()
+	logger.LogLoginAttempt(db, c, req.Email, true, &user.ID)
+
+	result := gin.H{
+		"user_id": user.ID,
+		"uuid":    user.UUID,
+		"email":   user.Email,
+		"name":    user.Name,
+		"role":    user.Role,
+		"avatar":  user.Avatar,
+		"locale":  user.Locale,
+	}
+
+	if user.IsAdmin() {
+		var perm models.AdminPermission
+		if err := db.Where("user_id = ?", user.ID).First(&perm).Error; err == nil {
+			result["permissions"] = perm.Permissions
+		} else if err == gorm.ErrRecordNotFound {
+			if user.IsSuperAdmin() {
+				result["permissions"] = getAllPermissions()
+			} else {
+				result["permissions"] = []string{}
+			}
+		} else {
+			result["permissions"] = []string{}
+		}
+	}
+
+	response.Success(c, gin.H{
+		"token":      token,
+		"token_type": "Bearer",
+		"user":       result,
+	})
+}

@@ -148,6 +148,7 @@ export function PaymentMethodCard({ orderNo, onPaymentSelected }: PaymentMethodC
                   html={paymentCard.html}
                   title={locale === 'zh' ? '付款信息' : 'Payment Info'}
                   className="payment-card-content"
+                  locale={locale}
                 />
               )}
 

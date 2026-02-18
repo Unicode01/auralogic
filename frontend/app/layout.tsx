@@ -35,11 +35,12 @@ export default function RootLayout({
           locale = navigator.language.toLowerCase().startsWith('zh') ? 'zh' : 'en';
         }
         document.documentElement.lang = locale === 'zh' ? 'zh-CN' : 'en';
+        window.__LOCALE__ = locale;
       } catch (e) {}
     })();
   `;
 
-  // 预加载 app_name 并设置 document.title
+  // 预加载 app_name 并设置 document.title + 预加载主题色避免蓝色闪烁
   const appNameScript = `
     (function() {
       try {
@@ -50,11 +51,20 @@ export default function RootLayout({
         window.__APP_NAME__ = 'AuraLogic';
         document.title = 'AuraLogic';
       }
+      try {
+        var pc = localStorage.getItem('auralogic_primary_color');
+        if (pc) {
+          document.documentElement.style.setProperty('--primary', pc);
+          document.documentElement.style.setProperty('--ring', pc);
+        }
+        var bc = localStorage.getItem('auth_branding_cache');
+        if (bc) window.__AUTH_BRAND__ = JSON.parse(bc);
+      } catch (e) {}
     })();
   `;
 
   return (
-    <html lang="zh-CN" suppressHydrationWarning>
+    <html lang="en" suppressHydrationWarning>
       <head>
         <link rel="icon" href="/favicon.ico" sizes="any" />
         <script dangerouslySetInnerHTML={{ __html: themeScript + localeScript + appNameScript }} />

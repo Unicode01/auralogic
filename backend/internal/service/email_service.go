@@ -97,6 +97,8 @@ func (s *EmailService) loadTemplates() error {
 		"ticket_created",
 		"ticket_reply",
 		"ticket_resolved",
+		"login_code",
+		"password_reset",
 	}
 
 	locales := []string{"zh", "en"}
@@ -356,6 +358,77 @@ func (s *EmailService) SendVerificationEmail(email, name, token, locale string) 
 	}
 
 	return s.QueueEmail(email, subject, content, "user.verification", nil, nil)
+}
+
+// SendLoginCodeEmail 发送登录验证码邮件
+func (s *EmailService) SendLoginCodeEmail(email, code, locale string) error {
+	if !s.cfg.Enabled {
+		log.Printf("Email service is disabled, skipping login code to %s", email)
+		return nil
+	}
+
+	appName := getAppName()
+	locale = resolveLocale(locale)
+
+	var subject string
+	if locale == "zh" {
+		subject = fmt.Sprintf("登录验证码 - %s", appName)
+	} else {
+		subject = fmt.Sprintf("Login Verification Code - %s", appName)
+	}
+
+	data := map[string]interface{}{
+		"Code":    code,
+		"AppName": appName,
+		"AppURL":  s.appURL,
+	}
+
+	content, err := s.renderTemplate("login_code", locale, data)
+	if err != nil {
+		if locale == "zh" {
+			content = fmt.Sprintf("<h2>登录验证码</h2><p>您的验证码是：<strong>%s</strong></p><p>验证码有效期为 10 分钟。</p>", code)
+		} else {
+			content = fmt.Sprintf("<h2>Login Verification Code</h2><p>Your code is: <strong>%s</strong></p><p>This code expires in 10 minutes.</p>", code)
+		}
+	}
+
+	return s.QueueEmail(email, subject, content, "user.login_code", nil, nil)
+}
+
+// SendPasswordResetEmail 发送密码重置邮件
+func (s *EmailService) SendPasswordResetEmail(email, token, locale string) error {
+	if !s.cfg.Enabled {
+		return nil
+	}
+
+	appName := getAppName()
+	locale = resolveLocale(locale)
+
+	var subject string
+	if locale == "zh" {
+		subject = fmt.Sprintf("重置密码 - %s", appName)
+	} else {
+		subject = fmt.Sprintf("Reset Password - %s", appName)
+	}
+
+	resetURL := fmt.Sprintf("%s/reset-password?token=%s", s.appURL, token)
+
+	data := map[string]interface{}{
+		"ResetURL": resetURL,
+		"AppName":  appName,
+		"AppURL":   s.appURL,
+	}
+
+	content, err := s.renderTemplate("password_reset", locale, data)
+	if err != nil {
+		if locale == "zh" {
+			content = fmt.Sprintf("<h2>重置密码</h2><p>请点击以下链接重置您的密码：</p><p><a href=\"%s\">重置密码</a></p><p>此链接将在 30 分钟后失效。</p>", resetURL)
+		} else {
+			content = fmt.Sprintf("<h2>Reset Password</h2><p>Click the link below to reset your password:</p><p><a href=\"%s\">Reset Password</a></p><p>This link expires in 30 minutes.</p>", resetURL)
+		}
+	}
+
+	return s.QueueEmail(email, subject, content, "user.password_reset", nil, nil)
 }
 
 // ========================

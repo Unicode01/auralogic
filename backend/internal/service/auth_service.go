@@ -1,14 +1,17 @@
 package service
 
 import (
+	crand "crypto/rand"
 	"errors"
 	"fmt"
+	"math/big"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"auralogic/internal/config"
 	"auralogic/internal/models"
+	"auralogic/internal/pkg/cache"
 	"auralogic/internal/pkg/jwt"
 	"auralogic/internal/pkg/password"
 	"auralogic/internal/repository"
@@ -264,4 +267,117 @@ func (s *AuthService) GenerateToken(user *models.User) (string, error) {
 	s.userRepo.Update(user)
 
 	return token, nil
+}
+
+// SendLoginCode 生成邮箱登录验证码并存入Redis
+func (s *AuthService) SendLoginCode(email string) (string, error) {
+	email = normalizeEmail(email)
+	user, err := s.userRepo.FindByEmail(email)
+	if err != nil {
+		return "", errors.New("User not found")
+	}
+	if !user.IsActive {
+		return "", errors.New("User account has been disabled")
+	}
+
+	n, err := crand.Int(crand.Reader, big.NewInt(1000000))
+	if err != nil {
+		return "", fmt.Errorf("failed to generate code: %w", err)
+	}
+	code := fmt.Sprintf("%06d", n.Int64())
+
+	if err := cache.Set("email_login_code:"+email, code, 10*time.Minute); err != nil {
+		return "", fmt.Errorf("failed to store login code: %w", err)
+	}
+	return code, nil
+}
+
+// GeneratePasswordResetToken 生成密码重置token并存入Redis
+func (s *AuthService) GeneratePasswordResetToken(email string) (string, error) {
+	email = normalizeEmail(email)
+	user, err := s.userRepo.FindByEmail(email)
+	if err != nil {
+		return "", err
+	}
+	if !user.IsActive {
+		return "", errors.New("User account has been disabled")
+	}
+
+	b := make([]byte, 32)
+	if _, err := crand.Read(b); err != nil {
+		return "", err
+	}
+	token := fmt.Sprintf("%x", b)
+
+	if err := cache.Set("password_reset:"+token, email, 30*time.Minute); err != nil {
+		return "", err
+	}
+	return token, nil
+}
+
+// ResetPassword 使用token重置密码
+func (s *AuthService) ResetPassword(token, newPassword string) error {
+	key := "password_reset:" + token
+	email, err := cache.Get(key)
+	if err != nil {
+		return errors.New("Reset token expired or invalid")
+	}
+
+	user, err := s.userRepo.FindByEmail(email)
+	if err != nil {
+		return errors.New("User not found")
+	}
+
+	policy := s.cfg.Security.PasswordPolicy
+	if err := password.ValidatePasswordPolicy(newPassword, policy.MinLength, policy.RequireUppercase,
+		policy.RequireLowercase, policy.RequireNumber, policy.RequireSpecial); err != nil {
+		return err
+	}
+
+	hashedPassword, err := password.HashPassword(newPassword)
+	if err != nil {
+		return err
+	}
+
+	user.PasswordHash = hashedPassword
+	if err := s.userRepo.Update(user); err != nil {
+		return err
+	}
+
+	_ = cache.Del(key)
+	return nil
+}
+
+// LoginWithCode 使用邮箱验证码登录
+func (s *AuthService) LoginWithCode(email, code string) (string, *models.User, error) {
+	email = normalizeEmail(email)
+	key := "email_login_code:" + email
+
+	storedCode, err := cache.Get(key)
+	if err != nil {
+		return "", nil, errors.New("Verification code expired or invalid")
+	}
+	if storedCode != code {
+		return "", nil, errors.New("Invalid verification code")
+	}
+	_ = cache.Del(key)
+
+	user, err := s.userRepo.FindByEmail(email)
+	if err != nil {
+		return "", nil, errors.New("User not found")
+	}
+	if !user.IsActive {
+		return "", nil, errors.New("User account has been disabled")
+	}
+
+	token, err := jwt.GenerateToken(user.ID, user.Email, user.Role, s.cfg.JWT.ExpireHours)
+	if err != nil {
+		return "", nil, err
+	}
+
+	now := models.NowFunc()
+	user.LastLoginAt = &now
+	s.userRepo.Update(user)
+
+	return token, user, nil
 }

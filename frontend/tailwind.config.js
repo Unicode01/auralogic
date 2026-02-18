@@ -18,6 +18,11 @@ module.exports = {
         'bg-amber-50', 'dark:bg-amber-950',
         'border-amber-200', 'dark:border-amber-800',
         'text-amber-700', 'dark:text-amber-300', 'text-amber-600', 'dark:text-amber-400',
+        // 黄色系 (BEP20等)
+        'from-yellow-50', 'to-amber-50', 'dark:from-yellow-950', 'dark:to-amber-950',
+        'border-yellow-200', 'dark:border-yellow-800',
+        'text-yellow-700', 'dark:text-yellow-300', 'text-yellow-600', 'dark:text-yellow-400',
+        'bg-yellow-100', 'dark:bg-yellow-900',
         // 蓝色系
         'bg-blue-50', 'dark:bg-blue-950',
         'border-blue-200', 'dark:border-blue-800',
@@ -28,6 +33,9 @@ module.exports = {
         'dark:border-gray-700', 'dark:border-gray-600',
         // 渐变
         'bg-gradient-to-r', 'bg-gradient-to-l', 'bg-gradient-to-b', 'bg-gradient-to-t',
+        // 付款卡片动态HTML中使用的其他类
+        'select-all', 'list-inside',
+        'border-muted-foreground/20', 'hover:border-primary/50',
     ],
     theme: {
         container: {

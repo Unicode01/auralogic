@@ -1,6 +1,6 @@
 'use client'
 
-import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react'
+import { createContext, useContext, useState, useEffect, useLayoutEffect, useCallback, ReactNode } from 'react'
 import { updateUserPreferences } from '@/lib/api'
 import { getToken } from '@/lib/auth'
 
@@ -66,39 +66,36 @@ function clearPendingLocale() {
 }
 
 export function LocaleProvider({ children }: { children: ReactNode }) {
-    // 始终使用 'zh' 作为初始值以避免 hydration 错误
-    const [locale, setLocaleState] = useState<Locale>('zh')
+    const [locale, setLocaleState] = useState<Locale>('en')
     const [mounted, setMounted] = useState(false)
 
-    // 客户端挂载后从 localStorage 或浏览器语言同步状态
-    useEffect(() => {
+    // paint 前从 window.__LOCALE__（head 脚本已同步设好）修正语言，零 I/O
+    useLayoutEffect(() => {
         setMounted(true)
-        const storedLocale = getStoredLocale()
+        const w = (window as any).__LOCALE__
+        const correct: Locale = (w === 'zh' || w === 'en') ? w : (getStoredLocale() || getBrowserLocale())
+        if (correct !== 'en') setLocaleState(correct)
+    }, [])
+
+    // API 同步（不阻塞渲染）
+    useEffect(() => {
         const pendingLocale = getPendingLocale()
         const hasToken = !!getToken()
-
-        // Retry a previously failed sync once we have a token.
         if (hasToken && pendingLocale) {
             updateUserPreferences({ locale: pendingLocale })
                 .then(() => clearPendingLocale())
                 .catch(() => {})
         }
-
-        if (storedLocale) {
-            setLocaleState(storedLocale)
-            return
-        }
-
-        // First initialization: use browser locale, persist it, then sync preference.
-        const browserLocale = getBrowserLocale()
-        setLocaleState(browserLocale)
-        setStoredLocale(browserLocale)
-        if (hasToken) {
-            updateUserPreferences({ locale: browserLocale })
-                .then(() => clearPendingLocale())
-                .catch(() => setPendingLocale(browserLocale))
-        } else {
-            setPendingLocale(browserLocale)
+        const storedLocale = getStoredLocale()
+        if (!storedLocale) {
+            const browserLocale = getBrowserLocale()
+            if (hasToken) {
+                updateUserPreferences({ locale: browserLocale })
+                    .then(() => clearPendingLocale())
+                    .catch(() => setPendingLocale(browserLocale))
+            } else {
+                setPendingLocale(browserLocale)
+            }
         }
     }, [])
 
