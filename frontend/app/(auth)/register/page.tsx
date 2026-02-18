@@ -25,6 +25,7 @@ import { getPublicConfig, getCaptcha } from '@/lib/api'
 import { useRouter } from 'next/navigation'
 import { useEffect, useState, useRef } from 'react'
 import { useTheme } from '@/contexts/theme-context'
+import { AuthBrandingPanel } from '@/components/auth-branding-panel'
 
 export default function RegisterPage() {
   const { register: registerUser, isRegistering } = useAuth()
@@ -177,43 +178,7 @@ export default function RegisterPage() {
 
   return (
     <div className="min-h-screen flex">
-      {/* Left branding panel - hidden on mobile */}
-      <div className="hidden lg:flex lg:w-1/2 relative overflow-hidden bg-primary">
-        {/* Background pattern */}
-        <div className="absolute inset-0 opacity-10">
-          <div className="absolute top-0 left-0 w-full h-full"
-            style={{
-              backgroundImage: `radial-gradient(circle at 25% 25%, rgba(255,255,255,0.2) 0%, transparent 50%),
-                               radial-gradient(circle at 75% 75%, rgba(255,255,255,0.15) 0%, transparent 50%)`,
-            }}
-          />
-          <div className="absolute -top-24 -left-24 w-96 h-96 rounded-full border border-white/20" />
-          <div className="absolute -bottom-32 -right-32 w-[500px] h-[500px] rounded-full border border-white/10" />
-          <div className="absolute top-1/2 left-1/4 w-64 h-64 rounded-full border border-white/10" />
-        </div>
-
-        {/* Content */}
-        <div className="relative z-10 flex flex-col justify-between w-full p-12">
-          <div>
-            <h1 className="text-3xl font-bold text-primary-foreground tracking-tight">
-              AuraLogic
-            </h1>
-          </div>
-
-          <div className="space-y-6">
-            <h2 className="text-4xl font-bold text-primary-foreground leading-tight">
-              {locale === 'zh' ? '现代化电商\n管理平台' : 'Modern\nE-commerce\nPlatform'}
-            </h2>
-            <p className="text-primary-foreground/70 text-lg max-w-md leading-relaxed">
-              {t.home.subtitle}
-            </p>
-          </div>
-
-          <p className="text-primary-foreground/50 text-sm">
-            {t.common.copyright}
-          </p>
-        </div>
-      </div>
+      <AuthBrandingPanel />
 
       {/* Right form panel */}
       <div className="flex-1 flex items-center justify-center p-6 sm:p-12 bg-background">

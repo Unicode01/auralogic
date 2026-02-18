@@ -677,7 +677,8 @@ generate_configs() {
     "port": $APP_PORT,
     "env": "$APP_ENV",
     "debug": $APP_DEBUG,
-    "url": "$APP_URL"
+    "url": "$APP_URL",
+    "default_theme": "system"
   },
   "database": {
     "driver": "$DB_DRIVER",
@@ -815,7 +816,15 @@ generate_configs() {
     "primary_color": "",
     "logo_url": "",
     "favicon_url": "",
-    "page_rules": []
+    "page_rules": [],
+    "auth_branding": {
+      "mode": "default",
+      "title": "",
+      "title_en": "",
+      "subtitle": "",
+      "subtitle_en": "",
+      "custom_html": ""
+    }
   },
   "email_notifications": {
     "user_register": false,

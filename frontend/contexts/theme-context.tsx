@@ -84,6 +84,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     if (customization.primary_color) {
       root.style.setProperty('--primary', customization.primary_color)
       root.style.setProperty('--ring', customization.primary_color)
+      localStorage.setItem('auralogic_primary_color', customization.primary_color)
     }
 
     // 更新favicon

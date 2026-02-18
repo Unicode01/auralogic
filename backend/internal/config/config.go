@@ -243,12 +243,23 @@ type EmailNotificationsConfig struct {
 	TicketResolved   bool `json:"ticket_resolved"`    // 工单已解决
 }
 
+// AuthBrandingConfig 认证页品牌面板配置
+type AuthBrandingConfig struct {
+	Mode       string `json:"mode"`        // "default" | "custom"
+	Title      string `json:"title"`       // 默认模式: 标题(zh)
+	TitleEn    string `json:"title_en"`    // 默认模式: 标题(en)
+	Subtitle   string `json:"subtitle"`    // 默认模式: 副标题(zh)
+	SubtitleEn string `json:"subtitle_en"` // 默认模式: 副标题(en)
+	CustomHTML string `json:"custom_html"` // 自定义模式: 完整HTML
+}
+
 // CustomizationConfig 个性化配置
 type CustomizationConfig struct {
-	PrimaryColor string     `json:"primary_color"` // 主题主色调 (HSL格式, 如 "217.2 91% 60%")
-	LogoURL      string     `json:"logo_url"`      // 自定义Logo URL
-	FaviconURL   string     `json:"favicon_url"`   // 自定义Favicon URL
-	PageRules    []PageRule `json:"page_rules"`    // 页面定向规则
+	PrimaryColor string              `json:"primary_color"` // 主题主色调 (HSL格式, 如 "217.2 91% 60%")
+	LogoURL      string              `json:"logo_url"`      // 自定义Logo URL
+	FaviconURL   string              `json:"favicon_url"`   // 自定义Favicon URL
+	PageRules    []PageRule          `json:"page_rules"`    // 页面定向规则
+	AuthBranding AuthBrandingConfig  `json:"auth_branding"` // 认证页品牌面板
 }
 
 // AnalyticsConfig 数据分析配置

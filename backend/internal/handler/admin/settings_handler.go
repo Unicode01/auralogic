@@ -1,13 +1,16 @@
 package admin
 
 import (
+	"bytes"
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"html/template"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"auralogic/internal/config"
@@ -29,6 +32,33 @@ func NewSettingsHandler(db *gorm.DB, cfg *config.Config) *SettingsHandler {
 	}
 }
 
+func (h *SettingsHandler) renderAuthBranding() config.AuthBrandingConfig {
+	ab := h.cfg.Customization.AuthBranding
+	if ab.Mode != "custom" || ab.CustomHTML == "" {
+		return ab
+	}
+	tmpl, err := template.New("ab").Parse(ab.CustomHTML)
+	if err != nil {
+		return ab
+	}
+	appURL := h.cfg.App.URL
+	if appURL == "" {
+		appURL = fmt.Sprintf("http://localhost:%d", h.cfg.App.Port)
+	}
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, map[string]interface{}{
+		"AppName":      h.cfg.App.Name,
+		"AppURL":       appURL,
+		"LogoURL":      h.cfg.Customization.LogoURL,
+		"PrimaryColor": h.cfg.Customization.PrimaryColor,
+		"Year":         time.Now().Year(),
+	}); err != nil {
+		return ab
+	}
+	ab.CustomHTML = buf.String()
+	return ab
+}
+
 // GetPublicConfig 获取公开配置（无需登录）
 func (h *SettingsHandler) GetPublicConfig(c *gin.Context) {
 	defaultTheme := h.cfg.App.DefaultTheme
@@ -46,9 +76,10 @@ func (h *SettingsHandler) GetPublicConfig(c *gin.Context) {
 			"high_stock_threshold": h.cfg.Order.StockDisplay.HighStockThreshold,
 		},
 		"customization": gin.H{
-			"primary_color": h.cfg.Customization.PrimaryColor,
-			"logo_url":      h.cfg.Customization.LogoURL,
-			"favicon_url":   h.cfg.Customization.FaviconURL,
+			"primary_color":  h.cfg.Customization.PrimaryColor,
+			"logo_url":       h.cfg.Customization.LogoURL,
+			"favicon_url":    h.cfg.Customization.FaviconURL,
+			"auth_branding":  h.renderAuthBranding(),
 		},
 		"ticket": gin.H{
 			"enabled":            h.cfg.Ticket.Enabled,
@@ -60,6 +91,7 @@ func (h *SettingsHandler) GetPublicConfig(c *gin.Context) {
 		"serial": gin.H{
 			"enabled": h.cfg.Serial.Enabled,
 		},
+		"smtp_enabled": h.cfg.SMTP.Enabled,
 		"captcha": gin.H{
 			"provider":                 h.cfg.Security.Captcha.Provider,
 			"site_key":                 h.cfg.Security.Captcha.SiteKey,
@@ -164,10 +196,11 @@ func (h *SettingsHandler) GetSettings(c *gin.Context) {
 			"enabled": h.cfg.Serial.Enabled,
 		},
 		"customization": gin.H{
-			"primary_color": h.cfg.Customization.PrimaryColor,
-			"logo_url":      h.cfg.Customization.LogoURL,
-			"favicon_url":   h.cfg.Customization.FaviconURL,
-			"page_rules":    h.cfg.Customization.PageRules,
+			"primary_color":  h.cfg.Customization.PrimaryColor,
+			"logo_url":       h.cfg.Customization.LogoURL,
+			"favicon_url":    h.cfg.Customization.FaviconURL,
+			"page_rules":     h.cfg.Customization.PageRules,
+			"auth_branding":  h.cfg.Customization.AuthBranding,
 		},
 		"email_notifications": h.cfg.EmailNotifications,
 		"analytics": gin.H{
@@ -261,11 +294,12 @@ type UpdateSettingsRequest struct {
 	} `json:"serial,omitempty"`
 
 	Customization struct {
-		Submitted    bool              `json:"_submitted"`
-		PrimaryColor string            `json:"primary_color"`
-		LogoURL      string            `json:"logo_url"`
-		FaviconURL   string            `json:"favicon_url"`
-		PageRules    []config.PageRule `json:"page_rules"`
+		Submitted    bool                      `json:"_submitted"`
+		PrimaryColor string                    `json:"primary_color"`
+		LogoURL      string                    `json:"logo_url"`
+		FaviconURL   string                    `json:"favicon_url"`
+		PageRules    []config.PageRule          `json:"page_rules"`
+		AuthBranding *config.AuthBrandingConfig `json:"auth_branding,omitempty"`
 	} `json:"customization,omitempty"`
 
 	EmailNotifications *config.EmailNotificationsConfig `json:"email_notifications,omitempty"`
@@ -505,12 +539,20 @@ func (h *SettingsHandler) UpdateSettings(c *gin.Context) {
 
 	// Update个性化配置
 	if req.Customization.Submitted {
-		currentConfig["customization"] = map[string]interface{}{
+		custMap := map[string]interface{}{
 			"primary_color": req.Customization.PrimaryColor,
 			"logo_url":      req.Customization.LogoURL,
 			"favicon_url":   req.Customization.FaviconURL,
 			"page_rules":    req.Customization.PageRules,
 		}
+		if req.Customization.AuthBranding != nil {
+			custMap["auth_branding"] = req.Customization.AuthBranding
+		} else if existing, ok := currentConfig["customization"].(map[string]interface{}); ok {
+			if ab, exists := existing["auth_branding"]; exists {
+				custMap["auth_branding"] = ab
+			}
+		}
+		currentConfig["customization"] = custMap
 	}
 
 	// Update邮件通知配置

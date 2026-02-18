@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   getPaymentMethods,
@@ -62,6 +62,7 @@ import {
   Settings,
   RefreshCw,
   Coins,
+  X,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { useLocale } from '@/hooks/use-locale'
@@ -78,6 +79,211 @@ const iconMap: Record<string, any> = {
   Coins,
 }
 
+type ConfigEntry = { key: string; value: any }
+
+function numToPlain(n: number): string {
+  const s = String(n)
+  if (!s.includes('e') && !s.includes('E')) return s
+  return n.toFixed(20).replace(/\.?0+$/, '')
+}
+
+function detectType(v: any): 'string' | 'number' | 'boolean' {
+  if (typeof v === 'boolean') return 'boolean'
+  if (typeof v === 'number') return 'number'
+  return 'string'
+}
+
+function ConfigEditor({ value, onChange, flushRef, t }: { value: string; onChange: (v: string) => void; flushRef?: React.MutableRefObject<(() => string | null) | null>; t: ReturnType<typeof getTranslations> }) {
+  const [entries, setEntries] = useState<ConfigEntry[]>([])
+  const [rawMode, setRawMode] = useState(false)
+  const [rawValue, setRawValue] = useState(value)
+  const skipSync = useRef(false)
+  const [rawNumbers, setRawNumbers] = useState<Record<number, string>>({})
+  const debounceRef = useRef<ReturnType<typeof setTimeout>>()
+  const onChangeRef = useRef(onChange)
+  onChangeRef.current = onChange
+  const pendingJsonRef = useRef<string | null>(null)
+
+  useEffect(() => () => { clearTimeout(debounceRef.current) }, [])
+
+  // Expose flush method to parent
+  useEffect(() => {
+    if (flushRef) {
+      flushRef.current = () => {
+        clearTimeout(debounceRef.current)
+        if (pendingJsonRef.current !== null) {
+          const pending = pendingJsonRef.current
+          onChangeRef.current(pending)
+          pendingJsonRef.current = null
+          return pending
+        }
+        return null
+      }
+    }
+  }, [flushRef])
+
+  // Parse JSON → entries when value changes externally
+  useEffect(() => {
+    if (skipSync.current) { skipSync.current = false; return }
+    try {
+      const obj = JSON.parse(value || '{}')
+      setEntries(Object.entries(obj).map(([k, v]) => ({ key: k, value: v })))
+      setRawValue(value)
+    } catch {
+      setRawMode(true)
+      setRawValue(value)
+    }
+  }, [value])
+
+  const sync = useCallback((next: ConfigEntry[]) => {
+    setEntries(next)
+    skipSync.current = true
+    const lines = next.filter(e => e.key).map(e => {
+      const v = typeof e.value === 'number' ? numToPlain(e.value) : JSON.stringify(e.value)
+      return `  ${JSON.stringify(e.key)}: ${v}`
+    })
+    const json = lines.length ? '{\n' + lines.join(',\n') + '\n}' : '{}'
+    setRawValue(json)
+    pendingJsonRef.current = json
+    clearTimeout(debounceRef.current)
+    debounceRef.current = setTimeout(() => {
+      onChangeRef.current(json)
+      pendingJsonRef.current = null
+    }, 300)
+  }, [])
+
+  const updateEntry = (i: number, field: 'key' | 'value', val: any) => {
+    const next = [...entries]
+    next[i] = { ...next[i], [field]: val }
+    sync(next)
+  }
+
+  const removeEntry = (i: number) => sync(entries.filter((_, idx) => idx !== i))
+
+  const addEntry = () => sync([...entries, { key: '', value: '' }])
+
+  const changeType = (i: number, type: string) => {
+    const next = [...entries]
+    const cur = next[i].value
+    if (type === 'boolean') next[i] = { ...next[i], value: cur === 'true' || cur === true }
+    else if (type === 'number') next[i] = { ...next[i], value: Number(cur) || 0 }
+    else next[i] = { ...next[i], value: String(cur) }
+    sync(next)
+  }
+
+  // Raw JSON mode
+  if (rawMode) {
+    return (
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <Label>{t.admin.pmConfigJson}</Label>
+          <Button variant="ghost" size="sm" onClick={() => {
+            try {
+              const obj = JSON.parse(rawValue || '{}')
+              setEntries(Object.entries(obj).map(([k, v]) => ({ key: k, value: v })))
+              skipSync.current = true
+              onChange(rawValue)
+              setRawMode(false)
+            } catch {
+              toast.error(t.admin.pmInvalidJson)
+            }
+          }}>
+            {t.admin.pmVisualEditor}
+          </Button>
+        </div>
+        <Textarea
+          value={rawValue}
+          onChange={(e) => { setRawValue(e.target.value); onChange(e.target.value) }}
+          rows={10}
+          className="font-mono text-sm"
+        />
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <Label>{t.admin.pmConfigFields}</Label>
+        <Button variant="ghost" size="sm" onClick={() => setRawMode(true)}>
+          {t.admin.pmJsonEditor}
+        </Button>
+      </div>
+
+      {entries.length === 0 && (
+        <p className="text-sm text-muted-foreground py-4 text-center">
+          {t.admin.pmNoFields}
+        </p>
+      )}
+
+      <div className="space-y-2">
+        {entries.map((entry, i) => {
+          const type = detectType(entry.value)
+          return (
+            <div key={i} className="flex items-center gap-2 rounded-lg border p-2 bg-muted/30">
+              <Input
+                value={entry.key}
+                onChange={(e) => updateEntry(i, 'key', e.target.value)}
+                placeholder="key"
+                className="font-mono text-sm w-[35%]"
+              />
+              <Select value={type} onValueChange={(v) => changeType(i, v)}>
+                <SelectTrigger className="w-[90px] text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="string">String</SelectItem>
+                  <SelectItem value="number">Number</SelectItem>
+                  <SelectItem value="boolean">Bool</SelectItem>
+                </SelectContent>
+              </Select>
+              {type === 'boolean' ? (
+                <div className="flex-1 flex items-center gap-2 pl-2">
+                  <Switch
+                    checked={!!entry.value}
+                    onCheckedChange={(v) => updateEntry(i, 'value', v)}
+                  />
+                  <span className="text-xs text-muted-foreground">{String(entry.value)}</span>
+                </div>
+              ) : type === 'number' ? (
+                <Input
+                  value={rawNumbers[i] ?? numToPlain(entry.value)}
+                  onFocus={() => setRawNumbers(p => ({ ...p, [i]: numToPlain(entry.value) }))}
+                  onChange={(e) => {
+                    const raw = e.target.value
+                    if (raw === '' || /^-?\d*\.?\d*$/.test(raw)) {
+                      setRawNumbers(p => ({ ...p, [i]: raw }))
+                      const n = Number(raw)
+                      if (raw !== '' && !isNaN(n)) updateEntry(i, 'value', n)
+                    }
+                  }}
+                  onBlur={() => setRawNumbers(p => { const { [i]: _, ...rest } = p; return rest })}
+                  className="flex-1 font-mono text-sm"
+                />
+              ) : (
+                <Input
+                  value={String(entry.value ?? '')}
+                  onChange={(e) => updateEntry(i, 'value', e.target.value)}
+                  className="flex-1 font-mono text-sm"
+                  placeholder="value"
+                />
+              )}
+              <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => removeEntry(i)}>
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+          )
+        })}
+      </div>
+
+      <Button variant="outline" size="sm" onClick={addEntry} className="w-full">
+        <Plus className="h-4 w-4 mr-1" />
+        {t.admin.pmAddField}
+      </Button>
+    </div>
+  )
+}
+
 export default function PaymentMethodsPage() {
   const { locale } = useLocale()
   const t = getTranslations(locale)
@@ -87,6 +293,7 @@ export default function PaymentMethodsPage() {
   const [isCreateOpen, setIsCreateOpen] = useState(false)
   const [deleteId, setDeleteId] = useState<number | null>(null)
   const [testResult, setTestResult] = useState<string | null>(null)
+  const configFlushRef = useRef<(() => string | null) | null>(null)
 
   // 页面加载时清除缓存并重新获取
   useEffect(() => {
@@ -116,7 +323,7 @@ export default function PaymentMethodsPage() {
   const createMutation = useMutation({
     mutationFn: createPaymentMethod,
     onSuccess: () => {
-      toast.success(locale === 'zh' ? '创建成功' : 'Created successfully')
+      toast.success(t.admin.pmCreatedSuccess)
       queryClient.invalidateQueries({ queryKey: ['paymentMethods'] })
       setIsCreateOpen(false)
       resetForm()
@@ -130,7 +337,7 @@ export default function PaymentMethodsPage() {
     mutationFn: ({ id, data }: { id: number; data: Partial<PaymentMethod> }) =>
       updatePaymentMethod(id, data),
     onSuccess: () => {
-      toast.success(locale === 'zh' ? '更新成功' : 'Updated successfully')
+      toast.success(t.admin.pmUpdatedSuccess)
       queryClient.invalidateQueries({ queryKey: ['paymentMethods'] })
       setEditingMethod(null)
       resetForm()
@@ -143,7 +350,7 @@ export default function PaymentMethodsPage() {
   const deleteMutation = useMutation({
     mutationFn: deletePaymentMethod,
     onSuccess: () => {
-      toast.success(locale === 'zh' ? '删除成功' : 'Deleted successfully')
+      toast.success(t.admin.pmDeletedSuccess)
       queryClient.invalidateQueries({ queryKey: ['paymentMethods'] })
       setDeleteId(null)
     },
@@ -193,7 +400,7 @@ export default function PaymentMethodsPage() {
   const initMutation = useMutation({
     mutationFn: initBuiltinPaymentMethods,
     onSuccess: () => {
-      toast.success(locale === 'zh' ? '内置付款方式已初始化' : 'Built-in methods initialized')
+      toast.success(t.admin.pmBuiltinInitialized)
       queryClient.invalidateQueries({ queryKey: ['paymentMethods'] })
     },
     onError: (error: Error) => {
@@ -238,13 +445,16 @@ export default function PaymentMethodsPage() {
   }
 
   const handleSubmit = () => {
+    // Flush any pending debounced config updates and get the latest value
+    const latestConfig = configFlushRef.current?.() ?? formData.config
+
     const data = {
       name: formData.name,
       description: formData.description,
       type: 'custom' as const,
       icon: formData.icon,
       script: formData.script,
-      config: formData.config,
+      config: latestConfig,
       poll_interval: formData.poll_interval,
     }
 
@@ -260,7 +470,7 @@ export default function PaymentMethodsPage() {
       const config = JSON.parse(formData.config || '{}')
       testMutation.mutate({ script: formData.script, config })
     } catch (e) {
-      toast.error(locale === 'zh' ? '配置JSON格式错误' : 'Invalid config JSON')
+      toast.error(t.admin.pmInvalidConfigJson)
     }
   }
 
@@ -272,8 +482,8 @@ export default function PaymentMethodsPage() {
   if (isLoading) {
     return (
       <div className="space-y-6">
-        <h1 className="text-3xl font-bold">{locale === 'zh' ? '付款方式管理' : 'Payment Methods'}</h1>
-        <div className="text-center py-8">{locale === 'zh' ? '加载中...' : 'Loading...'}</div>
+        <h1 className="text-3xl font-bold">{t.admin.pmTitle}</h1>
+        <div className="text-center py-8">{t.common.loading}</div>
       </div>
     )
   }
@@ -282,19 +492,19 @@ export default function PaymentMethodsPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold">{locale === 'zh' ? '付款方式管理' : 'Payment Methods'}</h1>
+          <h1 className="text-3xl font-bold">{t.admin.pmTitle}</h1>
           <p className="text-muted-foreground mt-1">
-            {locale === 'zh' ? '管理系统付款方式，所有付款方式均使用JS脚本扩展' : 'Manage payment methods with JS script extensions'}
+            {t.admin.pmSubtitle}
           </p>
         </div>
         <div className="flex gap-2">
           <Button variant="outline" onClick={() => initMutation.mutate()}>
             <RefreshCw className="h-4 w-4 mr-2" />
-            {locale === 'zh' ? '初始化内置' : 'Init Built-in'}
+            {t.admin.pmInitBuiltin}
           </Button>
           <Button onClick={() => { resetForm(); setIsCreateOpen(true) }}>
             <Plus className="h-4 w-4 mr-2" />
-            {locale === 'zh' ? '添加付款方式' : 'Add Method'}
+            {t.admin.pmAdd}
           </Button>
         </div>
       </div>
@@ -304,7 +514,7 @@ export default function PaymentMethodsPage() {
         {methods.length === 0 ? (
           <Card>
             <CardContent className="py-12 text-center text-muted-foreground">
-              {locale === 'zh' ? '暂无付款方式，点击"初始化内置"添加默认付款方式' : 'No payment methods. Click "Init Built-in" to add defaults'}
+              {t.admin.pmNoMethods}
             </CardContent>
           </Card>
         ) : (
@@ -328,7 +538,7 @@ export default function PaymentMethodsPage() {
                   <div className="flex items-center gap-4">
                     <div className="flex items-center gap-2">
                       <Label htmlFor={`enabled-${method.id}`} className="text-sm">
-                        {locale === 'zh' ? '启用' : 'Enabled'}
+                        {t.admin.enabled}
                       </Label>
                       <Switch
                         id={`enabled-${method.id}`}
@@ -361,12 +571,10 @@ export default function PaymentMethodsPage() {
         <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>
-              {editingMethod
-                ? (locale === 'zh' ? '编辑付款方式' : 'Edit Payment Method')
-                : (locale === 'zh' ? '添加付款方式' : 'Add Payment Method')}
+              {editingMethod ? t.admin.pmEdit : t.admin.pmAdd}
             </DialogTitle>
             <DialogDescription>
-              {locale === 'zh' ? '配置付款方式的基本信息和扩展脚本' : 'Configure payment method details and extension script'}
+              {t.admin.pmDialogDesc}
             </DialogDescription>
           </DialogHeader>
 
@@ -374,38 +582,38 @@ export default function PaymentMethodsPage() {
             <TabsList className="grid w-full grid-cols-3">
               <TabsTrigger value="basic">
                 <Settings className="h-4 w-4 mr-2" />
-                {locale === 'zh' ? '基本信息' : 'Basic'}
+                {t.admin.pmTabBasic}
               </TabsTrigger>
               <TabsTrigger value="config">
                 <CreditCard className="h-4 w-4 mr-2" />
-                {locale === 'zh' ? '配置' : 'Config'}
+                {t.admin.pmTabConfig}
               </TabsTrigger>
               <TabsTrigger value="script">
                 <Code className="h-4 w-4 mr-2" />
-                {locale === 'zh' ? 'JS脚本' : 'JS Script'}
+                {t.admin.pmTabScript}
               </TabsTrigger>
             </TabsList>
 
             <TabsContent value="basic" className="space-y-4 mt-4">
               <div className="space-y-2">
-                <Label>{locale === 'zh' ? '名称' : 'Name'}</Label>
+                <Label>{t.admin.pmName}</Label>
                 <Input
                   value={formData.name}
                   onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                  placeholder={locale === 'zh' ? '付款方式名称' : 'Payment method name'}
+                  placeholder={t.admin.pmNamePlaceholder}
                 />
               </div>
               <div className="space-y-2">
-                <Label>{locale === 'zh' ? '描述' : 'Description'}</Label>
+                <Label>{t.admin.pmDescription}</Label>
                 <Textarea
                   value={formData.description}
                   onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                  placeholder={locale === 'zh' ? '付款方式描述' : 'Payment method description'}
+                  placeholder={t.admin.pmDescPlaceholder}
                   rows={3}
                 />
               </div>
               <div className="space-y-2">
-                <Label>{locale === 'zh' ? '图标' : 'Icon'}</Label>
+                <Label>{t.admin.pmIcon}</Label>
                 <Select
                   value={formData.icon}
                   onValueChange={(v) => setFormData({ ...formData, icon: v })}
@@ -426,7 +634,7 @@ export default function PaymentMethodsPage() {
                 </Select>
               </div>
               <div className="space-y-2">
-                <Label>{locale === 'zh' ? '轮询检查间隔 (秒)' : 'Poll Interval (seconds)'}</Label>
+                <Label>{t.admin.pmPollInterval}</Label>
                 <Input
                   type="number"
                   min={5}
@@ -436,34 +644,24 @@ export default function PaymentMethodsPage() {
                   placeholder="30"
                 />
                 <p className="text-xs text-muted-foreground">
-                  {locale === 'zh'
-                    ? '自动检查付款状态的时间间隔，建议 30-60 秒。区块链付款建议 30 秒，银行转账建议 60 秒或更长。'
-                    : 'Interval for checking payment status automatically. 30-60 seconds recommended.'}
+                  {t.admin.pmPollIntervalHint}
                 </p>
               </div>
             </TabsContent>
 
             <TabsContent value="config" className="space-y-4 mt-4">
-              <div className="space-y-2">
-                <Label>{locale === 'zh' ? '配置 (JSON格式)' : 'Config (JSON)'}</Label>
-                <Textarea
-                  value={formData.config}
-                  onChange={(e) => setFormData({ ...formData, config: e.target.value })}
-                  placeholder='{"bank_name": "xxx", "account_number": "xxx"}'
-                  rows={10}
-                  className="font-mono text-sm"
-                />
-                <p className="text-xs text-muted-foreground">
-                  {locale === 'zh'
-                    ? '配置项如：银行名称、账号、收款码URL、钱包地址等'
-                    : 'Config fields like: bank name, account number, QR code URL, wallet address, etc.'}
-                </p>
-              </div>
+              <ConfigEditor
+                key={editingMethod?.id ?? 'new'}
+                value={formData.config}
+                onChange={(v) => setFormData({ ...formData, config: v })}
+                flushRef={configFlushRef}
+                t={t}
+              />
             </TabsContent>
 
             <TabsContent value="script" className="space-y-4 mt-4">
               <div className="space-y-2">
-                <Label>{locale === 'zh' ? 'JavaScript 脚本' : 'JavaScript Script'}</Label>
+                <Label>{t.admin.pmJsScript}</Label>
                 <Textarea
                   value={formData.script}
                   onChange={(e) => setFormData({ ...formData, script: e.target.value })}
@@ -481,107 +679,102 @@ function onGeneratePaymentCard(order, config) {
                 <div className="flex gap-2">
                   <Button variant="outline" onClick={handleTest} disabled={testMutation.isPending}>
                     <Play className="h-4 w-4 mr-2" />
-                    {locale === 'zh' ? '测试脚本' : 'Test Script'}
+                    {t.admin.pmTestScript}
                   </Button>
                 </div>
               </div>
               {testResult && (
                 <Card>
                   <CardHeader>
-                    <CardTitle className="text-sm">{locale === 'zh' ? '测试结果' : 'Test Result'}</CardTitle>
+                    <CardTitle className="text-sm">{t.admin.pmTestResult}</CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <div className="bg-muted p-4 rounded-lg overflow-auto max-h-48">
-                      <SandboxedHtmlFrame
-                        html={testResult}
-                        title={locale === 'zh' ? '测试结果' : 'Test Result'}
-                        className="h-48"
-                      />
-                    </div>
+                    <SandboxedHtmlFrame
+                      html={testResult}
+                      title={t.admin.pmTestResult}
+                      className="max-h-64"
+                      locale={locale}
+                    />
                   </CardContent>
                 </Card>
               )}
               <Card className="bg-muted/50">
                 <CardHeader>
-                  <CardTitle className="text-sm">{locale === 'zh' ? 'API 参考' : 'API Reference'}</CardTitle>
+                  <CardTitle className="text-sm">{t.admin.pmApiRef}</CardTitle>
                   <CardDescription className="text-xs">
-                    {locale === 'zh' ? '完整文档见 docs/PAYMENT_JS_API.md' : 'Full docs: docs/PAYMENT_JS_API.md'}
+                    {t.admin.pmApiRefDesc}
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="text-xs space-y-3">
                   <div>
-                    <p className="font-semibold mb-1">{locale === 'zh' ? '必须实现的回调函数' : 'Required Callbacks'}</p>
-                    <p><code>onGeneratePaymentCard(order, config)</code> - {locale === 'zh' ? '生成付款卡片HTML' : 'Generate payment card HTML'}</p>
+                    <p className="font-semibold mb-1">{t.admin.pmRequiredCallbacks}</p>
+                    <p><code>onGeneratePaymentCard(order, config)</code> - {t.admin.pmGenerateCardHtml}</p>
                     <p className="text-muted-foreground ml-4">
-                      {locale === 'zh' ? '返回: ' : 'Returns: '}
+                      {t.admin.pmReturns}
                       <code>{`{html, title?, description?, data?, cache_ttl?}`}</code>
                     </p>
                     <p className="text-muted-foreground ml-4">
-                      <code>cache_ttl</code>: {locale === 'zh' ? '缓存有效期(秒)。0=不缓存，-1=永久缓存，>0=指定秒数后过期' : 'Cache TTL (seconds). 0=no cache, -1=permanent, >0=expire after seconds'}
+                      <code>cache_ttl</code>: {t.admin.pmCacheTtlDesc}
                     </p>
-                    <p><code>onCheckPaymentStatus(order, config)</code> - {locale === 'zh' ? '检查付款状态' : 'Check payment status'}</p>
+                    <p><code>onCheckPaymentStatus(order, config)</code> - {t.admin.pmCheckStatus}</p>
                     <p className="text-muted-foreground ml-4">
-                      {locale === 'zh' ? '返回: ' : 'Returns: '}
+                      {t.admin.pmReturns}
                       <code>{`{paid: boolean, message?, transaction_id?, data?}`}</code>
                     </p>
                   </div>
                   <div>
-                    <p className="font-semibold mb-1">AuraLogic.storage <span className="font-normal text-muted-foreground">({locale === 'zh' ? '本地持久化存储' : 'local persistent storage'})</span></p>
+                    <p className="font-semibold mb-1">AuraLogic.storage <span className="font-normal text-muted-foreground">({t.admin.pmLocalStorage})</span></p>
                     <p><code>get(key)</code> / <code>set(key, value)</code> / <code>delete(key)</code></p>
                     <p><code>list()</code> / <code>clear()</code></p>
                   </div>
                   <div>
                     <p className="font-semibold mb-1">AuraLogic.order</p>
-                    <p><code>get()</code> - {locale === 'zh' ? '获取当前订单 (id, order_no, status, total_amount, currency)' : 'Get current order'}</p>
-                    <p><code>getItems()</code> - {locale === 'zh' ? '获取订单商品列表' : 'Get order items'}</p>
-                    <p><code>getUser()</code> - {locale === 'zh' ? '获取订单用户信息' : 'Get order user'}</p>
-                    <p><code>updatePaymentData(data)</code> - {locale === 'zh' ? '更新付款数据' : 'Update payment data'}</p>
+                    <p><code>get()</code> - {t.admin.pmGetOrder}</p>
+                    <p><code>getItems()</code> - {t.admin.pmGetOrderItems}</p>
+                    <p><code>getUser()</code> - {t.admin.pmGetOrderUser}</p>
+                    <p><code>updatePaymentData(data)</code> - {t.admin.pmUpdatePaymentData}</p>
                   </div>
                   <div>
                     <p className="font-semibold mb-1">AuraLogic.config</p>
-                    <p><code>get(key?, defaultValue?)</code> - {locale === 'zh' ? '获取配置值' : 'Get config value'}</p>
+                    <p><code>get(key?, defaultValue?)</code> - {t.admin.pmGetConfigValue}</p>
                   </div>
                   <div>
                     <p className="font-semibold mb-1">AuraLogic.utils</p>
-                    <p><code>formatPrice(amount, currency)</code> - {locale === 'zh' ? '格式化价格' : 'Format price'}</p>
-                    <p><code>formatDate(date, format?)</code> - {locale === 'zh' ? '格式化日期' : 'Format date'}</p>
-                    <p><code>generateId()</code> - {locale === 'zh' ? '生成UUID' : 'Generate UUID'}</p>
+                    <p><code>formatPrice(amount, currency)</code> - {t.admin.pmFormatPrice}</p>
+                    <p><code>formatDate(date, format?)</code> - {t.admin.pmFormatDate}</p>
+                    <p><code>generateId()</code> - {t.admin.pmGenerateUuid}</p>
                     <p><code>md5(data)</code> / <code>base64Encode(data)</code> / <code>base64Decode(data)</code></p>
                     <p><code>jsonEncode(data)</code> / <code>jsonDecode(data)</code></p>
                   </div>
                   <div>
                     <p className="font-semibold mb-1">AuraLogic.http</p>
-                    <p><code>get(url, headers?)</code> - {locale === 'zh' ? 'GET请求' : 'GET request'}</p>
-                    <p><code>post(url, body?, headers?)</code> - {locale === 'zh' ? 'POST请求' : 'POST request'}</p>
-                    <p><code>request(options)</code> - {locale === 'zh' ? '通用HTTP请求' : 'General HTTP request'}</p>
-                    <p className="text-muted-foreground">{locale === 'zh' ? '返回: {status, headers, body, data, error}' : 'Returns: {status, headers, body, data, error}'}</p>
+                    <p><code>get(url, headers?)</code> - {t.admin.pmGetRequest}</p>
+                    <p><code>post(url, body?, headers?)</code> - {t.admin.pmPostRequest}</p>
+                    <p><code>request(options)</code> - {t.admin.pmGeneralRequest}</p>
+                    <p className="text-muted-foreground">{t.admin.pmHttpReturns}</p>
                   </div>
                   <div>
                     <p className="font-semibold mb-1">AuraLogic.system</p>
-                    <p><code>getTimestamp()</code> - {locale === 'zh' ? '获取Unix时间戳' : 'Get Unix timestamp'}</p>
-                    <p><code>getPaymentMethodInfo()</code> - {locale === 'zh' ? '获取付款方式信息' : 'Get payment method info'}</p>
+                    <p><code>getTimestamp()</code> - {t.admin.pmGetTimestamp}</p>
+                    <p><code>getPaymentMethodInfo()</code> - {t.admin.pmGetMethodInfo}</p>
                   </div>
                   <div className="border-t pt-3 mt-3">
-                    <p className="font-semibold mb-1">{locale === 'zh' ? '主题适配提示' : 'Theme Adaptation'}</p>
+                    <p className="font-semibold mb-1">{t.admin.pmThemeAdaptation}</p>
                     <p className="text-muted-foreground">
-                      {locale === 'zh'
-                        ? '生成的HTML会在支持亮色/暗色主题的前端渲染。请使用主题感知的CSS类：'
-                        : 'Generated HTML renders in a themed frontend. Use theme-aware CSS classes:'}
+                      {t.admin.pmThemeAdaptationDesc}
                     </p>
                     <p className="mt-1">
                       <code className="text-green-600 dark:text-green-400">bg-muted</code>, <code className="text-green-600 dark:text-green-400">text-muted-foreground</code>, <code className="text-green-600 dark:text-green-400">text-primary</code>, <code className="text-green-600 dark:text-green-400">border-border</code>
                     </p>
                     <p className="mt-1">
-                      {locale === 'zh' ? '暗色模式特定样式: ' : 'Dark mode styles: '}
+                      {t.admin.pmDarkModeStyles}
                       <code className="text-blue-600 dark:text-blue-400">dark:bg-gray-800</code>, <code className="text-blue-600 dark:text-blue-400">dark:text-gray-100</code>
                     </p>
                   </div>
                   <div className="border-t pt-3 mt-3">
-                    <p className="font-semibold mb-1">{locale === 'zh' ? '多语言支持' : 'Multi-language'}</p>
+                    <p className="font-semibold mb-1">{t.admin.pmMultiLanguage}</p>
                     <p className="text-muted-foreground">
-                      {locale === 'zh'
-                        ? '使用语言类自动切换中英文内容：'
-                        : 'Use language classes for auto-switching content:'}
+                      {t.admin.pmMultiLanguageDesc}
                     </p>
                     <p className="mt-1">
                       <code className="text-purple-600 dark:text-purple-400">&lt;span class="lang-zh"&gt;中文&lt;/span&gt;</code>
@@ -599,12 +792,10 @@ function onGeneratePaymentCard(order, config) {
               setEditingMethod(null)
               setTestResult(null)
             }}>
-              {locale === 'zh' ? '取消' : 'Cancel'}
+              {t.common.cancel}
             </Button>
             <Button onClick={handleSubmit} disabled={createMutation.isPending || updateMutation.isPending}>
-              {editingMethod
-                ? (locale === 'zh' ? '保存' : 'Save')
-                : (locale === 'zh' ? '创建' : 'Create')}
+              {editingMethod ? t.common.save : t.common.create}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -614,18 +805,18 @@ function onGeneratePaymentCard(order, config) {
       <AlertDialog open={deleteId !== null} onOpenChange={() => setDeleteId(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>{locale === 'zh' ? '确认删除' : 'Confirm Delete'}</AlertDialogTitle>
+            <AlertDialogTitle>{t.admin.confirmDelete}</AlertDialogTitle>
             <AlertDialogDescription>
-              {locale === 'zh' ? '确定要删除这个付款方式吗？此操作无法撤销。' : 'Are you sure you want to delete this payment method? This action cannot be undone.'}
+              {t.admin.pmDeleteDesc}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>{locale === 'zh' ? '取消' : 'Cancel'}</AlertDialogCancel>
+            <AlertDialogCancel>{t.common.cancel}</AlertDialogCancel>
             <AlertDialogAction
               onClick={() => deleteId && deleteMutation.mutate(deleteId)}
               className="bg-red-600 hover:bg-red-700"
             >
-              {locale === 'zh' ? '删除' : 'Delete'}
+              {t.common.delete}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

@@ -18,16 +18,18 @@ import { createLoginSchema, loginSchema } from '@/lib/validators'
 import { useLocale } from '@/hooks/use-locale'
 import { usePageTitle } from '@/hooks/use-page-title'
 import { getTranslations } from '@/lib/i18n'
-import { Loader2, Mail, Lock, ArrowRight } from 'lucide-react'
+import { Loader2, Mail, Lock, ArrowRight, KeyRound } from 'lucide-react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useQuery } from '@tanstack/react-query'
-import { getPublicConfig, getCaptcha } from '@/lib/api'
+import { getPublicConfig, getCaptcha, sendLoginCode } from '@/lib/api'
 import { useState, useEffect, useRef } from 'react'
 import { useTheme } from '@/contexts/theme-context'
+import toast from 'react-hot-toast'
+import { AuthBrandingPanel } from '@/components/auth-branding-panel'
 
 export default function LoginPage() {
-  const { login, isLoggingIn, isAuthenticated, isLoading } = useAuth()
+  const { login, loginWithCode, isLoggingIn, isLoggingInWithCode, isAuthenticated, isLoading } = useAuth()
   const router = useRouter()
   const { locale } = useLocale()
   const t = getTranslations(locale)
@@ -41,6 +43,12 @@ export default function LoginPage() {
   }, [isLoading, isAuthenticated, router])
   const [captchaToken, setCaptchaToken] = useState('')
   const [builtinCode, setBuiltinCode] = useState('')
+  const [loginMode, setLoginMode] = useState<'password' | 'code'>('password')
+  const [codeEmail, setCodeEmail] = useState('')
+  const [codeValue, setCodeValue] = useState('')
+  const [countdown, setCountdown] = useState(0)
+  const [isSendingCode, setIsSendingCode] = useState(false)
+  const [codeSent, setCodeSent] = useState(false)
   const { resolvedTheme } = useTheme()
   const captchaContainerRef = useRef<HTMLDivElement>(null)
   const widgetRendered = useRef(false)
@@ -52,14 +60,32 @@ export default function LoginPage() {
   })
 
   const allowRegistration = publicConfig?.data?.allow_registration
+  const smtpEnabled = publicConfig?.data?.smtp_enabled
   const captchaConfig = publicConfig?.data?.captcha
   const needCaptcha = captchaConfig?.provider && captchaConfig.provider !== 'none' && captchaConfig.enable_for_login
+  const emailCodeAvailable = smtpEnabled && needCaptcha
 
   const { data: builtinCaptcha, refetch: refetchCaptcha } = useQuery({
     queryKey: ['captcha', 'login'],
     queryFn: getCaptcha,
     enabled: needCaptcha && captchaConfig?.provider === 'builtin',
   })
+
+  // 60秒倒计时
+  useEffect(() => {
+    if (countdown <= 0) return
+    const timer = setTimeout(() => {
+      const next = countdown - 1
+      setCountdown(next)
+      if (next === 0) {
+        setCodeSent(false)
+        widgetRendered.current = false
+        refetchCaptcha()
+        setBuiltinCode('')
+      }
+    }, 1000)
+    return () => clearTimeout(timer)
+  }, [countdown, refetchCaptcha])
 
   // Load Turnstile/reCAPTCHA scripts
   useEffect(() => {
@@ -123,7 +149,7 @@ export default function LoginPage() {
         'expired-callback': () => setCaptchaToken(''),
       })
     }
-  }, [needCaptcha, captchaConfig])
+  }, [needCaptcha, captchaConfig, loginMode])
 
   const schema = createLoginSchema({
     invalidEmail: t.auth.invalidEmail,
@@ -162,45 +188,37 @@ export default function LoginPage() {
     })
   }
 
+  async function handleSendCode() {
+    if (!codeEmail || countdown > 0 || isSendingCode) return
+    let token = captchaToken
+    if (needCaptcha && captchaConfig.provider === 'builtin') {
+      token = `${builtinCaptcha?.data?.captcha_id}:${builtinCode}`
+    }
+    setIsSendingCode(true)
+    try {
+      await sendLoginCode({ email: codeEmail, captcha_token: token || undefined })
+      toast.success(t.auth.codeSent)
+      setCountdown(60)
+      setCodeSent(true)
+    } catch (e: any) {
+      const msg = e?.code === 42902 ? t.auth.cooldownWait : (e?.message || t.auth.requestFailed)
+      toast.error(msg)
+      if (e?.code !== 42902) resetCaptcha()
+    } finally {
+      setIsSendingCode(false)
+    }
+  }
+
+  function onCodeSubmit() {
+    if (!codeEmail || !codeValue) return
+    loginWithCode({ email: codeEmail, code: codeValue }, {
+      onError: () => setCodeValue(''),
+    })
+  }
+
   return (
     <div className="min-h-screen flex">
-      {/* Left branding panel - hidden on mobile */}
-      <div className="hidden lg:flex lg:w-1/2 relative overflow-hidden bg-primary">
-        {/* Background pattern */}
-        <div className="absolute inset-0 opacity-10">
-          <div className="absolute top-0 left-0 w-full h-full"
-            style={{
-              backgroundImage: `radial-gradient(circle at 25% 25%, rgba(255,255,255,0.2) 0%, transparent 50%),
-                               radial-gradient(circle at 75% 75%, rgba(255,255,255,0.15) 0%, transparent 50%)`,
-            }}
-          />
-          <div className="absolute -top-24 -left-24 w-96 h-96 rounded-full border border-white/20" />
-          <div className="absolute -bottom-32 -right-32 w-[500px] h-[500px] rounded-full border border-white/10" />
-          <div className="absolute top-1/2 left-1/4 w-64 h-64 rounded-full border border-white/10" />
-        </div>
-
-        {/* Content */}
-        <div className="relative z-10 flex flex-col justify-between w-full p-12">
-          <div>
-            <h1 className="text-3xl font-bold text-primary-foreground tracking-tight">
-              AuraLogic
-            </h1>
-          </div>
-
-          <div className="space-y-6">
-            <h2 className="text-4xl font-bold text-primary-foreground leading-tight">
-              {locale === 'zh' ? '现代化电商\n管理平台' : 'Modern\nE-commerce\nPlatform'}
-            </h2>
-            <p className="text-primary-foreground/70 text-lg max-w-md leading-relaxed">
-              {t.home.subtitle}
-            </p>
-          </div>
-
-          <p className="text-primary-foreground/50 text-sm">
-            {t.common.copyright}
-          </p>
-        </div>
-      </div>
+      <AuthBrandingPanel />
 
       {/* Right form panel */}
       <div className="flex-1 flex items-center justify-center p-6 sm:p-12 bg-background">
@@ -222,8 +240,30 @@ export default function LoginPage() {
             </p>
           </div>
 
-          {/* Form */}
-          <Form {...form}>
+          {/* Mode switcher */}
+          {emailCodeAvailable && (
+            <div className="flex rounded-lg border border-border p-1 bg-muted/50">
+              <button
+                type="button"
+                className={`flex-1 text-xs sm:text-sm py-2 rounded-md transition-colors whitespace-nowrap ${loginMode === 'password' ? 'bg-background text-foreground shadow-sm font-medium' : 'text-muted-foreground hover:text-foreground'}`}
+                onClick={() => { setLoginMode('password'); widgetRendered.current = false }}
+              >
+                <Lock className="inline h-3.5 w-3.5 mr-1 -mt-0.5" />
+                {t.auth.passwordLogin}
+              </button>
+              <button
+                type="button"
+                className={`flex-1 text-xs sm:text-sm py-2 rounded-md transition-colors whitespace-nowrap ${loginMode === 'code' ? 'bg-background text-foreground shadow-sm font-medium' : 'text-muted-foreground hover:text-foreground'}`}
+                onClick={() => { setLoginMode('code'); widgetRendered.current = false }}
+              >
+                <KeyRound className="inline h-3.5 w-3.5 mr-1 -mt-0.5" />
+                {t.auth.emailCodeLogin}
+              </button>
+            </div>
+          )}
+
+          {/* Password login form */}
+          {loginMode === 'password' && <Form {...form}>
             <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-5">
               <FormField
                 control={form.control}
@@ -252,7 +292,14 @@ export default function LoginPage() {
                 name="password"
                 render={({ field }) => (
                   <FormItem className="space-y-2">
-                    <FormLabel className="text-sm font-medium">{t.auth.password}</FormLabel>
+                    <div className="flex items-center justify-between">
+                      <FormLabel className="text-sm font-medium">{t.auth.password}</FormLabel>
+                      {smtpEnabled && (
+                        <Link href="/forgot-password" className="text-xs text-muted-foreground hover:text-primary transition-colors">
+                          {t.auth.forgotPassword}
+                        </Link>
+                      )}
+                    </div>
                     <FormControl>
                       <div className="relative">
                         <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -317,7 +364,98 @@ export default function LoginPage() {
                 )}
               </Button>
             </form>
-          </Form>
+          </Form>}
+
+          {/* Email code login form */}
+          {loginMode === 'code' && (
+            <div className="space-y-5">
+              <div className="space-y-2">
+                <label className="text-sm font-medium">{t.auth.email}</label>
+                <div className="relative">
+                  <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    type="email"
+                    placeholder={t.auth.emailPlaceholder}
+                    className="pl-10 h-11"
+                    value={codeEmail}
+                    onChange={(e) => setCodeEmail(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              {/* Captcha - hide after code sent */}
+              {needCaptcha && !codeSent && (
+                <div className="space-y-2">
+                  {(captchaConfig.provider === 'cloudflare' || captchaConfig.provider === 'google') && (
+                    <div ref={captchaContainerRef} />
+                  )}
+                  {captchaConfig.provider === 'builtin' && builtinCaptcha?.data && (
+                    <>
+                      <label className="text-sm font-medium">{t.auth.captcha}</label>
+                      <div className="flex items-center gap-2">
+                        <Input
+                          placeholder={t.auth.captchaPlaceholder}
+                          value={builtinCode}
+                          onChange={(e) => setBuiltinCode(e.target.value)}
+                          maxLength={4}
+                          className="h-11"
+                        />
+                        <img
+                          src={builtinCaptcha.data.image}
+                          alt="captcha"
+                          className="border border-border rounded-md h-11 shrink-0 cursor-pointer dark:brightness-90"
+                          onClick={() => { refetchCaptcha(); setBuiltinCode('') }}
+                          title={t.auth.captchaRefresh}
+                        />
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+
+              <div className="space-y-2">
+                <label className="text-sm font-medium">{t.auth.emailCode}</label>
+                <div className="flex gap-2">
+                  <Input
+                    placeholder={t.auth.codePlaceholder}
+                    value={codeValue}
+                    onChange={(e) => setCodeValue(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                    maxLength={6}
+                    className="h-11"
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="h-11 shrink-0 text-sm"
+                    disabled={!codeEmail || countdown > 0 || isSendingCode}
+                    onClick={handleSendCode}
+                  >
+                    {isSendingCode ? t.auth.sendingCode
+                      : countdown > 0 ? (t.auth.codeResendIn as string).replace('{n}', String(countdown))
+                      : t.auth.sendCode}
+                  </Button>
+                </div>
+              </div>
+
+              <Button
+                className="w-full h-11 text-sm font-medium"
+                disabled={isLoggingInWithCode || codeValue.length !== 6}
+                onClick={onCodeSubmit}
+              >
+                {isLoggingInWithCode ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    {t.auth.loggingIn}
+                  </>
+                ) : (
+                  <>
+                    {t.auth.login}
+                    <ArrowRight className="ml-2 h-4 w-4" />
+                  </>
+                )}
+              </Button>
+            </div>
+          )}
 
           {/* Footer */}
           {allowRegistration && (

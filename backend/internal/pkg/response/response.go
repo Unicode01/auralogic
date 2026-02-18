@@ -48,6 +48,7 @@ const (
 	CodeConflict           = 40901
 	CodeOrderDuplicate     = 40902
 	CodeTooManyRequests    = 42901
+	CodeCooldown          = 42902
 	CodeInternalError      = 50001
 	CodeDatabaseError      = 50002
 	CodeCacheError         = 50003

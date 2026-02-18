@@ -1,7 +1,7 @@
 'use client'
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { getCurrentUser, login, logout, register } from '@/lib/api'
+import { getCurrentUser, login, loginWithCode, logout, register } from '@/lib/api'
 import { setToken, clearToken, setUser } from '@/lib/auth'
 import { useRouter } from 'next/navigation'
 import toast from 'react-hot-toast'
@@ -26,6 +26,8 @@ const errorMessageMap: Record<string, keyof ReturnType<typeof getTranslations>['
   'Password must contain at least one lowercase letter': 'passwordNeedLowercase',
   'Password must contain at least one digit': 'passwordNeedDigit',
   'Password must contain at least one special character': 'passwordNeedSpecial',
+  'Verification code expired or invalid': 'codeExpired',
+  'Invalid verification code': 'invalidCode',
 }
 
 export function useAuth() {
@@ -96,6 +98,30 @@ export function useAuth() {
     },
   })
 
+  // 验证码登录
+  const loginWithCodeMutation = useMutation({
+    mutationFn: loginWithCode,
+    onSuccess: (data: any) => {
+      setToken(data.data.token)
+      const user = data.data.user
+      const pending = typeof window !== 'undefined' ? localStorage.getItem('auralogic_locale_pending_sync') : null
+      const stored = typeof window !== 'undefined' ? localStorage.getItem('auralogic_locale') : null
+      const serverLocale = user?.locale
+      let desired: Locale | null = null
+      if (pending === 'zh' || pending === 'en') desired = pending
+      else if (serverLocale === 'zh' || serverLocale === 'en') desired = serverLocale
+      else if (stored === 'zh' || stored === 'en') desired = stored
+      const finalUser = desired ? { ...user, locale: desired } : user
+      setUser(finalUser)
+      if (desired) setLocale(desired)
+      queryClient.setQueryData(['currentUser'], { data: finalUser })
+      router.push('/orders')
+    },
+    onError: (error: any) => {
+      toast.error(getErrorMessage(error, t.auth.loginFailed))
+    },
+  })
+
   // 注册
   const registerMutation = useMutation({
     mutationFn: register,
@@ -153,8 +179,10 @@ export function useAuth() {
     isLoading,
     isAuthenticated,
     login: loginMutation.mutate,
+    loginWithCode: loginWithCodeMutation.mutate,
     logout: logoutMutation.mutate,
     isLoggingIn: loginMutation.isPending,
+    isLoggingInWithCode: loginWithCodeMutation.isPending,
     register: registerMutation.mutate,
     isRegistering: registerMutation.isPending,
   }

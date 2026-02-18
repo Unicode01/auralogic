@@ -224,6 +224,118 @@ function TemplateEditor({
   )
 }
 
+interface AuthBrandingData {
+  mode: string; title: string; title_en: string; subtitle: string; subtitle_en: string; custom_html: string
+}
+
+function AuthBrandingCard({
+  initial,
+  onSave,
+  isSaving,
+  t,
+}: {
+  initial: AuthBrandingData
+  onSave: (data: AuthBrandingData) => void
+  isSaving: boolean
+  t: any
+}) {
+  const [local, setLocal] = useState<AuthBrandingData>(initial)
+  const [preview, setPreview] = useState(false)
+
+  useEffect(() => { setLocal(initial) }, [initial])
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Layout className="h-5 w-5" />
+          {t.admin.authBranding}
+        </CardTitle>
+        <CardDescription>{t.admin.authBrandingDesc}</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div>
+          <Label>{t.admin.authBrandingMode}</Label>
+          <Select value={local.mode} onValueChange={(v) => setLocal(prev => ({ ...prev, mode: v }))}>
+            <SelectTrigger className="mt-1.5">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="default">{t.admin.authBrandingDefault}</SelectItem>
+              <SelectItem value="custom">{t.admin.authBrandingCustom}</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        {local.mode === 'default' ? (
+          <div className="space-y-3">
+            <p className="text-xs text-muted-foreground">{t.admin.authBrandingDefaultHint}</p>
+            <div>
+              <Label>{t.admin.authBrandingTitle}</Label>
+              <Input className="mt-1" value={local.title} onChange={(e) => setLocal(prev => ({ ...prev, title: e.target.value }))} placeholder="现代化电商管理平台" />
+            </div>
+            <div>
+              <Label>{t.admin.authBrandingTitleEn}</Label>
+              <Input className="mt-1" value={local.title_en} onChange={(e) => setLocal(prev => ({ ...prev, title_en: e.target.value }))} placeholder="Modern E-commerce Platform" />
+            </div>
+            <div>
+              <Label>{t.admin.authBrandingSubtitle}</Label>
+              <Input className="mt-1" value={local.subtitle} onChange={(e) => setLocal(prev => ({ ...prev, subtitle: e.target.value }))} />
+            </div>
+            <div>
+              <Label>{t.admin.authBrandingSubtitleEn}</Label>
+              <Input className="mt-1" value={local.subtitle_en} onChange={(e) => setLocal(prev => ({ ...prev, subtitle_en: e.target.value }))} />
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <p className="text-xs text-muted-foreground">{t.admin.authBrandingCustomHint}</p>
+            <div className="rounded-md border bg-muted/30 p-3 text-sm space-y-1">
+              <p className="font-medium">{t.admin.landingPageVariables}</p>
+              <div className="flex flex-wrap gap-2 mt-2">
+                {['{{.AppName}}', '{{.AppURL}}', '{{.LogoURL}}', '{{.PrimaryColor}}', '{{.Year}}'].map(v => (
+                  <Badge key={v} variant="secondary" className="font-mono text-xs">{v}</Badge>
+                ))}
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button variant={preview ? 'outline' : 'default'} size="sm" onClick={() => setPreview(false)}>
+                <FileCode className="mr-1.5 h-4 w-4" />{t.admin.code}
+              </Button>
+              <Button variant={preview ? 'default' : 'outline'} size="sm" onClick={() => setPreview(true)}>
+                <Globe className="mr-1.5 h-4 w-4" />{t.admin.preview}
+              </Button>
+            </div>
+            {preview ? (
+              <div className="border rounded-md overflow-hidden bg-white">
+                <iframe
+                  srcDoc={local.custom_html}
+                  className="w-full border-0"
+                  style={{ minHeight: '300px' }}
+                  title="Auth Branding Preview"
+                  sandbox=""
+                />
+              </div>
+            ) : (
+              <textarea
+                value={local.custom_html}
+                onChange={(e) => setLocal(prev => ({ ...prev, custom_html: e.target.value }))}
+                className="w-full min-h-[300px] p-3 font-mono text-sm border rounded-md bg-muted/50 focus:outline-none focus:ring-2 focus:ring-ring resize-y"
+                spellCheck={false}
+              />
+            )}
+          </div>
+        )}
+
+        <Button type="button" disabled={isSaving} onClick={() => onSave(local)}>
+          <Save className="mr-2 h-4 w-4" />
+          {isSaving ? t.admin.saving : t.admin.saveAuthBranding}
+        </Button>
+      </CardContent>
+    </Card>
+  )
+}
+
 export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState('general')
   const [defaultTheme, setDefaultTheme] = useState('system')
@@ -301,11 +413,12 @@ export default function SettingsPage() {
 
   // 落地页编辑
   const [landingHtml, setLandingHtml] = useState('')
+  const [landingPreview, setLandingPreview] = useState(false)
 
   const { data: landingPageData } = useQuery({
     queryKey: ['landingPage'],
     queryFn: getLandingPage,
-    enabled: activeTab === 'landingpage',
+    enabled: activeTab === 'personalization',
   })
 
   useEffect(() => {
@@ -451,11 +564,7 @@ export default function SettingsPage() {
             <Palette className="h-4 w-4 shrink-0" />
             {t.admin.tabPersonalization}
           </TabsTrigger>
-          <TabsTrigger value="landingpage" className="gap-1.5 px-3">
-            <Layout className="h-4 w-4 shrink-0" />
-            {t.admin.landingPage}
-          </TabsTrigger>
-          <TabsTrigger value="advanced" className="gap-1.5 px-3">
+<TabsTrigger value="advanced" className="gap-1.5 px-3">
             <Database className="h-4 w-4 shrink-0" />
             {t.admin.tabAdvanced}
           </TabsTrigger>
@@ -2436,6 +2545,92 @@ export default function SettingsPage() {
               </CardContent>
             </Card>
 
+            {/* 认证页品牌面板 */}
+            <AuthBrandingCard
+              initial={settingsData?.customization?.auth_branding || { mode: 'default', title: '', title_en: '', subtitle: '', subtitle_en: '', custom_html: '' }}
+              onSave={(data) => {
+                handleSubmit('customization', {
+                  _submitted: true,
+                  primary_color: primaryColor,
+                  logo_url: settingsData?.customization?.logo_url || '',
+                  favicon_url: settingsData?.customization?.favicon_url || '',
+                  page_rules: pageRules,
+                  auth_branding: data,
+                })
+              }}
+              isSaving={updateMutation.isPending}
+              t={t}
+            />
+
+            {/* 落地页编辑 */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">{t.admin.landingPage}</CardTitle>
+                <CardDescription>{t.admin.landingPageDesc}</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="rounded-md border bg-muted/30 p-3 text-sm space-y-1">
+                  <p className="font-medium">{t.admin.landingPageVariables}</p>
+                  <p className="text-muted-foreground text-xs">{t.admin.landingPageVariablesDesc}</p>
+                  <div className="flex flex-wrap gap-2 mt-2">
+                    {['{{.AppName}}', '{{.AppURL}}', '{{.Currency}}', '{{.LogoURL}}', '{{.PrimaryColor}}', '{{.Year}}'].map(v => (
+                      <Badge key={v} variant="secondary" className="font-mono text-xs">{v}</Badge>
+                    ))}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button variant={landingPreview ? 'outline' : 'default'} size="sm" onClick={() => setLandingPreview(false)}>
+                    <FileCode className="mr-1.5 h-4 w-4" />{t.admin.code}
+                  </Button>
+                  <Button variant={landingPreview ? 'default' : 'outline'} size="sm" onClick={() => setLandingPreview(true)}>
+                    <Globe className="mr-1.5 h-4 w-4" />{t.admin.preview}
+                  </Button>
+                </div>
+                {landingPreview ? (
+                  <div className="border rounded-md overflow-hidden bg-white">
+                    <iframe
+                      srcDoc={landingHtml}
+                      className="w-full border-0"
+                      style={{ minHeight: '500px' }}
+                      title="Landing Page Preview"
+                      sandbox=""
+                    />
+                  </div>
+                ) : (
+                  <div>
+                    <Label>{t.admin.landingPageHtml}</Label>
+                    <textarea
+                      value={landingHtml}
+                      onChange={(e) => setLandingHtml(e.target.value)}
+                      className="mt-1 w-full min-h-[500px] p-3 font-mono text-sm border rounded-md bg-muted/50 focus:outline-none focus:ring-2 focus:ring-ring resize-y"
+                      spellCheck={false}
+                    />
+                  </div>
+                )}
+                <div className="flex items-center gap-2">
+                  <Button
+                    onClick={() => saveLandingPageMutation.mutate(landingHtml)}
+                    disabled={saveLandingPageMutation.isPending}
+                  >
+                    <Save className="mr-2 h-4 w-4" />
+                    {saveLandingPageMutation.isPending ? t.admin.saving : t.admin.saveSettings}
+                  </Button>
+                  <Button
+                    variant="destructive"
+                    onClick={() => {
+                      if (confirm(t.admin.landingPageResetConfirm)) {
+                        resetLandingPageMutation.mutate()
+                      }
+                    }}
+                    disabled={resetLandingPageMutation.isPending}
+                  >
+                    <RotateCcw className="mr-2 h-4 w-4" />
+                    {resetLandingPageMutation.isPending ? t.admin.saving : t.admin.landingPageReset}
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+
             {/* 页面定向规则 */}
             <Card>
               <CardHeader>
@@ -2540,64 +2735,6 @@ export default function SettingsPage() {
               </CardContent>
             </Card>
           </div>
-        </TabsContent>
-
-        {/* 落地页编辑 */}
-        <TabsContent value="landingpage">
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">{t.admin.landingPage}</CardTitle>
-              <CardDescription>{t.admin.landingPageDesc}</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="rounded-md border bg-muted/30 p-3 text-sm space-y-1">
-                <p className="font-medium">{t.admin.landingPageVariables}</p>
-                <p className="text-muted-foreground text-xs">{t.admin.landingPageVariablesDesc}</p>
-                <div className="flex flex-wrap gap-2 mt-2">
-                  {['{{.AppName}}', '{{.AppURL}}', '{{.Currency}}', '{{.LogoURL}}', '{{.PrimaryColor}}', '{{.Year}}'].map(v => (
-                    <Badge key={v} variant="secondary" className="font-mono text-xs">{v}</Badge>
-                  ))}
-                </div>
-              </div>
-              <div>
-                <Label>{t.admin.landingPageHtml}</Label>
-                <textarea
-                  value={landingHtml}
-                  onChange={(e) => setLandingHtml(e.target.value)}
-                  className="mt-1 w-full min-h-[500px] p-3 font-mono text-sm border rounded-md bg-muted/50 focus:outline-none focus:ring-2 focus:ring-ring resize-y"
-                  spellCheck={false}
-                />
-              </div>
-              <div className="flex items-center gap-2">
-                <Button
-                  onClick={() => saveLandingPageMutation.mutate(landingHtml)}
-                  disabled={saveLandingPageMutation.isPending}
-                >
-                  <Save className="mr-2 h-4 w-4" />
-                  {saveLandingPageMutation.isPending ? t.admin.saving : t.admin.saveSettings}
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={() => window.open('/', '_blank')}
-                >
-                  <Globe className="mr-2 h-4 w-4" />
-                  {t.admin.landingPagePreview}
-                </Button>
-                <Button
-                  variant="destructive"
-                  onClick={() => {
-                    if (confirm(t.admin.landingPageResetConfirm)) {
-                      resetLandingPageMutation.mutate()
-                    }
-                  }}
-                  disabled={resetLandingPageMutation.isPending}
-                >
-                  <RotateCcw className="mr-2 h-4 w-4" />
-                  {resetLandingPageMutation.isPending ? t.admin.saving : t.admin.landingPageReset}
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
         </TabsContent>
       </Tabs>
 

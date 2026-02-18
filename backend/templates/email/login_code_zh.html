@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; background-color: #f5f5f5; }
+        .container { max-width: 600px; margin: 0 auto; background-color: #fff; }
+        .header { background-color: #673AB7; color: white; padding: 30px 20px; text-align: center; }
+        .header h2 { margin: 0; font-size: 22px; }
+        .content { padding: 30px 20px; }
+        .code-box { background-color: #f8f9fa; padding: 20px; margin: 20px 0; border-radius: 8px; border-left: 4px solid #673AB7; text-align: center; }
+        .code { font-size: 32px; font-weight: bold; letter-spacing: 8px; color: #673AB7; }
+        .footer { text-align: center; padding: 20px; color: #999; font-size: 12px; border-top: 1px solid #eee; }
+        .note { color: #666; font-size: 13px; margin-top: 20px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h2>登录验证码</h2>
+        </div>
+        <div class="content">
+            <p>您好！</p>
+            <p>您正在使用邮箱验证码登录 {{.AppName}}，您的验证码为：</p>
+            <div class="code-box">
+                <span class="code">{{.Code}}</span>
+            </div>
+            <p class="note">验证码有效期为 10 分钟，请尽快使用。</p>
+            <p class="note">如果您没有请求此验证码，请忽略此邮件。</p>
+        </div>
+        <div class="footer">
+            <p>&copy; {{.AppName}}. 保留所有权利。</p>
+            <p>此邮件由系统自动发送，请勿直接回复。</p>
+        </div>
+    </div>
+</body>
+</html>

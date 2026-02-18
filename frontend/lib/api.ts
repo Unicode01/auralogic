@@ -285,6 +285,22 @@ export async function resendVerification(email: string) {
   return apiClient.post('/api/user/auth/resend-verification', { email })
 }
 
+export async function sendLoginCode(data: { email: string; captcha_token?: string }) {
+  return apiClient.post('/api/user/auth/send-login-code', data)
+}
+
+export async function loginWithCode(data: { email: string; code: string }) {
+  return apiClient.post('/api/user/auth/login-with-code', data)
+}
+
+export async function forgotPassword(data: { email: string; captcha_token?: string }) {
+  return apiClient.post('/api/user/auth/forgot-password', data)
+}
+
+export async function resetPassword(data: { token: string; new_password: string }) {
+  return apiClient.post('/api/user/auth/reset-password', data)
+}
+
 export async function logout() {
   return apiClient.post('/api/user/auth/logout')
 }

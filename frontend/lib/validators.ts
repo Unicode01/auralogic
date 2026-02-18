@@ -17,6 +17,14 @@ export function createLoginSchema(m?: ValidatorMessages) {
 }
 export const loginSchema = createLoginSchema()
 
+// 邮箱验证码登录表单验证
+export function createEmailCodeLoginSchema(m?: { invalidEmail?: string; codeLength?: string }) {
+  return z.object({
+    email: z.string().email(m?.invalidEmail || 'Invalid email format'),
+    code: z.string().length(6, m?.codeLength || 'Code must be 6 digits'),
+  })
+}
+
 // 注册表单验证
 export function createRegisterSchema(m?: ValidatorMessages) {
   return z.object({
