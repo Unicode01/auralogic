@@ -42,6 +42,7 @@ import {
 import { Separator } from '@/components/ui/separator'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
+import { MarkdownEditor } from '@/components/ui/markdown-editor'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -862,15 +863,16 @@ export default function AdminKnowledgePage() {
                             value="edit"
                             className="mt-0 h-full min-h-0 min-w-0"
                           >
-                            <Textarea
+                            <MarkdownEditor
                               value={articleForm.content}
-                              onChange={(e) =>
+                              onChange={(v) =>
                                 setArticleForm({
                                   ...articleForm,
-                                  content: e.target.value,
+                                  content: v,
                                 })
                               }
-                              className="h-full min-h-0 w-full font-mono resize-none"
+                              fill
+                              className="h-full min-h-0 w-full"
                               placeholder={t.knowledge.articleContent}
                             />
                           </TabsContent>

@@ -16,19 +16,22 @@ import (
 	"auralogic/internal/config"
 	"auralogic/internal/pkg/logger"
 	"auralogic/internal/pkg/response"
+	"auralogic/internal/service"
 	"gopkg.in/gomail.v2"
 	"gorm.io/gorm"
 )
 
 type SettingsHandler struct {
-	db  *gorm.DB
-	cfg *config.Config
+	db         *gorm.DB
+	cfg        *config.Config
+	smsService *service.SMSService
 }
 
-func NewSettingsHandler(db *gorm.DB, cfg *config.Config) *SettingsHandler {
+func NewSettingsHandler(db *gorm.DB, cfg *config.Config, smsService *service.SMSService) *SettingsHandler {
 	return &SettingsHandler{
-		db:  db,
-		cfg: cfg,
+		db:         db,
+		cfg:        cfg,
+		smsService: smsService,
 	}
 }
 
@@ -69,7 +72,14 @@ func (h *SettingsHandler) GetPublicConfig(c *gin.Context) {
 		"currency":           h.cfg.Order.Currency,
 		"app_name":           h.cfg.App.Name,
 		"default_theme":      defaultTheme,
-		"allow_registration": h.cfg.Security.Login.AllowRegistration,
+		"allow_registration":     h.cfg.Security.Login.AllowRegistration,
+		"allow_password_login":   h.cfg.Security.Login.AllowPasswordLogin,
+		"allow_email_login":      h.cfg.Security.Login.AllowEmailLogin,
+		"allow_password_reset":       h.cfg.Security.Login.AllowPasswordReset,
+		"sms_enabled":               h.cfg.SMS.Enabled,
+		"allow_phone_login":         h.cfg.Security.Login.AllowPhoneLogin,
+		"allow_phone_register":      h.cfg.Security.Login.AllowPhoneRegister,
+		"allow_phone_password_reset": h.cfg.Security.Login.AllowPhonePasswordReset,
 		"stock_display": gin.H{
 			"mode":                 h.cfg.Order.StockDisplay.Mode,
 			"low_stock_threshold":  h.cfg.Order.StockDisplay.LowStockThreshold,
@@ -98,6 +108,7 @@ func (h *SettingsHandler) GetPublicConfig(c *gin.Context) {
 			"enable_for_login":         h.cfg.Security.Captcha.EnableForLogin,
 			"enable_for_register":      h.cfg.Security.Captcha.EnableForRegister,
 			"enable_for_serial_verify": h.cfg.Security.Captcha.EnableForSerialVerify,
+			"enable_for_bind":          h.cfg.Security.Captcha.EnableForBind,
 		},
 	}
 	response.Success(c, publicConfig)
@@ -124,7 +135,26 @@ func (h *SettingsHandler) GetSettings(c *gin.Context) {
 			"user":       h.cfg.SMTP.User,
 			"from_email": h.cfg.SMTP.FromEmail,
 			"from_name":  h.cfg.SMTP.FromName,
-			// Password不返回
+		},
+		"sms": gin.H{
+			"enabled":              h.cfg.SMS.Enabled,
+			"provider":             h.cfg.SMS.Provider,
+			"aliyun_access_key_id": h.cfg.SMS.AliyunAccessKeyID,
+			"aliyun_sign_name":     h.cfg.SMS.AliyunSignName,
+			"aliyun_template_code": h.cfg.SMS.AliyunTemplateCode,
+			"templates": gin.H{
+				"login":          h.cfg.SMS.Templates.Login,
+				"register":       h.cfg.SMS.Templates.Register,
+				"reset_password": h.cfg.SMS.Templates.ResetPassword,
+				"bind_phone":     h.cfg.SMS.Templates.BindPhone,
+			},
+			"dypns_code_length":    h.cfg.SMS.DYPNSCodeLength,
+			"twilio_account_sid":   h.cfg.SMS.TwilioAccountSID,
+			"twilio_from_number":   h.cfg.SMS.TwilioFromNumber,
+			"custom_url":           h.cfg.SMS.CustomURL,
+			"custom_method":        h.cfg.SMS.CustomMethod,
+			"custom_headers":       h.cfg.SMS.CustomHeaders,
+			"custom_body_template": h.cfg.SMS.CustomBodyTemplate,
 		},
 		"security": gin.H{
 			"password_policy": h.cfg.Security.PasswordPolicy,
@@ -135,6 +165,8 @@ func (h *SettingsHandler) GetSettings(c *gin.Context) {
 			"trusted_proxies": h.cfg.Security.TrustedProxies,
 		},
 		"rate_limit": h.cfg.RateLimit,
+		"email_rate_limit": h.cfg.EmailRateLimit,
+		"sms_rate_limit":   h.cfg.SMSRateLimit,
 		"order": gin.H{
 			"no_prefix":              h.cfg.Order.NoPrefix,
 			"auto_cancel_hours":      h.cfg.Order.AutoCancelHours,
@@ -230,6 +262,28 @@ type UpdateSettingsRequest struct {
 		FromName  string `json:"from_name"`
 	} `json:"smtp,omitempty"`
 
+	SMS struct {
+		Submitted              bool              `json:"_submitted"`
+		Enabled                bool              `json:"enabled"`
+		Provider               string            `json:"provider"`
+		AliyunAccessKeyID      string            `json:"aliyun_access_key_id"`
+		AliyunAccessSecret     string            `json:"aliyun_access_secret,omitempty"`
+		AliyunSignName         string            `json:"aliyun_sign_name"`
+		AliyunTemplateCode     string            `json:"aliyun_template_code"`
+		TemplateLogin          string            `json:"template_login"`
+		TemplateRegister       string            `json:"template_register"`
+		TemplateResetPassword  string            `json:"template_reset_password"`
+		TemplateBindPhone      string            `json:"template_bind_phone"`
+		TwilioAccountSID       string            `json:"twilio_account_sid"`
+		TwilioAuthToken        string            `json:"twilio_auth_token,omitempty"`
+		TwilioFromNumber       string            `json:"twilio_from_number"`
+		DYPNSCodeLength        int               `json:"dypns_code_length"`
+		CustomURL              string            `json:"custom_url"`
+		CustomMethod           string            `json:"custom_method"`
+		CustomHeaders          map[string]string `json:"custom_headers"`
+		CustomBodyTemplate     string            `json:"custom_body_template"`
+	} `json:"sms,omitempty"`
+
 	Security struct {
 		PasswordPolicy          config.PasswordPolicyConfig `json:"password_policy,omitempty"`
 		Login                   config.LoginConfig          `json:"login,omitempty"`
@@ -243,6 +297,9 @@ type UpdateSettingsRequest struct {
 	} `json:"security,omitempty"`
 
 	RateLimit config.RateLimitConfig `json:"rate_limit,omitempty"`
+
+	EmailRateLimit *config.MessageRateLimit `json:"email_rate_limit,omitempty"`
+	SMSRateLimit   *config.MessageRateLimit `json:"sms_rate_limit,omitempty"`
 
 	Order struct {
 		NoPrefix             string                    `json:"no_prefix"`
@@ -353,6 +410,39 @@ func (h *SettingsHandler) UpdateSettings(c *gin.Context) {
 		}
 	}
 
+	// Update SMS配置
+	if req.SMS.Submitted {
+		smsConfig, ok := currentConfig["sms"].(map[string]interface{})
+		if !ok {
+			smsConfig = map[string]interface{}{}
+			currentConfig["sms"] = smsConfig
+		}
+		smsConfig["enabled"] = req.SMS.Enabled
+		smsConfig["provider"] = req.SMS.Provider
+		smsConfig["aliyun_access_key_id"] = req.SMS.AliyunAccessKeyID
+		smsConfig["aliyun_sign_name"] = req.SMS.AliyunSignName
+		smsConfig["aliyun_template_code"] = req.SMS.AliyunTemplateCode
+		smsConfig["twilio_account_sid"] = req.SMS.TwilioAccountSID
+		smsConfig["twilio_from_number"] = req.SMS.TwilioFromNumber
+		smsConfig["custom_url"] = req.SMS.CustomURL
+		smsConfig["custom_method"] = req.SMS.CustomMethod
+		smsConfig["custom_headers"] = req.SMS.CustomHeaders
+		smsConfig["custom_body_template"] = req.SMS.CustomBodyTemplate
+		smsConfig["templates"] = map[string]interface{}{
+			"login":          req.SMS.TemplateLogin,
+			"register":       req.SMS.TemplateRegister,
+			"reset_password": req.SMS.TemplateResetPassword,
+			"bind_phone":     req.SMS.TemplateBindPhone,
+		}
+		smsConfig["dypns_code_length"] = req.SMS.DYPNSCodeLength
+		if req.SMS.AliyunAccessSecret != "" {
+			smsConfig["aliyun_access_secret"] = req.SMS.AliyunAccessSecret
+		}
+		if req.SMS.TwilioAuthToken != "" {
+			smsConfig["twilio_auth_token"] = req.SMS.TwilioAuthToken
+		}
+	}
+
 	// Update安全配置
 	if req.Security.PasswordPolicy.MinLength > 0 {
 		securityConfig := currentConfig["security"].(map[string]interface{})
@@ -367,11 +457,56 @@ func (h *SettingsHandler) UpdateSettings(c *gin.Context) {
 
 	// Update登录配置
 	if req.Security.LoginSubmitted {
+		// 验证：邮件相关选项需要SMTP已启用
+		smtpEnabled := h.cfg.SMTP.Enabled
+		if req.SMTP.Host != "" {
+			smtpEnabled = req.SMTP.Enabled
+		}
+		if !smtpEnabled {
+			if req.Security.Login.AllowEmailLogin {
+				response.BadRequest(c, "Allow email login requires SMTP to be enabled")
+				return
+			}
+			if req.Security.Login.AllowPasswordReset {
+				response.BadRequest(c, "Allow password reset requires SMTP to be enabled")
+				return
+			}
+			if req.Security.Login.RequireEmailVerification {
+				response.BadRequest(c, "Require email verification requires SMTP to be enabled")
+				return
+			}
+		}
+
+		// 验证：手机相关选项需要SMS已启用
+		smsEnabled := h.cfg.SMS.Enabled
+		if req.SMS.Submitted {
+			smsEnabled = req.SMS.Enabled
+		}
+		if !smsEnabled {
+			if req.Security.Login.AllowPhoneLogin {
+				response.BadRequest(c, "Allow phone login requires SMS to be enabled")
+				return
+			}
+			if req.Security.Login.AllowPhoneRegister {
+				response.BadRequest(c, "Allow phone register requires SMS to be enabled")
+				return
+			}
+			if req.Security.Login.AllowPhonePasswordReset {
+				response.BadRequest(c, "Allow phone password reset requires SMS to be enabled")
+				return
+			}
+		}
+
 		securityConfig := currentConfig["security"].(map[string]interface{})
 		securityConfig["login"] = map[string]interface{}{
-			"allow_password_login":       req.Security.Login.AllowPasswordLogin,
-			"allow_registration":         req.Security.Login.AllowRegistration,
-			"require_email_verification": req.Security.Login.RequireEmailVerification,
+			"allow_password_login":        req.Security.Login.AllowPasswordLogin,
+			"allow_registration":          req.Security.Login.AllowRegistration,
+			"require_email_verification":  req.Security.Login.RequireEmailVerification,
+			"allow_email_login":           req.Security.Login.AllowEmailLogin,
+			"allow_password_reset":        req.Security.Login.AllowPasswordReset,
+			"allow_phone_login":           req.Security.Login.AllowPhoneLogin,
+			"allow_phone_register":        req.Security.Login.AllowPhoneRegister,
+			"allow_phone_password_reset":  req.Security.Login.AllowPhonePasswordReset,
 		}
 	}
 
@@ -383,6 +518,24 @@ func (h *SettingsHandler) UpdateSettings(c *gin.Context) {
 			"user_login":    req.RateLimit.UserLogin,
 			"user_request":  req.RateLimit.UserRequest,
 			"admin_request": req.RateLimit.AdminRequest,
+		}
+	}
+
+	// Update邮件发送限流
+	if req.EmailRateLimit != nil {
+		currentConfig["email_rate_limit"] = map[string]interface{}{
+			"hourly":        req.EmailRateLimit.Hourly,
+			"daily":         req.EmailRateLimit.Daily,
+			"exceed_action": req.EmailRateLimit.ExceedAction,
+		}
+	}
+
+	// Update短信发送限流
+	if req.SMSRateLimit != nil {
+		currentConfig["sms_rate_limit"] = map[string]interface{}{
+			"hourly":        req.SMSRateLimit.Hourly,
+			"daily":         req.SMSRateLimit.Daily,
+			"exceed_action": req.SMSRateLimit.ExceedAction,
 		}
 	}
 
@@ -478,6 +631,7 @@ func (h *SettingsHandler) UpdateSettings(c *gin.Context) {
 			"enable_for_login":         req.Security.Captcha.EnableForLogin,
 			"enable_for_register":      req.Security.Captcha.EnableForRegister,
 			"enable_for_serial_verify": req.Security.Captcha.EnableForSerialVerify,
+			"enable_for_bind":          req.Security.Captcha.EnableForBind,
 		}
 	}
 
@@ -667,6 +821,32 @@ func (h *SettingsHandler) TestSMTP(c *gin.Context) {
 
 	response.Success(c, gin.H{
 		"message": "测试邮件已发送，请检查收件箱",
+	})
+}
+
+// TestSMS 测试SMS配置
+func (h *SettingsHandler) TestSMS(c *gin.Context) {
+	var req struct {
+		Phone string `json:"phone" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request parameters")
+		return
+	}
+
+	if h.smsService == nil {
+		response.InternalError(c, "SMS service is not initialized")
+		return
+	}
+
+	if err := h.smsService.TestSMS(req.Phone); err != nil {
+		response.InternalError(c, fmt.Sprintf("发送测试短信失败: %v", err))
+		return
+	}
+
+	response.Success(c, gin.H{
+		"message": "测试短信已发送，请检查手机",
 	})
 }
 

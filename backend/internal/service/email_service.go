@@ -13,6 +13,7 @@ import (
 	"auralogic/internal/config"
 	"auralogic/internal/models"
 	"auralogic/internal/pkg/cache"
+	"github.com/go-redis/redis/v8"
 	"gopkg.in/gomail.v2"
 	"gorm.io/gorm"
 )
@@ -197,8 +198,80 @@ func (s *EmailService) SendEmail(to, subject, content string) error {
 	return s.dialer.DialAndSend(m)
 }
 
+// checkMessageRateLimit checks hourly/daily Redis counters for a recipient.
+// Returns true if rate limit is exceeded.
+func checkMessageRateLimit(prefix, recipient string, rl config.MessageRateLimit) bool {
+	if rl.Hourly <= 0 && rl.Daily <= 0 {
+		return false
+	}
+	ctx := cache.RedisClient.Context()
+	now := time.Now()
+	if rl.Hourly > 0 {
+		key := fmt.Sprintf("%s_rate:%s:%s", prefix, recipient, now.Format("2006010215"))
+		val, _ := cache.RedisClient.Get(ctx, key).Int()
+		if val >= rl.Hourly {
+			return true
+		}
+	}
+	if rl.Daily > 0 {
+		key := fmt.Sprintf("%s_rate:%s:%s", prefix, recipient, now.Format("20060102"))
+		val, _ := cache.RedisClient.Get(ctx, key).Int()
+		if val >= rl.Daily {
+			return true
+		}
+	}
+	return false
+}
+
+// incrMessageRateCounters increments hourly/daily Redis counters for a recipient.
+func incrMessageRateCounters(prefix, recipient string) {
+	ctx := cache.RedisClient.Context()
+	now := time.Now()
+	hourKey := fmt.Sprintf("%s_rate:%s:%s", prefix, recipient, now.Format("2006010215"))
+	dayKey := fmt.Sprintf("%s_rate:%s:%s", prefix, recipient, now.Format("20060102"))
+	cache.RedisClient.Incr(ctx, hourKey)
+	cache.RedisClient.Expire(ctx, hourKey, time.Hour)
+	cache.RedisClient.Incr(ctx, dayKey)
+	cache.RedisClient.Expire(ctx, dayKey, 24*time.Hour)
+}
+
 // QueueEmail 将邮件加入队列
 func (s *EmailService) QueueEmail(to, subject, content, eventType string, orderID, userID *uint) error {
+	rl := config.GetConfig().EmailRateLimit
+
+	// Check rate limit
+	if checkMessageRateLimit("email", to, rl) {
+		if rl.ExceedAction == "delay" {
+			// Push to delayed sorted set, use same 30-min ExpireAt as normal emails
+			expireAt := time.Now().Add(30 * time.Minute)
+			emailLog := &models.EmailLog{
+				ToEmail:   to,
+				Subject:   subject,
+				Content:   content,
+				EventType: eventType,
+				OrderID:   orderID,
+				UserID:    userID,
+				Status:    models.EmailLogStatusPending,
+				ExpireAt:  &expireAt,
+			}
+			if err := s.db.Create(emailLog).Error; err != nil {
+				return err
+			}
+			ctx := cache.RedisClient.Context()
+			cache.RedisClient.ZAdd(ctx, "email:delayed", &redis.Z{
+				Score:  float64(time.Now().Unix()),
+				Member: emailLog.ID,
+			})
+			return nil
+		}
+		// cancel: silent skip
+		log.Printf("Email rate limited for %s, skipping", to)
+		return nil
+	}
+
+	incrMessageRateCounters("email", to)
+
+	expireAt := time.Now().Add(30 * time.Minute)
 	emailLog := &models.EmailLog{
 		ToEmail:   to,
 		Subject:   subject,
@@ -207,6 +280,7 @@ func (s *EmailService) QueueEmail(to, subject, content, eventType string, orderI
 		OrderID:   orderID,
 		UserID:    userID,
 		Status:    models.EmailLogStatusPending,
+		ExpireAt:  &expireAt,
 	}
 
 	if err := s.db.Create(emailLog).Error; err != nil {
@@ -219,6 +293,25 @@ func (s *EmailService) QueueEmail(to, subject, content, eventType string, orderI
 	}
 
 	return nil
+}
+
+// ProcessDelayedEmails periodically moves ready items from the delayed set to the main queue.
+func (s *EmailService) ProcessDelayedEmails() {
+	ctx := cache.RedisClient.Context()
+	for {
+		time.Sleep(30 * time.Second)
+		now := float64(time.Now().Unix())
+		results, err := cache.RedisClient.ZRangeByScore(ctx, "email:delayed", &redis.ZRangeBy{
+			Min: "-inf", Max: fmt.Sprintf("%f", now), Count: 50,
+		}).Result()
+		if err != nil || len(results) == 0 {
+			continue
+		}
+		for _, idStr := range results {
+			cache.RedisClient.ZRem(ctx, "email:delayed", idStr)
+			cache.RedisClient.RPush(ctx, "email:queue", idStr)
+		}
+	}
 }
 
 // ProcessEmailQueue 处理邮件队列
@@ -246,6 +339,13 @@ func (s *EmailService) ProcessEmailQueue() {
 		var emailLog models.EmailLog
 		if err := s.db.First(&emailLog, emailID).Error; err != nil {
 			log.Printf("Failed to find email log %s: %v", emailID, err)
+			continue
+		}
+
+		// TTL检查：如果邮件已过期则跳过发送
+		if emailLog.ExpireAt != nil && time.Now().After(*emailLog.ExpireAt) {
+			emailLog.Status = models.EmailLogStatusExpired
+			s.db.Save(&emailLog)
 			continue
 		}
 

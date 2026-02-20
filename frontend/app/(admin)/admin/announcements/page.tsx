@@ -19,6 +19,7 @@ import { Switch } from '@/components/ui/switch'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
+import { MarkdownEditor } from '@/components/ui/markdown-editor'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -481,12 +482,13 @@ export default function AdminAnnouncementsPage() {
                             value="edit"
                             className="mt-0 h-full min-h-0 min-w-0"
                           >
-                            <Textarea
+                            <MarkdownEditor
                               value={form.content}
-                              onChange={(e) =>
-                                setForm({ ...form, content: e.target.value })
+                              onChange={(v) =>
+                                setForm({ ...form, content: v })
                               }
-                              className="h-full min-h-0 w-full font-mono resize-none"
+                              fill
+                              className="h-full min-h-0 w-full"
                               placeholder={t.announcement.announcementContent}
                             />
                           </TabsContent>

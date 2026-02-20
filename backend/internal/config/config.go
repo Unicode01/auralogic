@@ -17,8 +17,11 @@ type Config struct {
 	JWT                JWTConfig                `json:"jwt"`
 	OAuth              OAuthConfig              `json:"oauth"`
 	SMTP               SMTPConfig               `json:"smtp"`
+	SMS                SMSConfig                `json:"sms"`
 	Security           SecurityConfig           `json:"security"`
 	RateLimit          RateLimitConfig          `json:"rate_limit"`
+	EmailRateLimit     MessageRateLimit         `json:"email_rate_limit"`
+	SMSRateLimit       MessageRateLimit         `json:"sms_rate_limit"`
 	Log                LogConfig                `json:"log"`
 	Order              OrderConfig              `json:"order"`
 	MagicLink          MagicLinkConfig          `json:"magic_link"`
@@ -97,6 +100,33 @@ type SMTPConfig struct {
 	FromName  string `json:"from_name"`
 }
 
+// SMSConfig 短信配置
+type SMSConfig struct {
+	Enabled            bool              `json:"enabled"`
+	Provider           string            `json:"provider"` // aliyun, aliyun_dypns, twilio, custom
+	AliyunAccessKeyID  string            `json:"aliyun_access_key_id"`
+	AliyunAccessSecret string            `json:"aliyun_access_secret"`
+	AliyunSignName     string            `json:"aliyun_sign_name"`
+	AliyunTemplateCode string            `json:"aliyun_template_code"`
+	Templates          SMSTemplates      `json:"templates"`
+	DYPNSCodeLength    int               `json:"dypns_code_length"`
+	TwilioAccountSID   string            `json:"twilio_account_sid"`
+	TwilioAuthToken    string            `json:"twilio_auth_token"`
+	TwilioFromNumber   string            `json:"twilio_from_number"`
+	CustomURL          string            `json:"custom_url"`
+	CustomMethod       string            `json:"custom_method"`
+	CustomHeaders      map[string]string `json:"custom_headers"`
+	CustomBodyTemplate string            `json:"custom_body_template"`
+}
+
+// SMSTemplates 各操作的短信模板配置
+type SMSTemplates struct {
+	Login         string `json:"login"`
+	Register      string `json:"register"`
+	ResetPassword string `json:"reset_password"`
+	BindPhone     string `json:"bind_phone"`
+}
+
 // CORSConfig CORS配置
 type CORSConfig struct {
 	AllowedOrigins []string `json:"allowed_origins"`
@@ -110,6 +140,11 @@ type LoginConfig struct {
 	AllowPasswordLogin       bool `json:"allow_password_login"`
 	AllowRegistration        bool `json:"allow_registration"`
 	RequireEmailVerification bool `json:"require_email_verification"`
+	AllowEmailLogin          bool `json:"allow_email_login"`
+	AllowPasswordReset       bool `json:"allow_password_reset"`
+	AllowPhoneLogin          bool `json:"allow_phone_login"`
+	AllowPhoneRegister       bool `json:"allow_phone_register"`
+	AllowPhonePasswordReset  bool `json:"allow_phone_password_reset"`
 }
 
 // PasswordPolicyConfig Password策略配置
@@ -129,6 +164,7 @@ type CaptchaConfig struct {
 	EnableForLogin        bool   `json:"enable_for_login"`         // 登录时是否需要验证码
 	EnableForRegister     bool   `json:"enable_for_register"`      // 注册时是否需要验证码
 	EnableForSerialVerify bool   `json:"enable_for_serial_verify"` // 序列号验证时是否需要验证码
+	EnableForBind         bool   `json:"enable_for_bind"`           // 绑定邮箱/手机时是否需要验证码
 }
 
 // SecurityConfig 安全配置
@@ -139,6 +175,13 @@ type SecurityConfig struct {
 	Captcha        CaptchaConfig        `json:"captcha"`
 	IPHeader       string               `json:"ip_header"`       // 获取真实IP的header名称，如 "CF-Connecting-IP", "X-Real-IP", "X-Forwarded-For"
 	TrustedProxies []string             `json:"trusted_proxies"` // Trusted reverse proxies CIDRs/IPs. Only trusted peers can supply IPHeader.
+}
+
+// MessageRateLimit 邮件/短信发送频率限制
+type MessageRateLimit struct {
+	Hourly       int    `json:"hourly"`        // max per recipient per hour, 0=unlimited
+	Daily        int    `json:"daily"`          // max per recipient per day, 0=unlimited
+	ExceedAction string `json:"exceed_action"`  // "cancel" or "delay"
 }
 
 // RateLimitConfig 限流配置
@@ -356,8 +399,11 @@ func ReloadConfig() error {
 	// 直接更新实例的各个字段（保持指针不变）
 	instance.App = cfg.App
 	instance.SMTP = cfg.SMTP
+	instance.SMS = cfg.SMS
 	instance.Security = cfg.Security
 	instance.RateLimit = cfg.RateLimit
+	instance.EmailRateLimit = cfg.EmailRateLimit
+	instance.SMSRateLimit = cfg.SMSRateLimit
 	instance.Log = cfg.Log
 	instance.Order = cfg.Order
 	instance.MagicLink = cfg.MagicLink

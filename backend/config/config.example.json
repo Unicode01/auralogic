@@ -54,6 +54,28 @@
         "from_email": "noreply@yourdomain.com",
         "from_name": "AuraLogic"
     },
+    "sms": {
+        "enabled": false,
+        "provider": "aliyun",
+        "aliyun_access_key_id": "",
+        "aliyun_access_secret": "",
+        "aliyun_sign_name": "",
+        "aliyun_template_code": "",
+        "templates": {
+            "login": "",
+            "register": "",
+            "reset_password": "",
+            "bind_phone": ""
+        },
+        "dypns_code_length": 6,
+        "twilio_account_sid": "",
+        "twilio_auth_token": "",
+        "twilio_from_number": "",
+        "custom_url": "",
+        "custom_method": "POST",
+        "custom_headers": {},
+        "custom_body_template": ""
+    },
     "security": {
         "ip_header": "",
         "trusted_proxies": [],
@@ -83,7 +105,12 @@
         "login": {
             "allow_password_login": true,
             "allow_registration": true,
-            "require_email_verification": false
+            "require_email_verification": false,
+            "allow_email_login": false,
+            "allow_password_reset": false,
+            "allow_phone_login": false,
+            "allow_phone_register": false,
+            "allow_phone_password_reset": false
         },
         "password_policy": {
             "min_length": 8,
@@ -98,7 +125,8 @@
             "secret_key": "",
             "enable_for_login": false,
             "enable_for_register": false,
-            "enable_for_serial_verify": false
+            "enable_for_serial_verify": false,
+            "enable_for_bind": false
         }
     },
     "rate_limit": {
@@ -107,6 +135,16 @@
         "user_login": 10,
         "user_request": 60,
         "admin_request": 200
+    },
+    "email_rate_limit": {
+        "hourly": 0,
+        "daily": 0,
+        "exceed_action": "cancel"
+    },
+    "sms_rate_limit": {
+        "hourly": 0,
+        "daily": 0,
+        "exceed_action": "cancel"
     },
     "log": {
         "level": "info",
@@ -160,7 +198,15 @@
         "primary_color": "",
         "logo_url": "",
         "favicon_url": "",
-        "page_rules": []
+        "page_rules": [],
+        "auth_branding": {
+            "mode": "default",
+            "title": "",
+            "title_en": "",
+            "subtitle": "",
+            "subtitle_en": "",
+            "custom_html": ""
+        }
     },
     "email_notifications": {
         "user_register": false,

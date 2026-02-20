@@ -15,6 +15,7 @@ services:
       - ./data:/app/data
       - ./logs:/app/logs
       - ./uploads:/app/uploads
+      - ./templates:/app/templates
     depends_on:
       - redis
     restart: unless-stopped

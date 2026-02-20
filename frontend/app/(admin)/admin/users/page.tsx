@@ -221,8 +221,8 @@ export default function AdminUsersPage() {
       accessorKey: 'id',
     },
     {
-      header: t.admin.email,
-      accessorKey: 'email',
+      header: t.admin.emailOrPhone,
+      cell: ({ row }: { row: { original: any } }) => row.original.email || row.original.phone || '-',
     },
     {
       header: t.admin.name,

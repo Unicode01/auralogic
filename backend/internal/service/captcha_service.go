@@ -75,6 +75,8 @@ func (s *CaptchaService) NeedCaptcha(scene string) bool {
 		return captchaCfg.EnableForRegister
 	case "serial_verify":
 		return captchaCfg.EnableForSerialVerify
+	case "bind":
+		return captchaCfg.EnableForBind
 	default:
 		return false
 	}

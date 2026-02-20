@@ -133,6 +133,7 @@ func AutoMigrate() error {
 		&models.APIKey{},
 		&models.OperationLog{},
 		&models.EmailLog{},
+		&models.SmsLog{},
 		&models.VirtualInventory{},
 		&models.VirtualProductStock{},
 		&models.ProductVirtualInventoryBinding{},

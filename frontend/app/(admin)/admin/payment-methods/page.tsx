@@ -18,6 +18,10 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
+import CodeMirror from '@uiw/react-codemirror'
+import { javascript } from '@codemirror/lang-javascript'
+import { json } from '@codemirror/lang-json'
+import { useTheme } from '@/contexts/theme-context'
 import { Switch } from '@/components/ui/switch'
 import { Badge } from '@/components/ui/badge'
 import { SandboxedHtmlFrame } from '@/components/ui/sandboxed-html-frame'
@@ -93,7 +97,7 @@ function detectType(v: any): 'string' | 'number' | 'boolean' {
   return 'string'
 }
 
-function ConfigEditor({ value, onChange, flushRef, t }: { value: string; onChange: (v: string) => void; flushRef?: React.MutableRefObject<(() => string | null) | null>; t: ReturnType<typeof getTranslations> }) {
+function ConfigEditor({ value, onChange, flushRef, t, cmTheme }: { value: string; onChange: (v: string) => void; flushRef?: React.MutableRefObject<(() => string | null) | null>; t: ReturnType<typeof getTranslations>; cmTheme?: 'light' | 'dark' }) {
   const [entries, setEntries] = useState<ConfigEntry[]>([])
   const [rawMode, setRawMode] = useState(false)
   const [rawValue, setRawValue] = useState(value)
@@ -191,11 +195,13 @@ function ConfigEditor({ value, onChange, flushRef, t }: { value: string; onChang
             {t.admin.pmVisualEditor}
           </Button>
         </div>
-        <Textarea
+        <CodeMirror
           value={rawValue}
-          onChange={(e) => { setRawValue(e.target.value); onChange(e.target.value) }}
-          rows={10}
-          className="font-mono text-sm"
+          extensions={[json()]}
+          onChange={(v) => { setRawValue(v); onChange(v) }}
+          height="250px"
+          theme={cmTheme}
+          className="rounded-md border overflow-hidden text-sm"
         />
       </div>
     )
@@ -288,6 +294,7 @@ export default function PaymentMethodsPage() {
   const { locale } = useLocale()
   const t = getTranslations(locale)
   usePageTitle(t.pageTitle.adminPaymentMethods)
+  const { resolvedTheme } = useTheme()
   const queryClient = useQueryClient()
   const [editingMethod, setEditingMethod] = useState<PaymentMethod | null>(null)
   const [isCreateOpen, setIsCreateOpen] = useState(false)
@@ -656,15 +663,17 @@ export default function PaymentMethodsPage() {
                 onChange={(v) => setFormData({ ...formData, config: v })}
                 flushRef={configFlushRef}
                 t={t}
+                cmTheme={resolvedTheme === 'dark' ? 'dark' : 'light'}
               />
             </TabsContent>
 
             <TabsContent value="script" className="space-y-4 mt-4">
               <div className="space-y-2">
                 <Label>{t.admin.pmJsScript}</Label>
-                <Textarea
+                <CodeMirror
                   value={formData.script}
-                  onChange={(e) => setFormData({ ...formData, script: e.target.value })}
+                  extensions={[javascript()]}
+                  onChange={(v) => setFormData({ ...formData, script: v })}
                   placeholder={`// 生成付款卡片HTML
 function onGeneratePaymentCard(order, config) {
   return {
@@ -673,8 +682,9 @@ function onGeneratePaymentCard(order, config) {
     cache_ttl: 300  // 缓存5分钟 (0=不缓存, -1=永久, >0=秒数)
   }
 }`}
-                  rows={15}
-                  className="font-mono text-sm"
+                  height="300px"
+                  theme={resolvedTheme === 'dark' ? 'dark' : 'light'}
+                  className="rounded-md border overflow-hidden text-sm"
                 />
                 <div className="flex gap-2">
                   <Button variant="outline" onClick={handleTest} disabled={testMutation.isPending}>

@@ -2,8 +2,7 @@
 
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { getOperationLogs, getEmailLogs, getLogStatistics, retryFailedEmails, getInventoryLogs } from '@/lib/api'
-import type { } from '@/lib/api'
+import { getOperationLogs, getEmailLogs, getSmsLogs, getLogStatistics, retryFailedEmails, getInventoryLogs } from '@/lib/api'
 import { DataTable } from '@/components/admin/data-table'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -25,7 +24,7 @@ import {
 } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useToast } from '@/hooks/use-toast'
-import { FileText, Mail, BarChart3, RefreshCw, Search, Package } from 'lucide-react'
+import { FileText, Mail, BarChart3, RefreshCw, Search, Package, Smartphone } from 'lucide-react'
 import { formatDate } from '@/lib/utils'
 import { useLocale } from '@/hooks/use-locale'
 import { getTranslations } from '@/lib/i18n'
@@ -54,6 +53,14 @@ export default function LogsPage() {
     start_date: '',
     end_date: '',
   })
+  const [smsPage, setSmsPage] = useState(1)
+  const [smsFilters, setSmsFilters] = useState({
+    status: '',
+    event_type: '',
+    phone: '',
+    start_date: '',
+    end_date: '',
+  })
   const [inventoryFilters, setInventoryFilters] = useState({
     type: '',
     inventory_id: '',
@@ -76,6 +83,12 @@ export default function LogsPage() {
   const { data: emailLogs, isLoading: emailLoading } = useQuery({
     queryKey: ['emailLogs', emailPage, emailFilters],
     queryFn: () => getEmailLogs({ ...emailFilters, page: emailPage, limit: 20 }),
+  })
+
+  // 短信日志查询
+  const { data: smsLogs, isLoading: smsLoading } = useQuery({
+    queryKey: ['smsLogs', smsPage, smsFilters],
+    queryFn: () => getSmsLogs({ ...smsFilters, page: smsPage, limit: 20 }),
   })
 
   // 统计信息查询
@@ -218,10 +231,11 @@ export default function LogsPage() {
       accessorKey: 'status',
       cell: ({ row }: { row: { original: any } }) => {
         const status = row.original.status
-        const variants: Record<string, 'default' | 'secondary' | 'destructive'> = {
+        const variants: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
           sent: 'default',
           pending: 'secondary',
           failed: 'destructive',
+          expired: 'outline',
         }
         return <Badge variant={variants[status] || 'secondary'}>{status}</Badge>
       },
@@ -253,7 +267,7 @@ export default function LogsPage() {
 
       {/* 统计卡片 */}
       {statistics?.data && (
-        <div className="grid gap-4 md:grid-cols-4">
+        <div className="grid gap-4 md:grid-cols-3 lg:grid-cols-6">
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <CardTitle className="text-sm font-medium">{t.admin.todayOperations}</CardTitle>
@@ -302,6 +316,30 @@ export default function LogsPage() {
               <p className="text-xs text-muted-foreground">{t.admin.needRetry}</p>
             </CardContent>
           </Card>
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">{t.admin.todaySms}</CardTitle>
+              <Smartphone className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">{statistics.data.sms_log_count?.today || 0}</div>
+              <p className="text-xs text-muted-foreground">
+                {t.admin.thisWeek}: {statistics.data.sms_log_count?.week || 0}
+              </p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">{t.admin.failedSms}</CardTitle>
+              <Smartphone className="h-4 w-4 text-red-500" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold text-red-600">
+                {statistics.data.sms_log_count?.failed || 0}
+              </div>
+              <p className="text-xs text-muted-foreground">{t.admin.needRetry}</p>
+            </CardContent>
+          </Card>
         </div>
       )}
 
@@ -319,6 +357,10 @@ export default function LogsPage() {
           <TabsTrigger value="inventories">
             <Package className="mr-2 h-4 w-4" />
             {t.admin.inventoryLogs}
+          </TabsTrigger>
+          <TabsTrigger value="sms">
+            <Smartphone className="mr-2 h-4 w-4" />
+            {t.admin.smsLogs}
           </TabsTrigger>
         </TabsList>
 
@@ -449,6 +491,7 @@ export default function LogsPage() {
                       <SelectItem value="pending">{t.admin.pending}</SelectItem>
                       <SelectItem value="sent">{t.admin.sent}</SelectItem>
                       <SelectItem value="failed">{t.admin.failed}</SelectItem>
+                      <SelectItem value="expired">{t.admin.expired}</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -684,6 +727,151 @@ export default function LogsPage() {
               page: inventoryPage,
               total_pages: inventoryLogs?.data?.pagination?.total_pages || 1,
               onPageChange: setInventoryPage,
+            }}
+          />
+        </TabsContent>
+
+        <TabsContent value="sms" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">{t.admin.filterConditions}</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="grid gap-4 md:grid-cols-5">
+                <div>
+                  <Label htmlFor="sms_status">{t.admin.status}</Label>
+                  <Select
+                    value={smsFilters.status || 'all'}
+                    onValueChange={(value) =>
+                      setSmsFilters({ ...smsFilters, status: value === 'all' ? '' : value })
+                    }
+                  >
+                    <SelectTrigger id="sms_status">
+                      <SelectValue placeholder={t.admin.all} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">{t.admin.all}</SelectItem>
+                      <SelectItem value="pending">{t.admin.pending}</SelectItem>
+                      <SelectItem value="sent">{t.admin.sent}</SelectItem>
+                      <SelectItem value="failed">{t.admin.failed}</SelectItem>
+                      <SelectItem value="expired">{t.admin.expired}</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label htmlFor="sms_phone">{t.admin.smsPhone}</Label>
+                  <Input
+                    id="sms_phone"
+                    placeholder={t.admin.smsPhone}
+                    value={smsFilters.phone}
+                    onChange={(e) =>
+                      setSmsFilters({ ...smsFilters, phone: e.target.value })
+                    }
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="sms_start_date">{t.admin.startDate}</Label>
+                  <Input
+                    id="sms_start_date"
+                    type="date"
+                    value={smsFilters.start_date}
+                    onChange={(e) =>
+                      setSmsFilters({ ...smsFilters, start_date: e.target.value })
+                    }
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="sms_end_date">{t.admin.endDate}</Label>
+                  <Input
+                    id="sms_end_date"
+                    type="date"
+                    value={smsFilters.end_date}
+                    onChange={(e) =>
+                      setSmsFilters({ ...smsFilters, end_date: e.target.value })
+                    }
+                  />
+                </div>
+                <div className="flex items-end">
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setSmsFilters({
+                        status: '',
+                        event_type: '',
+                        phone: '',
+                        start_date: '',
+                        end_date: '',
+                      })
+                      setSmsPage(1)
+                    }}
+                  >
+                    {t.admin.reset}
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <DataTable
+            columns={[
+              {
+                header: 'ID',
+                accessorKey: 'id',
+                cell: ({ row }: any) => <span className="text-xs text-gray-500">#{row.original.id}</span>,
+              },
+              {
+                header: t.admin.smsPhone,
+                accessorKey: 'phone',
+                cell: ({ row }: any) => <span className="text-sm">{row.original.phone}</span>,
+              },
+              {
+                header: t.admin.smsContent,
+                accessorKey: 'content',
+                cell: ({ row }: any) => (
+                  <span className="text-sm truncate max-w-xs block">{row.original.content}</span>
+                ),
+              },
+              {
+                header: t.admin.smsEventType,
+                accessorKey: 'event_type',
+                cell: ({ row }: any) =>
+                  row.original.event_type ? (
+                    <Badge variant="secondary">{row.original.event_type}</Badge>
+                  ) : (
+                    <span className="text-gray-400">-</span>
+                  ),
+              },
+              {
+                header: t.admin.smsLogProvider,
+                accessorKey: 'provider',
+                cell: ({ row }: any) => <Badge variant="outline">{row.original.provider}</Badge>,
+              },
+              {
+                header: t.admin.status,
+                accessorKey: 'status',
+                cell: ({ row }: any) => {
+                  const status = row.original.status
+                  const variants: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
+                    sent: 'default',
+                    pending: 'secondary',
+                    failed: 'destructive',
+                    expired: 'outline',
+                  }
+                  return <Badge variant={variants[status] || 'secondary'}>{status}</Badge>
+                },
+              },
+              {
+                header: t.admin.time,
+                cell: ({ row }: any) =>
+                  row.original.created_at ? formatDate(row.original.created_at) : '-',
+              },
+            ]}
+            data={smsLogs?.data?.items || []}
+            isLoading={smsLoading}
+            pagination={{
+              page: smsPage,
+              total_pages: smsLogs?.data?.pagination?.total_pages || 1,
+              onPageChange: setSmsPage,
             }}
           />
         </TabsContent>

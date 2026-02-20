@@ -8,6 +8,8 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
+import { MarkdownEditor } from '@/components/ui/markdown-editor'
+
 import {
   Select,
   SelectContent,
@@ -1047,11 +1049,10 @@ export default function ProductEditPage() {
                 </div>
               ) : (
                 <>
-                  <Textarea
-                    id="description"
+                  <MarkdownEditor
                     value={form.description}
-                    onChange={(e) => setForm({ ...form, description: e.target.value })}
-                    rows={6}
+                    onChange={(v) => setForm({ ...form, description: v })}
+                    height="156px"
                   />
                   <p className="text-xs text-muted-foreground">{t.admin.descMarkdownHint}</p>
                 </>

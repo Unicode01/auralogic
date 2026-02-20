@@ -54,8 +54,11 @@ func SetupRouter(
 	cartService := service.NewCartService(cartRepo, productRepo, bindingService, virtualInventoryService)
 	promoCodeService := service.NewPromoCodeService(promoCodeRepo, productRepo)
 
+	// CreateService - SMS
+	smsService := service.NewSMSService(cfg, db)
+
 	// CreateHandler
-	userAuthHandler := userHandler.NewAuthHandler(authService, emailService)
+	userAuthHandler := userHandler.NewAuthHandler(authService, emailService, smsService)
 	userOrderHandler := userHandler.NewOrderHandler(orderService, bindingService, virtualInventoryService)
 	userProductHandler := userHandler.NewProductHandler(productService, orderService, bindingService, virtualInventoryService)
 	formShippingHandler := formHandler.NewShippingHandler(orderService, cfg)
@@ -68,7 +71,7 @@ func SetupRouter(
 	adminLogHandler := adminHandler.NewLogHandler(db)
 	adminDashboardHandler := adminHandler.NewDashboardHandler(db, cfg)
 	adminAnalyticsHandler := adminHandler.NewAnalyticsHandler(db, cfg)
-	adminSettingsHandler := adminHandler.NewSettingsHandler(db, cfg)
+	adminSettingsHandler := adminHandler.NewSettingsHandler(db, cfg, smsService)
 	adminUploadHandler := adminHandler.NewUploadHandler(cfg.Upload.Dir, cfg.App.URL)
 	adminInventoryHandler := adminHandler.NewInventoryHandler(inventoryService)
 	adminBindingHandler := adminHandler.NewBindingHandler(bindingService)
@@ -134,10 +137,20 @@ func SetupRouter(
 			auth.POST("/login-with-code", userAuthHandler.LoginWithCode)
 			auth.POST("/forgot-password", userAuthHandler.ForgotPassword)
 			auth.POST("/reset-password", userAuthHandler.ResetPassword)
+			auth.POST("/send-phone-code", userAuthHandler.SendPhoneLoginCode)
+			auth.POST("/login-with-phone-code", userAuthHandler.LoginWithPhoneCode)
+			auth.POST("/send-phone-register-code", userAuthHandler.SendPhoneRegisterCode)
+			auth.POST("/phone-register", userAuthHandler.PhoneRegister)
+			auth.POST("/phone-forgot-password", userAuthHandler.PhoneForgotPassword)
+			auth.POST("/phone-reset-password", userAuthHandler.PhoneResetPassword)
 			auth.POST("/logout", middleware.AuthMiddleware(), userAuthHandler.Logout)
 			auth.GET("/me", middleware.AuthMiddleware(), userAuthHandler.GetMe)
 			auth.POST("/change-password", middleware.AuthMiddleware(), userAuthHandler.ChangePassword)
 			auth.PUT("/preferences", middleware.AuthMiddleware(), userAuthHandler.UpdatePreferences)
+			auth.POST("/send-bind-email-code", middleware.AuthMiddleware(), userAuthHandler.SendBindEmailCode)
+			auth.POST("/bind-email", middleware.AuthMiddleware(), userAuthHandler.BindEmail)
+			auth.POST("/send-bind-phone-code", middleware.AuthMiddleware(), userAuthHandler.SendBindPhoneCode)
+			auth.POST("/bind-phone", middleware.AuthMiddleware(), userAuthHandler.BindPhone)
 		}
 
 		// Order
@@ -380,6 +393,7 @@ func SetupRouter(
 		{
 			logs.GET("/operations", middleware.RequirePermission("system.logs"), adminLogHandler.ListOperationLogs)
 			logs.GET("/emails", middleware.RequirePermission("system.logs"), adminLogHandler.ListEmailLogs)
+			logs.GET("/sms", middleware.RequirePermission("system.logs"), adminLogHandler.ListSmsLogs)
 			logs.GET("/statistics", middleware.RequirePermission("system.logs"), adminLogHandler.GetLogStatistics)
 			logs.POST("/emails/retry", middleware.RequirePermission("system.logs"), adminLogHandler.RetryFailedEmails)
 			logs.GET("/inventories", middleware.RequirePermission("system.logs"), adminInventoryLogHandler.ListInventoryLogs)
@@ -393,6 +407,7 @@ func SetupRouter(
 			settings.GET("", middleware.RequirePermission("system.config"), adminSettingsHandler.GetSettings)
 			settings.PUT("", middleware.RequirePermission("system.config"), adminSettingsHandler.UpdateSettings)
 			settings.POST("/smtp/test", middleware.RequirePermission("system.config"), adminSettingsHandler.TestSMTP)
+			settings.POST("/sms/test", middleware.RequirePermission("system.config"), adminSettingsHandler.TestSMS)
 			settings.GET("/email-templates", middleware.RequirePermission("system.config"), adminSettingsHandler.ListEmailTemplates)
 			settings.GET("/email-templates/:filename", middleware.RequirePermission("system.config"), adminSettingsHandler.GetEmailTemplate)
 			settings.PUT("/email-templates/:filename", middleware.RequirePermission("system.config"), adminSettingsHandler.UpdateEmailTemplate)

@@ -29,72 +29,7 @@ import { submitShippingForm, getCountries } from '@/lib/api'
 import { shippingFormSchema } from '@/lib/validators'
 import toast from 'react-hot-toast'
 import { Globe, Package } from 'lucide-react'
-
-// 全球国家电话区号映射表（完整版）
-const phoneCodeMap: { [key: string]: string } = {
-  // 亚洲
-  'CN': '+86', 'HK': '+852', 'MO': '+853', 'TW': '+886',
-  'JP': '+81', 'KR': '+82', 'SG': '+65', 'MY': '+60',
-  'TH': '+66', 'VN': '+84', 'ID': '+62', 'PH': '+63',
-  'IN': '+91', 'PK': '+92', 'BD': '+880', 'LK': '+94',
-  'MM': '+95', 'KH': '+855', 'LA': '+856', 'BN': '+673',
-  'MV': '+960', 'NP': '+977', 'BT': '+975', 'MN': '+976',
-  'AF': '+93', 'IQ': '+964', 'IR': '+98', 'IL': '+972',
-  'JO': '+962', 'KW': '+965', 'SA': '+966', 'AE': '+971',
-  'QA': '+974', 'OM': '+968', 'YE': '+967', 'SY': '+963',
-  'LB': '+961', 'PS': '+970', 'TR': '+90', 'KZ': '+7',
-  'UZ': '+998', 'TM': '+993', 'KG': '+996', 'TJ': '+992',
-  'AM': '+374', 'AZ': '+994', 'GE': '+995', 'TL': '+670',
-
-  // 欧洲
-  'GB': '+44', 'FR': '+33', 'DE': '+49', 'IT': '+39',
-  'ES': '+34', 'PT': '+351', 'NL': '+31', 'BE': '+32',
-  'CH': '+41', 'AT': '+43', 'SE': '+46', 'NO': '+47',
-  'DK': '+45', 'FI': '+358', 'IS': '+354', 'IE': '+353',
-  'PL': '+48', 'CZ': '+420', 'SK': '+421', 'HU': '+36',
-  'RO': '+40', 'BG': '+359', 'GR': '+30', 'HR': '+385',
-  'SI': '+386', 'RS': '+381', 'BA': '+387', 'ME': '+382',
-  'MK': '+389', 'AL': '+355', 'UA': '+380', 'BY': '+375',
-  'MD': '+373', 'RU': '+7', 'EE': '+372', 'LV': '+371',
-  'LT': '+370', 'CY': '+357', 'MT': '+356', 'LU': '+352',
-  'MC': '+377', 'AD': '+376', 'SM': '+378', 'VA': '+379',
-  'LI': '+423',
-
-  // 北美洲
-  'US': '+1', 'CA': '+1', 'MX': '+52',
-  'GT': '+502', 'BZ': '+501', 'SV': '+503', 'HN': '+504',
-  'NI': '+505', 'CR': '+506', 'PA': '+507', 'CU': '+53',
-  'JM': '+1', 'HT': '+509', 'DO': '+1', 'BS': '+1',
-  'BB': '+1', 'TT': '+1', 'AG': '+1', 'DM': '+1',
-  'GD': '+1', 'KN': '+1', 'LC': '+1', 'VC': '+1',
-
-  // 南美洲
-  'BR': '+55', 'AR': '+54', 'CL': '+56', 'CO': '+57',
-  'PE': '+51', 'VE': '+58', 'EC': '+593', 'BO': '+591',
-  'PY': '+595', 'UY': '+598', 'GY': '+592', 'SR': '+597',
-
-  // 大洋洲
-  'AU': '+61', 'NZ': '+64', 'FJ': '+679', 'PG': '+675',
-  'SB': '+677', 'VU': '+678', 'NC': '+687', 'PF': '+689',
-  'WS': '+685', 'TO': '+676', 'KI': '+686', 'FM': '+691',
-  'MH': '+692', 'PW': '+680', 'NR': '+674', 'TV': '+688',
-
-  // 非洲
-  'EG': '+20', 'ZA': '+27', 'NG': '+234', 'KE': '+254',
-  'ET': '+251', 'TZ': '+255', 'UG': '+256', 'DZ': '+213',
-  'MA': '+212', 'TN': '+216', 'LY': '+218', 'SD': '+249',
-  'SS': '+211', 'GH': '+233', 'CI': '+225', 'SN': '+221',
-  'CM': '+237', 'AO': '+244', 'MZ': '+258', 'MG': '+261',
-  'ZW': '+263', 'ZM': '+260', 'MW': '+265', 'BW': '+267',
-  'NA': '+264', 'LS': '+266', 'SZ': '+268', 'MU': '+230',
-  'SC': '+248', 'RW': '+250', 'BI': '+257', 'DJ': '+253',
-  'ER': '+291', 'SO': '+252', 'GA': '+241', 'CG': '+242',
-  'CD': '+243', 'CF': '+236', 'TD': '+235', 'NE': '+227',
-  'ML': '+223', 'BF': '+226', 'SL': '+232', 'LR': '+231',
-  'GM': '+220', 'GN': '+224', 'GW': '+245', 'MR': '+222',
-  'BJ': '+229', 'TG': '+228', 'GQ': '+240', 'CV': '+238',
-  'ST': '+239', 'KM': '+269',
-}
+import { phoneCodeMap } from '@/lib/phone-codes'
 
 interface ShippingFormProps {
   formToken: string
@@ -143,6 +78,12 @@ const translations = {
     remarkPlaceholder: '请输入备注信息',
     submit: '提交',
     submitting: '提交中...',
+    submitSuccess: '提交成功',
+    submitFailed: '提交失败',
+    accountCreated: '账号已自动创建，请查收邮件获取密码',
+    passwordHint1: '如果您是首次使用该邮箱，此密码将用于登录',
+    passwordHint2: '如果该邮箱已注册，此处设置的密码将无效，请使用原密码登录',
+    passwordHint3: '留空则自动生成强密码并发送到邮箱',
   },
   en: {
     orderItems: 'Order Items',
@@ -172,6 +113,12 @@ const translations = {
     remarkPlaceholder: 'Enter remark information',
     submit: 'Submit',
     submitting: 'Submitting...',
+    submitSuccess: 'Submitted successfully',
+    submitFailed: 'Submission failed',
+    accountCreated: 'Account created automatically, please check your email for the password',
+    passwordHint1: 'If this is your first time using this email, this password will be used to log in',
+    passwordHint2: 'If this email is already registered, the password set here will be ignored. Please use your existing password',
+    passwordHint3: 'Leave blank to auto-generate a strong password and send it to your email',
   }
 }
 
@@ -264,7 +211,7 @@ export function ShippingForm({ formToken, orderInfo, lang = 'zh', onSuccess, hid
         ...values,
       })
 
-      const message = result.data?.message || '提交成功'
+      const message = result.data?.message || t.submitSuccess
       toast.success(message)
 
       // 保存收货信息到本地，下次填表时自动填入
@@ -275,7 +222,7 @@ export function ShippingForm({ formToken, orderInfo, lang = 'zh', onSuccess, hid
 
       // 新用户提示
       if (result.data?.user?.is_new) {
-        toast.success('账号已自动创建，请查收邮件获取密码')
+        toast.success(t.accountCreated)
       }
 
       if (onSuccess) {
@@ -290,7 +237,7 @@ export function ShippingForm({ formToken, orderInfo, lang = 'zh', onSuccess, hid
         }
       }
     } catch (error: any) {
-      toast.error(error.message || '提交失败')
+      toast.error(error.message || t.submitFailed)
     } finally {
       setIsSubmitting(false)
     }
@@ -585,19 +532,17 @@ export function ShippingForm({ formToken, orderInfo, lang = 'zh', onSuccess, hid
                   {...field}
                 />
               </FormControl>
-              {!isEnglish && (
-                <div className="space-y-1 mt-2">
+              <div className="space-y-1 mt-2">
                   <p className="text-sm text-muted-foreground">
-                    • 如果您是<span className="font-medium">首次使用</span>该邮箱，此密码将用于登录
+                    {t.passwordHint1}
                   </p>
                   <p className="text-sm text-orange-600 font-medium">
-                    ⚠️ 如果该邮箱已注册，此处设置的密码将<span className="font-semibold">无效</span>，请使用原密码登录
+                    {t.passwordHint2}
                   </p>
                   <p className="text-sm text-muted-foreground">
-                    • 留空则自动生成强密码并发送到邮箱
+                    {t.passwordHint3}
                   </p>
                 </div>
-              )}
               <FormMessage />
             </FormItem>
           )}

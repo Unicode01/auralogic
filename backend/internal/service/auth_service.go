@@ -381,3 +381,207 @@ func (s *AuthService) LoginWithCode(email, code string) (string, *models.User, e
 
 	return token, user, nil
 }
+
+// SendPhoneLoginCode 生成手机登录验证码并存入Redis
+func (s *AuthService) SendPhoneLoginCode(phone string) (string, error) {
+	user, err := s.userRepo.FindByPhone(phone)
+	if err != nil {
+		return "", errors.New("User not found")
+	}
+	if !user.IsActive {
+		return "", errors.New("User account has been disabled")
+	}
+	n, err := crand.Int(crand.Reader, big.NewInt(1000000))
+	if err != nil {
+		return "", fmt.Errorf("failed to generate code: %w", err)
+	}
+	code := fmt.Sprintf("%06d", n.Int64())
+	if err := cache.Set("phone_login_code:"+phone, code, 10*time.Minute); err != nil {
+		return "", fmt.Errorf("failed to store login code: %w", err)
+	}
+	return code, nil
+}
+
+// LoginWithPhoneCode 使用手机验证码登录
+func (s *AuthService) LoginWithPhoneCode(phone, code string) (string, *models.User, error) {
+	key := "phone_login_code:" + phone
+	storedCode, err := cache.Get(key)
+	if err != nil {
+		return "", nil, errors.New("Verification code expired or invalid")
+	}
+	if storedCode != code {
+		return "", nil, errors.New("Invalid verification code")
+	}
+	_ = cache.Del(key)
+	user, err := s.userRepo.FindByPhone(phone)
+	if err != nil {
+		return "", nil, errors.New("User not found")
+	}
+	if !user.IsActive {
+		return "", nil, errors.New("User account has been disabled")
+	}
+	token, err := jwt.GenerateToken(user.ID, user.Email, user.Role, s.cfg.JWT.ExpireHours)
+	if err != nil {
+		return "", nil, err
+	}
+	now2 := models.NowFunc()
+	user.LastLoginAt = &now2
+	s.userRepo.Update(user)
+	return token, user, nil
+}
+
+// GeneratePhoneResetCode 生成手机密码重置验证码
+func (s *AuthService) GeneratePhoneResetCode(phone string) (string, error) {
+	user, err := s.userRepo.FindByPhone(phone)
+	if err != nil {
+		return "", err
+	}
+	if !user.IsActive {
+		return "", errors.New("User account has been disabled")
+	}
+	n, err := crand.Int(crand.Reader, big.NewInt(1000000))
+	if err != nil {
+		return "", fmt.Errorf("failed to generate code: %w", err)
+	}
+	code := fmt.Sprintf("%06d", n.Int64())
+	if err := cache.Set("phone_reset_code:"+phone, code, 10*time.Minute); err != nil {
+		return "", err
+	}
+	return code, nil
+}
+
+// ResetPasswordByPhone 使用手机验证码重置密码
+func (s *AuthService) ResetPasswordByPhone(phone, code, newPassword string) error {
+	key := "phone_reset_code:" + phone
+	storedCode, err := cache.Get(key)
+	if err != nil {
+		return errors.New("Verification code expired or invalid")
+	}
+	if storedCode != code {
+		return errors.New("Invalid verification code")
+	}
+	_ = cache.Del(key)
+	user, err := s.userRepo.FindByPhone(phone)
+	if err != nil {
+		return errors.New("User not found")
+	}
+	policy := s.cfg.Security.PasswordPolicy
+	if err := password.ValidatePasswordPolicy(newPassword, policy.MinLength, policy.RequireUppercase,
+		policy.RequireLowercase, policy.RequireNumber, policy.RequireSpecial); err != nil {
+		return err
+	}
+	hashedPassword, err := password.HashPassword(newPassword)
+	if err != nil {
+		return err
+	}
+	user.PasswordHash = hashedPassword
+	if err := s.userRepo.Update(user); err != nil {
+		return err
+	}
+	return nil
+}
+
+// SendPhoneRegisterCode 生成手机注册验证码并存入Redis
+func (s *AuthService) SendPhoneRegisterCode(phone string) (string, error) {
+	if _, err := s.userRepo.FindByPhone(phone); err == nil {
+		return "", ErrPhoneAlreadyInUse
+	}
+	n, err := crand.Int(crand.Reader, big.NewInt(1000000))
+	if err != nil {
+		return "", fmt.Errorf("failed to generate code: %w", err)
+	}
+	code := fmt.Sprintf("%06d", n.Int64())
+	if err := cache.Set("phone_register_code:"+phone, code, 10*time.Minute); err != nil {
+		return "", fmt.Errorf("failed to store register code: %w", err)
+	}
+	return code, nil
+}
+
+// SendBindEmailCode generates a code for binding email to an existing account
+func (s *AuthService) SendBindEmailCode(userID uint, email string) (string, error) {
+	email = normalizeEmail(email)
+	if _, err := s.userRepo.FindByEmail(email); err == nil {
+		return "", ErrEmailAlreadyInUse
+	}
+	n, err := crand.Int(crand.Reader, big.NewInt(1000000))
+	if err != nil {
+		return "", err
+	}
+	code := fmt.Sprintf("%06d", n.Int64())
+	key := fmt.Sprintf("bind_email_code:%d:%s", userID, email)
+	if err := cache.Set(key, code, 10*time.Minute); err != nil {
+		return "", err
+	}
+	return code, nil
+}
+
+// BindEmail verifies code and binds email to user
+func (s *AuthService) BindEmail(userID uint, email string, code string) error {
+	email = normalizeEmail(email)
+	key := fmt.Sprintf("bind_email_code:%d:%s", userID, email)
+	stored, err := cache.Get(key)
+	if err != nil || stored != code {
+		return errors.New("Invalid or expired verification code")
+	}
+	_ = cache.Del(key)
+	if _, err := s.userRepo.FindByEmail(email); err == nil {
+		return ErrEmailAlreadyInUse
+	}
+	user, err := s.userRepo.FindByID(userID)
+	if err != nil {
+		return err
+	}
+	user.Email = email
+	user.EmailVerified = true
+	return s.userRepo.Update(user)
+}
+
+// SendBindPhoneCode generates a code for binding phone to an existing account
+func (s *AuthService) SendBindPhoneCode(userID uint, phone string) (string, error) {
+	if _, err := s.userRepo.FindByPhone(phone); err == nil {
+		return "", ErrPhoneAlreadyInUse
+	}
+	n, err := crand.Int(crand.Reader, big.NewInt(1000000))
+	if err != nil {
+		return "", err
+	}
+	code := fmt.Sprintf("%06d", n.Int64())
+	key := fmt.Sprintf("bind_phone_code:%d:%s", userID, phone)
+	if err := cache.Set(key, code, 10*time.Minute); err != nil {
+		return "", err
+	}
+	return code, nil
+}
+
+// BindPhone verifies code and binds phone to user
+func (s *AuthService) BindPhone(userID uint, phone string, code string) error {
+	key := fmt.Sprintf("bind_phone_code:%d:%s", userID, phone)
+	stored, err := cache.Get(key)
+	if err != nil || stored != code {
+		return errors.New("Invalid or expired verification code")
+	}
+	_ = cache.Del(key)
+	if _, err := s.userRepo.FindByPhone(phone); err == nil {
+		return ErrPhoneAlreadyInUse
+	}
+	user, err := s.userRepo.FindByID(userID)
+	if err != nil {
+		return err
+	}
+	user.Phone = &phone
+	return s.userRepo.Update(user)
+}
+
+// VerifyPhoneRegisterCode 验证手机注册验证码
+func (s *AuthService) VerifyPhoneRegisterCode(phone, code string) error {
+	key := "phone_register_code:" + phone
+	storedCode, err := cache.Get(key)
+	if err != nil {
+		return errors.New("Verification code expired or invalid")
+	}
+	if storedCode != code {
+		return errors.New("Invalid verification code")
+	}
+	_ = cache.Del(key)
+	return nil
+}

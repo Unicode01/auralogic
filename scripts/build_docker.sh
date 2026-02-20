@@ -82,6 +82,10 @@ save_config() {
   _sv LAST_SMTP_FROM_EMAIL "$SMTP_FROM_EMAIL"
   _sv LAST_SMTP_FROM_NAME "$SMTP_FROM_NAME"
 
+  # SMS (不保存密钥)
+  _sv LAST_SMS_ENABLED "$SMS_ENABLED"
+  _sv LAST_SMS_PROVIDER "$SMS_PROVIDER"
+
   # 管理员 (不保存密码)
   _sv LAST_ADMIN_EMAIL "$ADMIN_EMAIL"
   _sv LAST_ADMIN_NAME "$ADMIN_NAME"
@@ -549,6 +553,69 @@ read_smtp_config() {
 }
 
 # ---------------------------
+# 用户输入 - SMS 配置 (可选)
+# ---------------------------
+read_sms_config() {
+  step "SMS 短信配置 (可选)"
+
+  local sms_hint="y/N"
+  [ "${LAST_SMS_ENABLED}" = "true" ] && sms_hint="Y/n"
+  read -rp "$(echo -e "${CYAN}是否启用 SMS 短信服务?${NC} [${sms_hint}]: ")" enable_sms
+
+  if [ -z "$enable_sms" ]; then
+    [ "${LAST_SMS_ENABLED}" = "true" ] && enable_sms="Y" || enable_sms="N"
+  fi
+
+  if [[ "$enable_sms" =~ ^[Yy]$ ]]; then
+    SMS_ENABLED="true"
+
+    local def_provider="${LAST_SMS_PROVIDER:-aliyun}"
+    echo "选择 SMS 服务商:"
+    echo "  1) 阿里云 (aliyun)"
+    echo "  2) Twilio"
+    echo "  3) 自定义 HTTP (custom)"
+    local def_sms_choice="1"
+    case "$def_provider" in
+      twilio) def_sms_choice="2" ;;
+      custom) def_sms_choice="3" ;;
+    esac
+    read -rp "请选择 [${def_sms_choice}]: " sms_choice
+    sms_choice="${sms_choice:-$def_sms_choice}"
+
+    case "$sms_choice" in
+      1)
+        SMS_PROVIDER="aliyun"
+        read -rp "$(echo -e "${CYAN}阿里云 AccessKey ID${NC}: ")" SMS_ALIYUN_AK_ID
+        read -rsp "$(echo -e "${CYAN}阿里云 AccessKey Secret${NC}: ")" SMS_ALIYUN_AK_SECRET
+        echo ""
+        read -rp "$(echo -e "${CYAN}短信签名${NC}: ")" SMS_ALIYUN_SIGN
+        read -rp "$(echo -e "${CYAN}模板 Code${NC}: ")" SMS_ALIYUN_TPL
+        ;;
+      2)
+        SMS_PROVIDER="twilio"
+        read -rp "$(echo -e "${CYAN}Twilio Account SID${NC}: ")" SMS_TWILIO_SID
+        read -rsp "$(echo -e "${CYAN}Twilio Auth Token${NC}: ")" SMS_TWILIO_TOKEN
+        echo ""
+        read -rp "$(echo -e "${CYAN}Twilio From Number${NC}: ")" SMS_TWILIO_FROM
+        ;;
+      3)
+        SMS_PROVIDER="custom"
+        read -rp "$(echo -e "${CYAN}自定义 API URL${NC}: ")" SMS_CUSTOM_URL
+        read -rp "$(echo -e "${CYAN}HTTP Method${NC} [POST]: ")" SMS_CUSTOM_METHOD
+        SMS_CUSTOM_METHOD="${SMS_CUSTOM_METHOD:-POST}"
+        ;;
+      *)
+        err "无效选择"; exit 1 ;;
+    esac
+  else
+    SMS_ENABLED="false"
+    SMS_PROVIDER="aliyun"
+  fi
+
+  ok "SMS 配置完成"
+}
+
+# ---------------------------
 # 用户输入 - 管理员账号
 # ---------------------------
 read_admin_config() {
@@ -615,6 +682,12 @@ confirm_config() {
   if [ "$SMTP_ENABLED" = "true" ]; then
     echo "  主机:     $SMTP_HOST:$SMTP_PORT"
     echo "  发件人:   $SMTP_FROM_EMAIL"
+  fi
+  echo ""
+  echo "SMS:"
+  echo "  启用:     $SMS_ENABLED"
+  if [ "$SMS_ENABLED" = "true" ]; then
+    echo "  服务商:   $SMS_PROVIDER"
   fi
   echo ""
   echo "管理员:"
@@ -727,6 +800,23 @@ generate_configs() {
     "from_email": "$SMTP_FROM_EMAIL",
     "from_name": "$SMTP_FROM_NAME"
   },
+  "sms": {
+    "enabled": $SMS_ENABLED,
+    "provider": "$SMS_PROVIDER",
+    "aliyun_access_key_id": "${SMS_ALIYUN_AK_ID:-}",
+    "aliyun_access_secret": "${SMS_ALIYUN_AK_SECRET:-}",
+    "aliyun_sign_name": "${SMS_ALIYUN_SIGN:-}",
+    "aliyun_template_code": "${SMS_ALIYUN_TPL:-}",
+    "templates": {"login": "", "register": "", "reset_password": "", "bind_phone": ""},
+    "dypns_code_length": 6,
+    "twilio_account_sid": "${SMS_TWILIO_SID:-}",
+    "twilio_auth_token": "${SMS_TWILIO_TOKEN:-}",
+    "twilio_from_number": "${SMS_TWILIO_FROM:-}",
+    "custom_url": "${SMS_CUSTOM_URL:-}",
+    "custom_method": "${SMS_CUSTOM_METHOD:-POST}",
+    "custom_headers": {},
+    "custom_body_template": ""
+  },
   "security": {
     "ip_header": "X-Real-IP",
     "trusted_proxies": ["127.0.0.1/32"],
@@ -736,7 +826,8 @@ generate_configs() {
       "secret_key": "",
       "enable_for_login": false,
       "enable_for_register": false,
-      "enable_for_serial_verify": false
+      "enable_for_serial_verify": false,
+      "enable_for_bind": false
     },
     "cors": {
       "allowed_origins": ["$APP_URL", "http://localhost:3000"],
@@ -747,7 +838,12 @@ generate_configs() {
     "login": {
       "allow_password_login": true,
       "allow_registration": true,
-      "require_email_verification": false
+      "require_email_verification": false,
+      "allow_email_login": false,
+      "allow_password_reset": false,
+      "allow_phone_login": false,
+      "allow_phone_register": false,
+      "allow_phone_password_reset": false
     },
     "password_policy": {
       "min_length": 8,
@@ -766,6 +862,16 @@ generate_configs() {
     "user_request": 600,
     "user_login": 100,
     "admin_request": 2000
+  },
+  "email_rate_limit": {
+    "hourly": 0,
+    "daily": 0,
+    "exceed_action": "cancel"
+  },
+  "sms_rate_limit": {
+    "hourly": 0,
+    "daily": 0,
+    "exceed_action": "cancel"
   },
   "order": {
     "auto_cancel_hours": 72,
@@ -1256,6 +1362,7 @@ full_build() {
   read_jwt_config
   read_oauth_config
   read_smtp_config
+  read_sms_config
   read_admin_config
   confirm_config
   save_config

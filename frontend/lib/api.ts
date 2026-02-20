@@ -1,7 +1,7 @@
 import axios, { AxiosInstance } from 'axios'
 import { getToken, clearToken } from './auth'
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'https://auralogic.un1c0de.com'
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || ''
 
 // 创建axios实例
 const apiClient: AxiosInstance = axios.create({
@@ -38,7 +38,7 @@ apiClient.interceptors.response.use(
       clearToken()
     }
 
-    const message = error.response?.data?.message || '请求失败'
+    const message = error.response?.data?.message || 'Request failed'
     const apiError: any = new Error(message)
     apiError.code = error.response?.data?.code
     apiError.data = error.response?.data?.data
@@ -301,6 +301,30 @@ export async function resetPassword(data: { token: string; new_password: string 
   return apiClient.post('/api/user/auth/reset-password', data)
 }
 
+export async function sendPhoneCode(data: { phone: string; phone_code?: string; captcha_token?: string }) {
+  return apiClient.post('/api/user/auth/send-phone-code', data)
+}
+
+export async function loginWithPhoneCode(data: { phone: string; phone_code?: string; code: string }) {
+  return apiClient.post('/api/user/auth/login-with-phone-code', data)
+}
+
+export async function sendPhoneRegisterCode(data: { phone: string; phone_code?: string; captcha_token?: string }) {
+  return apiClient.post('/api/user/auth/send-phone-register-code', data)
+}
+
+export async function phoneRegister(data: { phone: string; phone_code?: string; name: string; password: string; code: string; captcha_token?: string }) {
+  return apiClient.post('/api/user/auth/phone-register', data)
+}
+
+export async function phoneForgotPassword(data: { phone: string; phone_code?: string; captcha_token?: string }) {
+  return apiClient.post('/api/user/auth/phone-forgot-password', data)
+}
+
+export async function phoneResetPassword(data: { phone: string; phone_code?: string; code: string; new_password: string }) {
+  return apiClient.post('/api/user/auth/phone-reset-password', data)
+}
+
 export async function logout() {
   return apiClient.post('/api/user/auth/logout')
 }
@@ -318,6 +342,22 @@ export async function changePassword(oldPassword: string, newPassword: string) {
 
 export async function updateUserPreferences(data: { locale?: string; country?: string }) {
   return apiClient.put('/api/user/auth/preferences', data)
+}
+
+export async function sendBindEmailCode(email: string, captcha_token?: string) {
+  return apiClient.post('/api/user/auth/send-bind-email-code', { email, captcha_token })
+}
+
+export async function bindEmail(email: string, code: string) {
+  return apiClient.post('/api/user/auth/bind-email', { email, code })
+}
+
+export async function sendBindPhoneCode(phone: string, phone_code?: string, captcha_token?: string) {
+  return apiClient.post('/api/user/auth/send-bind-phone-code', { phone, phone_code, captcha_token })
+}
+
+export async function bindPhone(phone: string, code: string) {
+  return apiClient.post('/api/user/auth/bind-phone', { phone, code })
 }
 
 export async function getCaptcha() {
@@ -730,6 +770,27 @@ export async function getEmailLogs(params?: {
   return apiClient.get(`/api/admin/logs/emails?${query}`)
 }
 
+export async function getSmsLogs(params?: {
+  page?: number
+  limit?: number
+  status?: string
+  event_type?: string
+  phone?: string
+  start_date?: string
+  end_date?: string
+}) {
+  const query = new URLSearchParams()
+  if (params?.page) query.append('page', params.page.toString())
+  if (params?.limit) query.append('limit', params.limit.toString())
+  if (params?.status) query.append('status', params.status)
+  if (params?.event_type) query.append('event_type', params.event_type)
+  if (params?.phone) query.append('phone', params.phone)
+  if (params?.start_date) query.append('start_date', params.start_date)
+  if (params?.end_date) query.append('end_date', params.end_date)
+
+  return apiClient.get(`/api/admin/logs/sms?${query}`)
+}
+
 export async function getLogStatistics() {
   return apiClient.get('/api/admin/logs/statistics')
 }
@@ -1006,6 +1067,10 @@ export async function updateSettings(data: any) {
 
 export async function testSMTP(data: any) {
   return apiClient.post('/api/admin/settings/smtp/test', data)
+}
+
+export async function testSMS(data: { phone: string }) {
+  return apiClient.post('/api/admin/settings/sms/test', data)
 }
 
 // 邮件模板管理

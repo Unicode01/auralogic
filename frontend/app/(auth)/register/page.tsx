@@ -18,17 +18,19 @@ import { createRegisterSchema, registerSchema } from '@/lib/validators'
 import { useLocale } from '@/hooks/use-locale'
 import { usePageTitle } from '@/hooks/use-page-title'
 import { getTranslations } from '@/lib/i18n'
-import { Loader2, Mail, Lock, ArrowRight, User } from 'lucide-react'
+import { Loader2, Mail, Lock, ArrowRight, User, Phone, KeyRound } from 'lucide-react'
 import Link from 'next/link'
 import { useQuery } from '@tanstack/react-query'
-import { getPublicConfig, getCaptcha } from '@/lib/api'
+import { getPublicConfig, getCaptcha, sendPhoneRegisterCode } from '@/lib/api'
 import { useRouter } from 'next/navigation'
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, useCallback } from 'react'
+import toast from 'react-hot-toast'
 import { useTheme } from '@/contexts/theme-context'
 import { AuthBrandingPanel } from '@/components/auth-branding-panel'
+import { PhoneInput } from '@/components/phone-input'
 
 export default function RegisterPage() {
-  const { register: registerUser, isRegistering } = useAuth()
+  const { register: registerUser, isRegistering, registerWithPhone, isRegisteringWithPhone } = useAuth()
   const { locale } = useLocale()
   const t = getTranslations(locale)
   usePageTitle(t.pageTitle.register)
@@ -39,6 +41,15 @@ export default function RegisterPage() {
   const captchaContainerRef = useRef<HTMLDivElement>(null)
   const widgetRendered = useRef(false)
   const widgetIdRef = useRef<any>(null)
+  const [mode, setMode] = useState<'email' | 'phone'>('email')
+  const [phoneNumber, setPhoneNumber] = useState('')
+  const [phoneCountryCode, setPhoneCountryCode] = useState('+86')
+  const [phoneName, setPhoneName] = useState('')
+  const [phonePassword, setPhonePassword] = useState('')
+  const [phoneConfirmPassword, setPhoneConfirmPassword] = useState('')
+  const [phoneCode, setPhoneCode] = useState('')
+  const [countdown, setCountdown] = useState(0)
+  const [sendingCode, setSendingCode] = useState(false)
 
   const { data: publicConfig } = useQuery({
     queryKey: ['publicConfig'],
@@ -46,6 +57,7 @@ export default function RegisterPage() {
   })
 
   const allowRegistration = publicConfig?.data?.allow_registration
+  const allowPhoneRegister = publicConfig?.data?.allow_phone_register
   const captchaConfig = publicConfig?.data?.captcha
   const needCaptcha = captchaConfig?.provider && captchaConfig.provider !== 'none' && captchaConfig.enable_for_register
 
@@ -55,12 +67,61 @@ export default function RegisterPage() {
     enabled: needCaptcha && captchaConfig?.provider === 'builtin',
   })
 
-  // If registration is disabled, redirect to login
+  // If all registration is disabled, redirect to login
   useEffect(() => {
-    if (publicConfig && !allowRegistration) {
+    if (publicConfig && !allowRegistration && !allowPhoneRegister) {
       router.replace('/login')
     }
-  }, [publicConfig, allowRegistration, router])
+  }, [publicConfig, allowRegistration, allowPhoneRegister, router])
+
+  // Countdown timer for phone code
+  useEffect(() => {
+    if (countdown <= 0) return
+    const timer = setTimeout(() => setCountdown(countdown - 1), 1000)
+    return () => clearTimeout(timer)
+  }, [countdown])
+
+  const handleSendPhoneCode = useCallback(async () => {
+    if (!phoneNumber || sendingCode || countdown > 0) return
+    setSendingCode(true)
+    try {
+      let token = captchaToken
+      if (needCaptcha && captchaConfig?.provider === 'builtin') {
+        token = `${builtinCaptcha?.data?.captcha_id}:${builtinCode}`
+      }
+      await sendPhoneRegisterCode({ phone: phoneNumber, phone_code: phoneCountryCode, captcha_token: token || undefined })
+      toast.success(t.auth.phoneCodeSent)
+      setCountdown(60)
+    } catch {
+      toast.error(t.auth.requestFailed)
+      resetCaptcha()
+    } finally {
+      setSendingCode(false)
+    }
+  }, [phoneNumber, sendingCode, countdown, captchaToken, needCaptcha, captchaConfig, builtinCaptcha, builtinCode])
+
+  function onPhoneSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!phoneNumber || !phoneName || !phonePassword || phoneCode.length !== 6) return
+    if (phonePassword !== phoneConfirmPassword) {
+      toast.error(t.auth.passwordMismatch)
+      return
+    }
+    let token = captchaToken
+    if (needCaptcha && captchaConfig?.provider === 'builtin') {
+      token = `${builtinCaptcha?.data?.captcha_id}:${builtinCode}`
+    }
+    registerWithPhone({
+      phone: phoneNumber,
+      phone_code: phoneCountryCode,
+      name: phoneName,
+      password: phonePassword,
+      code: phoneCode,
+      captcha_token: token || undefined,
+    }, {
+      onError: () => resetCaptcha(),
+    })
+  }
 
   // Load Turnstile/reCAPTCHA scripts
   useEffect(() => {
@@ -172,9 +233,11 @@ export default function RegisterPage() {
     })
   }
 
-  if (publicConfig && !allowRegistration) {
+  if (publicConfig && !allowRegistration && !allowPhoneRegister) {
     return null
   }
+
+  const showModeSwitcher = allowRegistration && allowPhoneRegister
 
   return (
     <div className="min-h-screen flex">
@@ -182,7 +245,7 @@ export default function RegisterPage() {
 
       {/* Right form panel */}
       <div className="flex-1 flex items-center justify-center p-6 sm:p-12 bg-background">
-        <div className="w-full max-w-sm space-y-5 sm:space-y-8">
+        <div className="w-full max-w-sm space-y-4 sm:space-y-6">
           {/* Mobile logo */}
           <div className="lg:hidden text-center">
             <h1 className="text-2xl font-bold text-foreground tracking-tight">
@@ -193,21 +256,116 @@ export default function RegisterPage() {
           {/* Header */}
           <div className="space-y-2">
             <h2 className="text-2xl font-semibold tracking-tight text-foreground">
-              {t.auth.welcomeRegister}
+              {mode === 'phone' ? t.auth.phoneRegister : t.auth.welcomeRegister}
             </h2>
             <p className="text-sm text-muted-foreground">
-              {t.auth.registerDescription}
+              {mode === 'phone' ? t.auth.phoneRegisterDesc : t.auth.registerDescription}
             </p>
           </div>
 
-          {/* Form */}
+          {/* Mode switcher */}
+          {showModeSwitcher && (
+            <div className="flex gap-2 p-1 bg-muted rounded-lg">
+              <button type="button" onClick={() => { setMode('email'); widgetRendered.current = false }}
+                className={`flex-1 py-1.5 text-xs font-medium rounded-md transition-colors ${mode === 'email' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}>
+                {t.auth.register}
+              </button>
+              <button type="button" onClick={() => { setMode('phone'); widgetRendered.current = false }}
+                className={`flex-1 py-1.5 text-xs font-medium rounded-md transition-colors ${mode === 'phone' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}>
+                {t.auth.phoneRegister}
+              </button>
+            </div>
+          )}
+
+          {/* Phone registration form */}
+          {mode === 'phone' ? (
+            <form onSubmit={onPhoneSubmit} className="space-y-3">
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium">{t.auth.phone}</label>
+                <PhoneInput countryCode={phoneCountryCode} onCountryCodeChange={setPhoneCountryCode}
+                  phone={phoneNumber} onPhoneChange={setPhoneNumber} placeholder={t.auth.phonePlaceholder} />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium">{t.auth.name}</label>
+                <div className="relative">
+                  <User className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Input placeholder={t.auth.namePlaceholder} className="pl-10 h-10"
+                    value={phoneName} onChange={(e) => setPhoneName(e.target.value)} />
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium">{t.auth.password}</label>
+                <div className="relative">
+                  <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Input type="password" placeholder={t.auth.passwordPlaceholder} className="pl-10 h-10"
+                    value={phonePassword} onChange={(e) => setPhonePassword(e.target.value)} />
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium">{t.auth.confirmPassword}</label>
+                <div className="relative">
+                  <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Input type="password" placeholder={t.auth.confirmPasswordPlaceholder} className="pl-10 h-10"
+                    value={phoneConfirmPassword} onChange={(e) => setPhoneConfirmPassword(e.target.value)} />
+                </div>
+              </div>
+
+              {/* Captcha - must complete before requesting SMS code */}
+              {needCaptcha && (
+                <div className="space-y-1.5">
+                  {(captchaConfig.provider === 'cloudflare' || captchaConfig.provider === 'google') && (
+                    <div ref={captchaContainerRef} />
+                  )}
+                  {captchaConfig.provider === 'builtin' && builtinCaptcha?.data && (
+                    <>
+                      <label className="text-sm font-medium">{t.auth.captcha}</label>
+                      <div className="flex items-center gap-2">
+                        <Input placeholder={t.auth.captchaPlaceholder} value={builtinCode}
+                          onChange={(e) => setBuiltinCode(e.target.value)} maxLength={4} className="h-10" />
+                        <img src={builtinCaptcha.data.image} alt="captcha"
+                          className="border border-border rounded-md h-10 shrink-0 cursor-pointer dark:brightness-90"
+                          onClick={() => { refetchCaptcha(); setBuiltinCode('') }} title={t.auth.captchaRefresh} />
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium">{t.auth.phoneCode}</label>
+                <div className="flex gap-2">
+                  <div className="relative flex-1">
+                    <KeyRound className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <Input placeholder={t.auth.phoneCodePlaceholder} className="pl-10 h-10"
+                      value={phoneCode} onChange={(e) => setPhoneCode(e.target.value)} maxLength={6} />
+                  </div>
+                  <Button type="button" variant="outline" className="h-10 shrink-0 text-xs"
+                    disabled={!phoneNumber || sendingCode || countdown > 0 || (needCaptcha && !captchaToken && !(captchaConfig?.provider === 'builtin' && builtinCode))} onClick={handleSendPhoneCode}>
+                    {sendingCode ? t.auth.sendingCode : countdown > 0 ? (t.auth.codeResendIn as string).replace('{n}', String(countdown)) : t.auth.sendPhoneCode}
+                  </Button>
+                </div>
+              </div>
+
+              <Button type="submit" className="w-full h-10 text-sm font-medium" disabled={isRegisteringWithPhone || phoneCode.length !== 6}>
+                {isRegisteringWithPhone ? (
+                  <><Loader2 className="mr-2 h-4 w-4 animate-spin" />{t.auth.registering}</>
+                ) : (
+                  <>{t.auth.createAccount}<ArrowRight className="ml-2 h-4 w-4" /></>
+                )}
+              </Button>
+            </form>
+          ) : (
+          /* Email registration form */
           <Form {...form}>
-            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4 sm:space-y-5">
+            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-3">
               <FormField
                 control={form.control}
                 name="email"
                 render={({ field }) => (
-                  <FormItem className="space-y-2">
+                  <FormItem className="space-y-1.5">
                     <FormLabel className="text-sm font-medium">{t.auth.email}</FormLabel>
                     <FormControl>
                       <div className="relative">
@@ -215,7 +373,7 @@ export default function RegisterPage() {
                         <Input
                           type="email"
                           placeholder={t.auth.emailPlaceholder}
-                          className="pl-10 h-11"
+                          className="pl-10 h-10"
                           {...field}
                         />
                       </div>
@@ -229,7 +387,7 @@ export default function RegisterPage() {
                 control={form.control}
                 name="name"
                 render={({ field }) => (
-                  <FormItem className="space-y-2">
+                  <FormItem className="space-y-1.5">
                     <FormLabel className="text-sm font-medium">{t.auth.name}</FormLabel>
                     <FormControl>
                       <div className="relative">
@@ -237,7 +395,7 @@ export default function RegisterPage() {
                         <Input
                           type="text"
                           placeholder={t.auth.namePlaceholder}
-                          className="pl-10 h-11"
+                          className="pl-10 h-10"
                           {...field}
                         />
                       </div>
@@ -251,7 +409,7 @@ export default function RegisterPage() {
                 control={form.control}
                 name="password"
                 render={({ field }) => (
-                  <FormItem className="space-y-2">
+                  <FormItem className="space-y-1.5">
                     <FormLabel className="text-sm font-medium">{t.auth.password}</FormLabel>
                     <FormControl>
                       <div className="relative">
@@ -259,7 +417,7 @@ export default function RegisterPage() {
                         <Input
                           type="password"
                           placeholder={t.auth.passwordPlaceholder}
-                          className="pl-10 h-11"
+                          className="pl-10 h-10"
                           {...field}
                         />
                       </div>
@@ -273,7 +431,7 @@ export default function RegisterPage() {
                 control={form.control}
                 name="confirm_password"
                 render={({ field }) => (
-                  <FormItem className="space-y-2">
+                  <FormItem className="space-y-1.5">
                     <FormLabel className="text-sm font-medium">{t.auth.confirmPassword}</FormLabel>
                     <FormControl>
                       <div className="relative">
@@ -281,7 +439,7 @@ export default function RegisterPage() {
                         <Input
                           type="password"
                           placeholder={t.auth.confirmPasswordPlaceholder}
-                          className="pl-10 h-11"
+                          className="pl-10 h-10"
                           {...field}
                         />
                       </div>
@@ -293,7 +451,7 @@ export default function RegisterPage() {
 
               {/* Captcha */}
               {needCaptcha && (
-                <div className="space-y-2">
+                <div className="space-y-1.5">
                   {(captchaConfig.provider === 'cloudflare' || captchaConfig.provider === 'google') && (
                     <div ref={captchaContainerRef} />
                   )}
@@ -306,12 +464,12 @@ export default function RegisterPage() {
                           value={builtinCode}
                           onChange={(e) => setBuiltinCode(e.target.value)}
                           maxLength={4}
-                          className="h-11"
+                          className="h-10"
                         />
                         <img
                           src={builtinCaptcha.data.image}
                           alt="captcha"
-                          className="border border-border rounded-md h-11 shrink-0 cursor-pointer dark:brightness-90"
+                          className="border border-border rounded-md h-10 shrink-0 cursor-pointer dark:brightness-90"
                           onClick={() => { refetchCaptcha(); setBuiltinCode('') }}
                           title={t.auth.captchaRefresh}
                         />
@@ -323,7 +481,7 @@ export default function RegisterPage() {
 
               <Button
                 type="submit"
-                className="w-full h-11 text-sm font-medium"
+                className="w-full h-10 text-sm font-medium"
                 disabled={isRegistering}
               >
                 {isRegistering ? (
@@ -340,6 +498,7 @@ export default function RegisterPage() {
               </Button>
             </form>
           </Form>
+          )}
 
           {/* Footer */}
           <p className="text-center text-xs text-muted-foreground">

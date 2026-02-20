@@ -1,7 +1,7 @@
 'use client'
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { getCurrentUser, login, loginWithCode, logout, register } from '@/lib/api'
+import { getCurrentUser, login, loginWithCode, loginWithPhoneCode, logout, register, phoneRegister } from '@/lib/api'
 import { setToken, clearToken, setUser } from '@/lib/auth'
 import { useRouter } from 'next/navigation'
 import toast from 'react-hot-toast'
@@ -122,6 +122,30 @@ export function useAuth() {
     },
   })
 
+  // 手机验证码登录
+  const loginWithPhoneCodeMutation = useMutation({
+    mutationFn: loginWithPhoneCode,
+    onSuccess: (data: any) => {
+      setToken(data.data.token)
+      const user = data.data.user
+      const pending = typeof window !== 'undefined' ? localStorage.getItem('auralogic_locale_pending_sync') : null
+      const stored = typeof window !== 'undefined' ? localStorage.getItem('auralogic_locale') : null
+      const serverLocale = user?.locale
+      let desired: Locale | null = null
+      if (pending === 'zh' || pending === 'en') desired = pending
+      else if (serverLocale === 'zh' || serverLocale === 'en') desired = serverLocale
+      else if (stored === 'zh' || stored === 'en') desired = stored
+      const finalUser = desired ? { ...user, locale: desired } : user
+      setUser(finalUser)
+      if (desired) setLocale(desired)
+      queryClient.setQueryData(['currentUser'], { data: finalUser })
+      router.push('/orders')
+    },
+    onError: (error: any) => {
+      toast.error(getErrorMessage(error, t.auth.loginFailed))
+    },
+  })
+
   // 注册
   const registerMutation = useMutation({
     mutationFn: register,
@@ -158,6 +182,30 @@ export function useAuth() {
     },
   })
 
+  // 手机号注册
+  const phoneRegisterMutation = useMutation({
+    mutationFn: phoneRegister,
+    onSuccess: (data: any) => {
+      setToken(data.data.token)
+      const user = data.data.user
+      const pending = typeof window !== 'undefined' ? localStorage.getItem('auralogic_locale_pending_sync') : null
+      const stored = typeof window !== 'undefined' ? localStorage.getItem('auralogic_locale') : null
+      const serverLocale = user?.locale
+      let desired: Locale | null = null
+      if (pending === 'zh' || pending === 'en') desired = pending
+      else if (serverLocale === 'zh' || serverLocale === 'en') desired = serverLocale
+      else if (stored === 'zh' || stored === 'en') desired = stored
+      const finalUser = desired ? { ...user, locale: desired } : user
+      setUser(finalUser)
+      if (desired) setLocale(desired)
+      queryClient.setQueryData(['currentUser'], { data: finalUser })
+      router.push('/orders')
+    },
+    onError: (error: Error) => {
+      toast.error(getErrorMessage(error, t.auth.registerFailed))
+    },
+  })
+
   // 登出
   const logoutMutation = useMutation({
     mutationFn: logout,
@@ -180,10 +228,14 @@ export function useAuth() {
     isAuthenticated,
     login: loginMutation.mutate,
     loginWithCode: loginWithCodeMutation.mutate,
+    loginWithPhoneCode: loginWithPhoneCodeMutation.mutate,
     logout: logoutMutation.mutate,
     isLoggingIn: loginMutation.isPending,
     isLoggingInWithCode: loginWithCodeMutation.isPending,
+    isLoggingInWithPhoneCode: loginWithPhoneCodeMutation.isPending,
     register: registerMutation.mutate,
     isRegistering: registerMutation.isPending,
+    registerWithPhone: phoneRegisterMutation.mutate,
+    isRegisteringWithPhone: phoneRegisterMutation.isPending,
   }
 }

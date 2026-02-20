@@ -133,6 +133,70 @@ func (h *LogHandler) ListEmailLogs(c *gin.Context) {
 	response.Paginated(c, logs, page, limit, total)
 }
 
+// ListSmsLogs get短信日志列表
+func (h *LogHandler) ListSmsLogs(c *gin.Context) {
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
+	status := c.Query("status")
+	eventType := c.Query("event_type")
+	phone := c.Query("phone")
+	startDate := c.Query("start_date")
+	endDate := c.Query("end_date")
+
+	if limit > 100 {
+		limit = 100
+	}
+
+	var logs []models.SmsLog
+	var total int64
+
+	query := h.db.Model(&models.SmsLog{}).Preload("User")
+
+	if status != "" {
+		query = query.Where("status = ?", status)
+	}
+	if eventType != "" {
+		query = query.Where("event_type = ?", eventType)
+	}
+	if phone != "" {
+		query = query.Where("phone LIKE ?", "%"+phone+"%")
+	}
+	if startDate != "" {
+		if t, err := time.Parse("2006-01-02", startDate); err == nil {
+			query = query.Where("created_at >= ?", t)
+		}
+	}
+	if endDate != "" {
+		if t, err := time.Parse("2006-01-02", endDate); err == nil {
+			t = t.Add(24*time.Hour - time.Second)
+			query = query.Where("created_at <= ?", t)
+		}
+	}
+
+	if err := query.Count(&total).Error; err != nil {
+		response.InternalError(c, "Query failed")
+		return
+	}
+
+	offset := (page - 1) * limit
+	if err := query.Order("created_at DESC").Offset(offset).Limit(limit).Find(&logs).Error; err != nil {
+		response.InternalError(c, "Query failed")
+		return
+	}
+
+	// 返回脱敏内容
+	type smsLogView struct {
+		models.SmsLog
+		MaskedContent string `json:"content"`
+	}
+	items := make([]smsLogView, len(logs))
+	for i, l := range logs {
+		items[i] = smsLogView{SmsLog: l, MaskedContent: models.MaskContent(l.Content)}
+	}
+
+	response.Paginated(c, items, page, limit, total)
+}
+
 // GetLogStatistics get日志统计Info
 func (h *LogHandler) GetLogStatistics(c *gin.Context) {
 	var stats struct {
@@ -149,7 +213,17 @@ func (h *LogHandler) GetLogStatistics(c *gin.Context) {
 			Total   int64 `json:"total"`
 			Pending int64 `json:"pending"`
 			Failed  int64 `json:"failed"`
+			Expired int64 `json:"expired"`
 		} `json:"email_log_count"`
+		SmsLogCount struct {
+			Today   int64 `json:"today"`
+			Week    int64 `json:"week"`
+			Month   int64 `json:"month"`
+			Total   int64 `json:"total"`
+			Pending int64 `json:"pending"`
+			Failed  int64 `json:"failed"`
+			Expired int64 `json:"expired"`
+		} `json:"sms_log_count"`
 		TopActions []struct {
 			Action string `json:"action"`
 			Count  int64  `json:"count"`
@@ -157,7 +231,7 @@ func (h *LogHandler) GetLogStatistics(c *gin.Context) {
 	}
 
 	now := time.Now()
-	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()).UTC()
 	weekStart := todayStart.AddDate(0, 0, -7)
 	monthStart := todayStart.AddDate(0, -1, 0)
 
@@ -174,6 +248,16 @@ func (h *LogHandler) GetLogStatistics(c *gin.Context) {
 	h.db.Model(&models.EmailLog{}).Where("created_at >= ?", monthStart).Count(&stats.EmailLogCount.Month)
 	h.db.Model(&models.EmailLog{}).Where("status = ?", models.EmailLogStatusPending).Count(&stats.EmailLogCount.Pending)
 	h.db.Model(&models.EmailLog{}).Where("status = ?", models.EmailLogStatusFailed).Count(&stats.EmailLogCount.Failed)
+	h.db.Model(&models.EmailLog{}).Where("status = ?", models.EmailLogStatusExpired).Count(&stats.EmailLogCount.Expired)
+
+	// 短信日志统计
+	h.db.Model(&models.SmsLog{}).Count(&stats.SmsLogCount.Total)
+	h.db.Model(&models.SmsLog{}).Where("created_at >= ?", todayStart).Count(&stats.SmsLogCount.Today)
+	h.db.Model(&models.SmsLog{}).Where("created_at >= ?", weekStart).Count(&stats.SmsLogCount.Week)
+	h.db.Model(&models.SmsLog{}).Where("created_at >= ?", monthStart).Count(&stats.SmsLogCount.Month)
+	h.db.Model(&models.SmsLog{}).Where("status = ?", models.SmsLogStatusPending).Count(&stats.SmsLogCount.Pending)
+	h.db.Model(&models.SmsLog{}).Where("status = ?", models.SmsLogStatusFailed).Count(&stats.SmsLogCount.Failed)
+	h.db.Model(&models.SmsLog{}).Where("status = ?", models.SmsLogStatusExpired).Count(&stats.SmsLogCount.Expired)
 
 	// 热门操作统计
 	h.db.Model(&models.OperationLog{}).
@@ -199,12 +283,14 @@ func (h *LogHandler) RetryFailedEmails(c *gin.Context) {
 		return
 	}
 
-	// Update状态为待发送
+	// Update状态为待发送，重置过期时间
+	newExpire := time.Now().Add(30 * time.Minute)
 	result := h.db.Model(&models.EmailLog{}).
-		Where("id IN ? AND status = ?", req.EmailIDs, models.EmailLogStatusFailed).
+		Where("id IN ? AND status IN ?", req.EmailIDs, []models.EmailLogStatus{models.EmailLogStatusFailed, models.EmailLogStatusExpired}).
 		Updates(map[string]interface{}{
 			"status":     models.EmailLogStatusPending,
 			"sent_at":    nil,
+			"expire_at":  newExpire,
 			"updated_at": time.Now(),
 		})
 

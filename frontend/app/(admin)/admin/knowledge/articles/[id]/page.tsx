@@ -12,7 +12,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Textarea } from '@/components/ui/textarea'
+import { MarkdownEditor } from '@/components/ui/markdown-editor'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
   Select,
@@ -220,10 +220,10 @@ export default function EditKnowledgeArticlePage() {
                   <TabsTrigger value="preview">{t.knowledge.previewTab}</TabsTrigger>
                 </TabsList>
                 <TabsContent value="edit">
-                  <Textarea
+                  <MarkdownEditor
                     value={form.content}
-                    onChange={(e) => setForm({ ...form, content: e.target.value })}
-                    className="min-h-[400px] font-mono"
+                    onChange={(v) => setForm({ ...form, content: v })}
+                    height="400px"
                     placeholder={t.knowledge.articleContent}
                   />
                 </TabsContent>

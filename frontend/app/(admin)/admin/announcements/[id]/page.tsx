@@ -7,7 +7,7 @@ import { getAdminAnnouncement, updateAnnouncement } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Textarea } from '@/components/ui/textarea'
+import { MarkdownEditor } from '@/components/ui/markdown-editor'
 import { Switch } from '@/components/ui/switch'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
@@ -139,10 +139,10 @@ export default function EditAnnouncementPage() {
                   <TabsTrigger value="preview">{t.announcement.previewTab}</TabsTrigger>
                 </TabsList>
                 <TabsContent value="edit">
-                  <Textarea
+                  <MarkdownEditor
                     value={form.content}
-                    onChange={(e) => setForm({ ...form, content: e.target.value })}
-                    className="min-h-[400px] font-mono"
+                    onChange={(v) => setForm({ ...form, content: v })}
+                    height="400px"
                     placeholder={t.announcement.announcementContent}
                   />
                 </TabsContent>

@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { getSettings, updateSettings, testSMTP, getEmailTemplates, getEmailTemplate, updateEmailTemplate, getLandingPage, updateLandingPage, resetLandingPage } from '@/lib/api'
+import { getSettings, updateSettings, testSMTP, testSMS, getEmailTemplates, getEmailTemplate, updateEmailTemplate, getLandingPage, updateLandingPage, resetLandingPage } from '@/lib/api'
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -23,6 +23,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import CodeMirror from '@uiw/react-codemirror'
+import { html } from '@codemirror/lang-html'
+import { css } from '@codemirror/lang-css'
+import { javascript } from '@codemirror/lang-javascript'
+import { useTheme } from '@/contexts/theme-context'
 
 // 单独的页面规则编辑卡片组件，使用本地state避免每次输入都重渲染整个设置页面
 interface PageRule {
@@ -35,12 +40,14 @@ function PageRuleItem({
   onChange,
   onDelete,
   t,
+  cmTheme,
 }: {
   rule: PageRule
   index: number
   onChange: (index: number, updated: PageRule) => void
   onDelete: (index: number) => void
   t: any
+  cmTheme?: 'light' | 'dark'
 }) {
   // 所有字段使用本地state，只在blur时同步到父组件，避免每次按键都触发2100行父组件重渲染
   const [local, setLocal] = useState(rule)
@@ -123,24 +130,30 @@ function PageRuleItem({
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <div>
             <Label className="text-xs">CSS</Label>
-            <textarea
+            <CodeMirror
               value={local.css}
-              onChange={(e) => setLocal(prev => ({ ...prev, css: e.target.value }))}
+              extensions={[css()]}
+              onChange={(v) => setLocal(prev => ({ ...prev, css: v }))}
               onBlur={handleBlur}
               placeholder={t.admin.cssPlaceholder}
-              rows={4}
-              className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-xs"
+              height="100px"
+              theme={cmTheme}
+              className="mt-1 rounded-md border border-input overflow-hidden text-xs"
+              basicSetup={{ lineNumbers: false, foldGutter: false }}
             />
           </div>
           <div>
             <Label className="text-xs">JavaScript</Label>
-            <textarea
+            <CodeMirror
               value={local.js}
-              onChange={(e) => setLocal(prev => ({ ...prev, js: e.target.value }))}
+              extensions={[javascript()]}
+              onChange={(v) => setLocal(prev => ({ ...prev, js: v }))}
               onBlur={handleBlur}
               placeholder={t.admin.jsPlaceholder}
-              rows={4}
-              className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-xs"
+              height="100px"
+              theme={cmTheme}
+              className="mt-1 rounded-md border border-input overflow-hidden text-xs"
+              basicSetup={{ lineNumbers: false, foldGutter: false }}
             />
           </div>
         </div>
@@ -157,6 +170,7 @@ function TemplateEditor({
   isSaving,
   isPreview,
   t,
+  cmTheme,
 }: {
   content: string
   onChange: (content: string) => void
@@ -164,6 +178,7 @@ function TemplateEditor({
   isSaving: boolean
   isPreview: boolean
   t: any
+  cmTheme?: 'light' | 'dark'
 }) {
   const [local, setLocal] = useState(content)
 
@@ -201,12 +216,14 @@ function TemplateEditor({
 
   return (
     <>
-      <textarea
+      <CodeMirror
         value={local}
-        onChange={(e) => setLocal(e.target.value)}
+        extensions={[html()]}
+        onChange={(v) => setLocal(v)}
         onBlur={() => onChange(local)}
-        className="w-full min-h-[500px] p-3 font-mono text-sm border rounded-md bg-muted/50 focus:outline-none focus:ring-2 focus:ring-ring resize-y"
-        spellCheck={false}
+        height="500px"
+        theme={cmTheme}
+        className="rounded-md border overflow-hidden"
       />
       <div className="flex items-center gap-2">
         <Button
@@ -233,11 +250,15 @@ function AuthBrandingCard({
   onSave,
   isSaving,
   t,
+  primaryColor,
+  cmTheme,
 }: {
   initial: AuthBrandingData
   onSave: (data: AuthBrandingData) => void
   isSaving: boolean
   t: any
+  primaryColor?: string
+  cmTheme?: 'light' | 'dark'
 }) {
   const [local, setLocal] = useState<AuthBrandingData>(initial)
   const [preview, setPreview] = useState(false)
@@ -307,21 +328,21 @@ function AuthBrandingCard({
               </Button>
             </div>
             {preview ? (
-              <div className="border rounded-md overflow-hidden bg-white">
-                <iframe
-                  srcDoc={local.custom_html}
-                  className="w-full border-0"
-                  style={{ minHeight: '300px' }}
-                  title="Auth Branding Preview"
-                  sandbox=""
+              <div className="border rounded-md overflow-hidden bg-primary" style={primaryColor ? { backgroundColor: `hsl(${primaryColor})` } : undefined}>
+                <div
+                  className="w-full"
+                  style={{ minHeight: '400px' }}
+                  dangerouslySetInnerHTML={{ __html: local.custom_html }}
                 />
               </div>
             ) : (
-              <textarea
+              <CodeMirror
                 value={local.custom_html}
-                onChange={(e) => setLocal(prev => ({ ...prev, custom_html: e.target.value }))}
-                className="w-full min-h-[300px] p-3 font-mono text-sm border rounded-md bg-muted/50 focus:outline-none focus:ring-2 focus:ring-ring resize-y"
-                spellCheck={false}
+                extensions={[html()]}
+                onChange={(v) => setLocal(prev => ({ ...prev, custom_html: v }))}
+                height="300px"
+                theme={cmTheme}
+                className="rounded-md border overflow-hidden"
               />
             )}
           </div>
@@ -343,7 +364,9 @@ export default function SettingsPage() {
   const [pageRules, setPageRules] = useState<PageRule[]>([])
   const [emailNotifications, setEmailNotifications] = useState<Record<string, boolean>>({})
   const [captchaProvider, setCaptchaProvider] = useState('none')
+  const [smsProvider, setSmsProvider] = useState('aliyun')
   const queryClient = useQueryClient()
+  const { resolvedTheme } = useTheme()
   const toast = useToast()
   const { locale } = useLocale()
   const t = getTranslations(locale)
@@ -370,6 +393,16 @@ export default function SettingsPage() {
     mutationFn: testSMTP,
     onSuccess: () => {
       toast.success(t.admin.testEmailSent)
+    },
+    onError: (error: any) => {
+      toast.error(error.message || t.admin.testFailed)
+    },
+  })
+
+  const testSMSMutation = useMutation({
+    mutationFn: testSMS,
+    onSuccess: () => {
+      toast.success(t.admin.testSmsSent)
     },
     onError: (error: any) => {
       toast.error(error.message || t.admin.testFailed)
@@ -485,6 +518,9 @@ export default function SettingsPage() {
     if (settingsData?.security?.captcha?.provider) {
       setCaptchaProvider(settingsData.security.captcha.provider)
     }
+    if (settingsData?.sms?.provider) {
+      setSmsProvider(settingsData.sms.provider)
+    }
   }, [settingsData])
 
   // 处理表单提交
@@ -531,6 +567,10 @@ export default function SettingsPage() {
           <TabsTrigger value="smtp" className="gap-1.5 px-3">
             <Mail className="h-4 w-4 shrink-0" />
             {t.admin.tabEmail}
+          </TabsTrigger>
+          <TabsTrigger value="sms" className="gap-1.5 px-3">
+            <MessageSquare className="h-4 w-4 shrink-0" />
+            {t.admin.tabSms}
           </TabsTrigger>
           <TabsTrigger value="security" className="gap-1.5 px-3">
             <Shield className="h-4 w-4 shrink-0" />
@@ -788,10 +828,10 @@ export default function SettingsPage() {
                   <Button
                     type="button"
                     variant="outline"
-                    onClick={() => {
+                    onClick={(e) => {
                       const toEmail = prompt(t.admin.enterTestEmail)
                       if (!toEmail) return
-                      const formData = new FormData(document.querySelector('form') as HTMLFormElement)
+                      const formData = new FormData((e.currentTarget as HTMLElement).closest('form') as HTMLFormElement)
                       testSMTPMutation.mutate({
                         host: formData.get('host') as string,
                         port: parseInt(formData.get('port') as string),
@@ -1019,10 +1059,195 @@ export default function SettingsPage() {
                       isSaving={saveTemplateMutation.isPending}
                       isPreview={templatePreview}
                       t={t}
+                      cmTheme={resolvedTheme === 'dark' ? 'dark' : 'light'}
                     />
                   )}
                 </>
               )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* SMS设置 */}
+        <TabsContent value="sms">
+          <Card>
+            <CardHeader>
+              <CardTitle>{t.admin.smsSettings}</CardTitle>
+              <CardDescription>{t.admin.smsSettingsDesc}</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault()
+                  const formData = new FormData(e.currentTarget)
+                  let customHeaders: Record<string, string> = {}
+                  try {
+                    const raw = (formData.get('custom_headers') as string) || ''
+                    if (raw.trim()) customHeaders = JSON.parse(raw)
+                  } catch {
+                    toast.error(t.admin.pmInvalidJson || 'Invalid JSON format')
+                    return
+                  }
+                  handleSubmit('sms', {
+                    _submitted: true,
+                    enabled: formData.get('sms_enabled') === 'on',
+                    provider: smsProvider,
+                    aliyun_access_key_id: formData.get('aliyun_access_key_id') || '',
+                    aliyun_access_secret: formData.get('aliyun_access_key_secret') || '',
+                    aliyun_sign_name: formData.get('aliyun_sign_name') || '',
+                    aliyun_template_code: formData.get('aliyun_template_code') || '',
+                    template_login: formData.get('template_login') || '',
+                    template_register: formData.get('template_register') || '',
+                    template_reset_password: formData.get('template_reset_password') || '',
+                    template_bind_phone: formData.get('template_bind_phone') || '',
+                    dypns_code_length: parseInt(formData.get('dypns_code_length') as string) || 6,
+                    twilio_account_sid: formData.get('twilio_account_sid') || '',
+                    twilio_auth_token: formData.get('twilio_auth_token') || '',
+                    twilio_from_number: formData.get('twilio_from_number') || '',
+                    custom_url: formData.get('custom_url') || '',
+                    custom_method: formData.get('custom_method') || 'POST',
+                    custom_headers: customHeaders,
+                    custom_body_template: formData.get('custom_body_template') || '',
+                  })
+                }}
+                className="space-y-4"
+              >
+                <div className="flex items-center justify-between">
+                  <div>
+                    <Label htmlFor="sms_enabled">{t.admin.enableSms}</Label>
+                    <p className="text-xs text-muted-foreground mt-1">{t.admin.enableSmsHint}</p>
+                  </div>
+                  <Switch id="sms_enabled" name="sms_enabled" defaultChecked={settingsData?.sms?.enabled} />
+                </div>
+
+                <div>
+                  <Label>{t.admin.smsProvider}</Label>
+                  <Select value={smsProvider} onValueChange={setSmsProvider}>
+                    <SelectTrigger className="mt-1.5"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="aliyun">{t.admin.smsProviderAliyun}</SelectItem>
+                      <SelectItem value="aliyun_dypns">{t.admin.smsProviderAliyunDypns}</SelectItem>
+                      <SelectItem value="twilio">{t.admin.smsProviderTwilio}</SelectItem>
+                      <SelectItem value="custom">{t.admin.smsProviderCustom}</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {(smsProvider === 'aliyun' || smsProvider === 'aliyun_dypns') && (
+                  <div className="space-y-3 border rounded-md p-4">
+                    <div>
+                      <Label>{t.admin.aliyunAccessKeyId}</Label>
+                      <Input name="aliyun_access_key_id" defaultValue={settingsData?.sms?.aliyun_access_key_id || ''} className="mt-1.5" />
+                    </div>
+                    <div>
+                      <Label>{t.admin.aliyunAccessSecret}</Label>
+                      <Input name="aliyun_access_key_secret" type="password" placeholder={t.admin.passwordPlaceholder} className="mt-1.5" />
+                    </div>
+                    <div>
+                      <Label>{t.admin.aliyunSignName}</Label>
+                      <Input name="aliyun_sign_name" defaultValue={settingsData?.sms?.aliyun_sign_name || ''} className="mt-1.5" />
+                    </div>
+                    <div>
+                      <Label>{t.admin.aliyunTemplateCode}</Label>
+                      <Input name="aliyun_template_code" defaultValue={settingsData?.sms?.aliyun_template_code || ''} className="mt-1.5" />
+                    </div>
+                    <div className="border-t pt-3 space-y-3">
+                      <p className="text-xs text-muted-foreground">{t.admin.smsTemplateHint}</p>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                        <div>
+                          <Label>{t.admin.smsTemplateLogin}</Label>
+                          <Input name="template_login" defaultValue={settingsData?.sms?.templates?.login || ''} placeholder="SMS_001" className="mt-1.5" />
+                        </div>
+                        <div>
+                          <Label>{t.admin.smsTemplateRegister}</Label>
+                          <Input name="template_register" defaultValue={settingsData?.sms?.templates?.register || ''} placeholder="SMS_002" className="mt-1.5" />
+                        </div>
+                        <div>
+                          <Label>{t.admin.smsTemplateResetPassword}</Label>
+                          <Input name="template_reset_password" defaultValue={settingsData?.sms?.templates?.reset_password || ''} placeholder="SMS_003" className="mt-1.5" />
+                        </div>
+                        <div>
+                          <Label>{t.admin.smsTemplateBindPhone}</Label>
+                          <Input name="template_bind_phone" defaultValue={settingsData?.sms?.templates?.bind_phone || ''} placeholder="SMS_004" className="mt-1.5" />
+                        </div>
+                      </div>
+                    </div>
+                    {smsProvider === 'aliyun_dypns' && (
+                      <div className="border-t pt-3 space-y-3">
+                        <p className="text-xs text-muted-foreground">{t.admin.dypnsDesc}</p>
+                        <div>
+                          <Label>{t.admin.dypnsCodeLength}</Label>
+                          <Input name="dypns_code_length" type="number" defaultValue={settingsData?.sms?.dypns_code_length || 6} className="mt-1.5" />
+                          <p className="text-xs text-muted-foreground mt-1">{t.admin.dypnsCodeLengthHint}</p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {smsProvider === 'twilio' && (
+                  <div className="space-y-3 border rounded-md p-4">
+                    <div>
+                      <Label>{t.admin.twilioAccountSid}</Label>
+                      <Input name="twilio_account_sid" defaultValue={settingsData?.sms?.twilio_account_sid || ''} className="mt-1.5" />
+                    </div>
+                    <div>
+                      <Label>{t.admin.twilioAuthToken}</Label>
+                      <Input name="twilio_auth_token" type="password" placeholder={t.admin.passwordPlaceholder} className="mt-1.5" />
+                    </div>
+                    <div>
+                      <Label>{t.admin.twilioFromNumber}</Label>
+                      <Input name="twilio_from_number" defaultValue={settingsData?.sms?.twilio_from_number || ''} className="mt-1.5" />
+                    </div>
+                  </div>
+                )}
+
+                {smsProvider === 'custom' && (
+                  <div className="space-y-3 border rounded-md p-4">
+                    <div>
+                      <Label>{t.admin.customUrl}</Label>
+                      <Input name="custom_url" defaultValue={settingsData?.sms?.custom_url || ''} className="mt-1.5" />
+                    </div>
+                    <div>
+                      <Label>{t.admin.customMethod}</Label>
+                      <Input name="custom_method" defaultValue={settingsData?.sms?.custom_method || 'POST'} className="mt-1.5" />
+                    </div>
+                    <div>
+                      <Label>{t.admin.customHeaders}</Label>
+                      <Input name="custom_headers" defaultValue={settingsData?.sms?.custom_headers ? JSON.stringify(settingsData.sms.custom_headers) : ''} placeholder='{"Content-Type":"application/json"}' className="mt-1.5" />
+                    </div>
+                    <div>
+                      <Label>{t.admin.customBodyTemplate}</Label>
+                      <textarea
+                        name="custom_body_template"
+                        defaultValue={settingsData?.sms?.custom_body_template || ''}
+                        className="mt-1.5 w-full min-h-[80px] rounded-md border border-input bg-background px-3 py-2 text-sm"
+                      />
+                      <p className="text-xs text-muted-foreground mt-1">{t.admin.customBodyTemplateHint}</p>
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex gap-2">
+                  <Button type="submit" disabled={updateMutation.isPending}>
+                    <Save className="mr-2 h-4 w-4" />
+                    {t.admin.saveSmsSettings}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => {
+                      const phone = prompt(t.admin.enterTestPhone)
+                      if (!phone) return
+                      testSMSMutation.mutate({ phone })
+                    }}
+                    disabled={testSMSMutation.isPending}
+                  >
+                    <TestTube className="mr-2 h-4 w-4" />
+                    {testSMSMutation.isPending ? t.admin.testing : t.admin.testSms}
+                  </Button>
+                </div>
+              </form>
             </CardContent>
           </Card>
         </TabsContent>
@@ -1047,51 +1272,87 @@ export default function SettingsPage() {
                         allow_password_login: formData.get('allow_password_login') === 'on',
                         allow_registration: formData.get('allow_registration') === 'on',
                         require_email_verification: formData.get('require_email_verification') === 'on',
+                        allow_email_login: formData.get('allow_email_login') === 'on',
+                        allow_password_reset: formData.get('allow_password_reset') === 'on',
+                        allow_phone_login: formData.get('allow_phone_login') === 'on',
+                        allow_phone_register: formData.get('allow_phone_register') === 'on',
+                        allow_phone_password_reset: formData.get('allow_phone_password_reset') === 'on',
                       },
                     })
                   }}
                   className="space-y-4"
                 >
+                  {/* Password & Registration */}
+                  <div className="text-sm font-medium text-muted-foreground border-b pb-1">{t.admin.loginCategoryPassword}</div>
+
                   <div className="flex items-center justify-between">
                     <div>
                       <Label htmlFor="allow_password_login">{t.admin.allowPasswordLogin}</Label>
-                      <p className="text-xs text-muted-foreground mt-1">
-                        {t.admin.allowPasswordLoginHint}
-                      </p>
+                      <p className="text-xs text-muted-foreground mt-1">{t.admin.allowPasswordLoginHint}</p>
                     </div>
-                    <Switch
-                      id="allow_password_login"
-                      name="allow_password_login"
-                      defaultChecked={settingsData?.security?.login?.allow_password_login}
-                    />
+                    <Switch id="allow_password_login" name="allow_password_login" defaultChecked={settingsData?.security?.login?.allow_password_login} />
                   </div>
 
                   <div className="flex items-center justify-between">
                     <div>
                       <Label htmlFor="allow_registration">{t.admin.allowRegistration}</Label>
-                      <p className="text-xs text-muted-foreground mt-1">
-                        {t.admin.allowRegistrationHint}
-                      </p>
+                      <p className="text-xs text-muted-foreground mt-1">{t.admin.allowRegistrationHint}</p>
                     </div>
-                    <Switch
-                      id="allow_registration"
-                      name="allow_registration"
-                      defaultChecked={settingsData?.security?.login?.allow_registration}
-                    />
+                    <Switch id="allow_registration" name="allow_registration" defaultChecked={settingsData?.security?.login?.allow_registration} />
                   </div>
+
+                  {/* Email Verification */}
+                  <div className="text-sm font-medium text-muted-foreground border-b pb-1 pt-2">{t.admin.loginCategoryEmail}</div>
 
                   <div className="flex items-center justify-between">
                     <div>
                       <Label htmlFor="require_email_verification">{t.admin.requireEmailVerification}</Label>
-                      <p className="text-xs text-muted-foreground mt-1">
-                        {t.admin.requireEmailVerificationHint}
-                      </p>
+                      <p className="text-xs text-muted-foreground mt-1">{t.admin.requireEmailVerificationHint}</p>
                     </div>
-                    <Switch
-                      id="require_email_verification"
-                      name="require_email_verification"
-                      defaultChecked={settingsData?.security?.login?.require_email_verification}
-                    />
+                    <Switch id="require_email_verification" name="require_email_verification" defaultChecked={settingsData?.security?.login?.require_email_verification} />
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <Label htmlFor="allow_email_login">{t.admin.allowEmailLogin}</Label>
+                      <p className="text-xs text-muted-foreground mt-1">{t.admin.allowEmailLoginHint}</p>
+                    </div>
+                    <Switch id="allow_email_login" name="allow_email_login" defaultChecked={settingsData?.security?.login?.allow_email_login} />
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <Label htmlFor="allow_password_reset">{t.admin.allowPasswordReset}</Label>
+                      <p className="text-xs text-muted-foreground mt-1">{t.admin.allowPasswordResetHint}</p>
+                    </div>
+                    <Switch id="allow_password_reset" name="allow_password_reset" defaultChecked={settingsData?.security?.login?.allow_password_reset} />
+                  </div>
+
+                  {/* Phone (SMS) */}
+                  <div className="text-sm font-medium text-muted-foreground border-b pb-1 pt-2">{t.admin.loginCategoryPhone}</div>
+
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <Label htmlFor="allow_phone_login">{t.admin.allowPhoneLogin}</Label>
+                      <p className="text-xs text-muted-foreground mt-1">{t.admin.allowPhoneLoginHint}</p>
+                    </div>
+                    <Switch id="allow_phone_login" name="allow_phone_login" defaultChecked={settingsData?.security?.login?.allow_phone_login} />
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <Label htmlFor="allow_phone_register">{t.admin.allowPhoneRegister}</Label>
+                      <p className="text-xs text-muted-foreground mt-1">{t.admin.allowPhoneRegisterHint}</p>
+                    </div>
+                    <Switch id="allow_phone_register" name="allow_phone_register" defaultChecked={settingsData?.security?.login?.allow_phone_register} />
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <Label htmlFor="allow_phone_password_reset">{t.admin.allowPhonePasswordReset}</Label>
+                      <p className="text-xs text-muted-foreground mt-1">{t.admin.allowPhonePasswordResetHint}</p>
+                    </div>
+                    <Switch id="allow_phone_password_reset" name="allow_phone_password_reset" defaultChecked={settingsData?.security?.login?.allow_phone_password_reset} />
                   </div>
 
                   <Button type="submit" disabled={updateMutation.isPending}>
@@ -1208,6 +1469,7 @@ export default function SettingsPage() {
                         enable_for_login: formData.get('captcha_enable_login') === 'on',
                         enable_for_register: formData.get('captcha_enable_register') === 'on',
                         enable_for_serial_verify: formData.get('captcha_enable_serial_verify') === 'on',
+                        enable_for_bind: formData.get('captcha_enable_bind') === 'on',
                       },
                     })
                   }}
@@ -1295,6 +1557,20 @@ export default function SettingsPage() {
                           id="captcha_enable_serial_verify"
                           name="captcha_enable_serial_verify"
                           defaultChecked={settingsData?.security?.captcha?.enable_for_serial_verify}
+                        />
+                      </div>
+
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <Label htmlFor="captcha_enable_bind">{t.admin.bindCaptcha}</Label>
+                          <p className="text-xs text-muted-foreground mt-1">
+                            {t.admin.bindCaptchaHint}
+                          </p>
+                        </div>
+                        <Switch
+                          id="captcha_enable_bind"
+                          name="captcha_enable_bind"
+                          defaultChecked={settingsData?.security?.captcha?.enable_for_bind}
                         />
                       </div>
                     </div>
@@ -1546,6 +1822,100 @@ export default function SettingsPage() {
                   />
                 </div>
 
+                <Button type="submit" disabled={updateMutation.isPending}>
+                  <Save className="mr-2 h-4 w-4" />
+                  {t.admin.saveSettings}
+                </Button>
+              </form>
+            </CardContent>
+          </Card>
+
+          {/* 邮件发送限流 */}
+          <Card className="mt-4">
+            <CardHeader>
+              <CardTitle>{t.admin.emailRateLimit}</CardTitle>
+              <CardDescription>{t.admin.emailRateLimitDesc}</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault()
+                  const formData = new FormData(e.currentTarget)
+                  handleSubmit('email_rate_limit', {
+                    hourly: parseInt(formData.get('email_hourly') as string) || 0,
+                    daily: parseInt(formData.get('email_daily') as string) || 0,
+                    exceed_action: formData.get('email_exceed_action') as string || 'cancel',
+                  })
+                }}
+                className="space-y-4"
+              >
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <Label htmlFor="email_hourly">{t.admin.rateLimitHourly}</Label>
+                    <Input id="email_hourly" name="email_hourly" type="number" defaultValue={settingsData?.email_rate_limit?.hourly || 0} className="mt-1.5" />
+                  </div>
+                  <div>
+                    <Label htmlFor="email_daily">{t.admin.rateLimitDaily}</Label>
+                    <Input id="email_daily" name="email_daily" type="number" defaultValue={settingsData?.email_rate_limit?.daily || 0} className="mt-1.5" />
+                  </div>
+                </div>
+                <div>
+                  <Label htmlFor="email_exceed_action">{t.admin.rateLimitExceedAction}</Label>
+                  <Select name="email_exceed_action" defaultValue={settingsData?.email_rate_limit?.exceed_action || 'cancel'}>
+                    <SelectTrigger className="mt-1.5"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="cancel">{t.admin.rateLimitExceedCancel}</SelectItem>
+                      <SelectItem value="delay">{t.admin.rateLimitExceedDelay}</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <Button type="submit" disabled={updateMutation.isPending}>
+                  <Save className="mr-2 h-4 w-4" />
+                  {t.admin.saveSettings}
+                </Button>
+              </form>
+            </CardContent>
+          </Card>
+
+          {/* 短信发送限流 */}
+          <Card className="mt-4">
+            <CardHeader>
+              <CardTitle>{t.admin.smsRateLimit}</CardTitle>
+              <CardDescription>{t.admin.smsRateLimitDesc}</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault()
+                  const formData = new FormData(e.currentTarget)
+                  handleSubmit('sms_rate_limit', {
+                    hourly: parseInt(formData.get('sms_hourly') as string) || 0,
+                    daily: parseInt(formData.get('sms_daily') as string) || 0,
+                    exceed_action: formData.get('sms_exceed_action') as string || 'cancel',
+                  })
+                }}
+                className="space-y-4"
+              >
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <Label htmlFor="sms_hourly">{t.admin.rateLimitHourly}</Label>
+                    <Input id="sms_hourly" name="sms_hourly" type="number" defaultValue={settingsData?.sms_rate_limit?.hourly || 0} className="mt-1.5" />
+                  </div>
+                  <div>
+                    <Label htmlFor="sms_daily">{t.admin.rateLimitDaily}</Label>
+                    <Input id="sms_daily" name="sms_daily" type="number" defaultValue={settingsData?.sms_rate_limit?.daily || 0} className="mt-1.5" />
+                  </div>
+                </div>
+                <div>
+                  <Label htmlFor="sms_exceed_action">{t.admin.rateLimitExceedAction}</Label>
+                  <Select name="sms_exceed_action" defaultValue={settingsData?.sms_rate_limit?.exceed_action || 'cancel'}>
+                    <SelectTrigger className="mt-1.5"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="cancel">{t.admin.rateLimitExceedCancel}</SelectItem>
+                      <SelectItem value="delay">{t.admin.rateLimitExceedDelay}</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
                 <Button type="submit" disabled={updateMutation.isPending}>
                   <Save className="mr-2 h-4 w-4" />
                   {t.admin.saveSettings}
@@ -2560,6 +2930,8 @@ export default function SettingsPage() {
               }}
               isSaving={updateMutation.isPending}
               t={t}
+              primaryColor={primaryColor}
+              cmTheme={resolvedTheme === 'dark' ? 'dark' : 'light'}
             />
 
             {/* 落地页编辑 */}
@@ -2599,11 +2971,13 @@ export default function SettingsPage() {
                 ) : (
                   <div>
                     <Label>{t.admin.landingPageHtml}</Label>
-                    <textarea
+                    <CodeMirror
                       value={landingHtml}
-                      onChange={(e) => setLandingHtml(e.target.value)}
-                      className="mt-1 w-full min-h-[500px] p-3 font-mono text-sm border rounded-md bg-muted/50 focus:outline-none focus:ring-2 focus:ring-ring resize-y"
-                      spellCheck={false}
+                      extensions={[html()]}
+                      onChange={(v) => setLandingHtml(v)}
+                      height="500px"
+                      theme={resolvedTheme === 'dark' ? 'dark' : 'light'}
+                      className="mt-1 rounded-md border overflow-hidden"
                     />
                   </div>
                 )}
@@ -2707,6 +3081,7 @@ export default function SettingsPage() {
                     onChange={handlePageRuleUpdate}
                     onDelete={handlePageRuleDelete}
                     t={t}
+                    cmTheme={resolvedTheme === 'dark' ? 'dark' : 'light'}
                   />
                 ))}
 

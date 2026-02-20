@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -24,13 +25,15 @@ import (
 type AuthHandler struct {
 	authService    *service.AuthService
 	emailService   *service.EmailService
+	smsService     *service.SMSService
 	captchaService *service.CaptchaService
 }
 
-func NewAuthHandler(authService *service.AuthService, emailService *service.EmailService) *AuthHandler {
+func NewAuthHandler(authService *service.AuthService, emailService *service.EmailService, smsService *service.SMSService) *AuthHandler {
 	return &AuthHandler{
 		authService:    authService,
 		emailService:   emailService,
+		smsService:     smsService,
 		captchaService: service.NewCaptchaService(),
 	}
 }
@@ -262,6 +265,23 @@ func (h *AuthHandler) Register(c *gin.Context) {
 	})
 }
 
+// maskPhone masks a phone number, e.g. "13300003333" -> "13*******33"
+func maskPhone(phone string) string {
+	n := len(phone)
+	if n <= 4 {
+		return phone
+	}
+	return phone[:2] + strings.Repeat("*", n-4) + phone[n-2:]
+}
+
+// phoneRegexp validates phone numbers: digits only, 5-20 chars.
+var phoneRegexp = regexp.MustCompile(`^\d{5,20}$`)
+
+// validatePhone checks that a phone number contains only digits and is a reasonable length.
+func validatePhone(phone string) bool {
+	return phoneRegexp.MatchString(phone)
+}
+
 // GetMe getcurrentUserInfo
 func (h *AuthHandler) GetMe(c *gin.Context) {
 	userID := middleware.MustGetUserID(c)
@@ -285,6 +305,9 @@ func (h *AuthHandler) GetMe(c *gin.Context) {
 		"last_login_ip": user.LastLoginIP,
 		"country":       user.Country,
 		"created_at":    user.CreatedAt,
+	}
+	if user.Phone != nil && *user.Phone != "" {
+		result["phone"] = maskPhone(*user.Phone)
 	}
 
 	// 如果是Admin，getPermission列表
@@ -594,6 +617,10 @@ func (h *AuthHandler) SendLoginCode(c *gin.Context) {
 		response.BadRequest(c, "Email login is not available")
 		return
 	}
+	if !cfg.Security.Login.AllowEmailLogin {
+		response.BadRequest(c, "Email login is disabled")
+		return
+	}
 
 	var req SendLoginCodeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -664,6 +691,10 @@ func (h *AuthHandler) ForgotPassword(c *gin.Context) {
 	cfg := config.GetConfig()
 	if !cfg.SMTP.Enabled {
 		response.BadRequest(c, "Email service is not available")
+		return
+	}
+	if !cfg.Security.Login.AllowPasswordReset {
+		response.BadRequest(c, "Password reset is disabled")
 		return
 	}
 
@@ -805,4 +836,461 @@ func (h *AuthHandler) LoginWithCode(c *gin.Context) {
 		"token_type": "Bearer",
 		"user":       result,
 	})
+}
+
+// SendPhoneLoginCode 发送手机登录验证码
+func (h *AuthHandler) SendPhoneLoginCode(c *gin.Context) {
+	cfg := config.GetConfig()
+	if !cfg.SMS.Enabled {
+		response.BadRequest(c, "SMS service is not available")
+		return
+	}
+	if !cfg.Security.Login.AllowPhoneLogin {
+		response.BadRequest(c, "Phone login is disabled")
+		return
+	}
+	var req struct {
+		Phone        string `json:"phone" binding:"required"`
+		PhoneCode    string `json:"phone_code"`
+		CaptchaToken string `json:"captcha_token"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request parameters")
+		return
+	}
+	req.Phone = strings.TrimSpace(req.Phone)
+	req.PhoneCode = strings.TrimSpace(req.PhoneCode)
+	if !validatePhone(req.Phone) {
+		response.BadRequest(c, "Invalid phone number format")
+		return
+	}
+
+	ip := utils.GetRealIP(c)
+	ipKey := fmt.Sprintf("phone_login_cooldown:ip:%s", ip)
+	phoneKey := fmt.Sprintf("phone_login_cooldown:phone:%s", req.Phone)
+	if n, _ := cache.Exists(ipKey); n > 0 {
+		response.Error(c, 429, response.CodeCooldown, "Please wait 60 seconds before requesting again")
+		return
+	}
+	if n, _ := cache.Exists(phoneKey); n > 0 {
+		response.Error(c, 429, response.CodeCooldown, "Please wait 60 seconds before requesting again")
+		return
+	}
+	if h.captchaService.NeedCaptcha("login") {
+		if req.CaptchaToken == "" {
+			response.Error(c, 400, response.CodeParamMissing, "Captcha is required")
+			return
+		}
+		if err := h.captchaService.VerifyCaptcha(req.CaptchaToken, ip); err != nil {
+			response.Error(c, 400, response.CodeParamError, "Captcha verification failed")
+			return
+		}
+	}
+	cache.Set(ipKey, "1", 60*time.Second)
+	cache.Set(phoneKey, "1", 60*time.Second)
+
+	code, err := h.authService.SendPhoneLoginCode(req.Phone)
+	if err != nil {
+		response.Success(c, gin.H{"message": "If the phone is registered, a verification code has been sent"})
+		return
+	}
+	if h.smsService != nil {
+		go h.smsService.SendVerificationCode(req.Phone, req.PhoneCode, code, "login")
+	}
+	response.Success(c, gin.H{"message": "If the phone is registered, a verification code has been sent"})
+}
+
+// LoginWithPhoneCode 使用手机验证码登录
+func (h *AuthHandler) LoginWithPhoneCode(c *gin.Context) {
+	var req struct {
+		Phone     string `json:"phone" binding:"required"`
+		PhoneCode string `json:"phone_code"`
+		Code      string `json:"code" binding:"required,len=6"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request parameters")
+		return
+	}
+	phone := strings.TrimSpace(req.Phone)
+	if !validatePhone(phone) {
+		response.BadRequest(c, "Invalid phone number format")
+		return
+	}
+	token, user, err := h.authService.LoginWithPhoneCode(phone, req.Code)
+	if err != nil {
+		db := database.GetDB()
+		logger.LogLoginAttempt(db, c, phone, false, nil)
+		response.BadRequest(c, err.Error())
+		return
+	}
+	user.LastLoginIP = utils.GetRealIP(c)
+	h.authService.UpdateLoginIP(user)
+
+	db := database.GetDB()
+	logger.LogLoginAttempt(db, c, phone, true, &user.ID)
+
+	response.Success(c, gin.H{
+		"token": token, "token_type": "Bearer",
+		"user": gin.H{"user_id": user.ID, "uuid": user.UUID, "email": user.Email, "name": user.Name, "role": user.Role, "avatar": user.Avatar, "locale": user.Locale},
+	})
+}
+
+// PhoneRegister 手机号注册
+func (h *AuthHandler) PhoneRegister(c *gin.Context) {
+	cfg := config.GetConfig()
+	if !cfg.Security.Login.AllowRegistration {
+		response.ErrorWithData(c, 403, response.CodeForbidden, "Registration is disabled", nil)
+		return
+	}
+	if !cfg.SMS.Enabled || !cfg.Security.Login.AllowPhoneRegister {
+		response.BadRequest(c, "Phone registration is disabled")
+		return
+	}
+	var req struct {
+		Phone        string `json:"phone" binding:"required"`
+		PhoneCode    string `json:"phone_code"`
+		Name         string `json:"name" binding:"required,min=2,max=100"`
+		Password     string `json:"password" binding:"required,min=8"`
+		Code         string `json:"code" binding:"required,len=6"`
+		CaptchaToken string `json:"captcha_token"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request parameters")
+		return
+	}
+	req.Phone = strings.TrimSpace(req.Phone)
+	req.Name = strings.TrimSpace(req.Name)
+	if !validatePhone(req.Phone) {
+		response.BadRequest(c, "Invalid phone number format")
+		return
+	}
+
+	// Verify SMS code
+	key := "phone_register_code:" + req.Phone
+	storedCode, err := cache.Get(key)
+	if err != nil || storedCode != req.Code {
+		response.BadRequest(c, "Invalid or expired verification code")
+		return
+	}
+	_ = cache.Del(key)
+
+	user, err := h.authService.Register("", req.Phone, req.Name, req.Password)
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrPhoneAlreadyInUse):
+			response.Error(c, 409, response.CodeConflict, err.Error())
+		case errors.Is(err, service.ErrRegisterInternal):
+			response.InternalError(c, "Registration failed")
+		default:
+			response.BadRequest(c, err.Error())
+		}
+		return
+	}
+
+	user.EmailVerified = true
+	user.RegisterIP = utils.GetRealIP(c)
+	db := database.GetDB()
+	db.Save(user)
+
+	// 记录注册日志
+	logger.LogOperation(db, c, "register", "user", &user.ID, map[string]interface{}{
+		"phone":       req.Phone,
+		"name":        user.Name,
+		"register_ip": user.RegisterIP,
+	})
+
+	jwtToken, err := h.authService.GenerateToken(user)
+	if err != nil {
+		response.InternalError(c, "Failed to generate token")
+		return
+	}
+
+	response.Success(c, gin.H{
+		"token": jwtToken, "token_type": "Bearer",
+		"user": gin.H{"user_id": user.ID, "uuid": user.UUID, "email": user.Email, "name": user.Name, "role": user.Role, "avatar": user.Avatar, "locale": user.Locale},
+	})
+}
+
+// PhoneForgotPassword 手机号找回密码
+func (h *AuthHandler) PhoneForgotPassword(c *gin.Context) {
+	cfg := config.GetConfig()
+	if !cfg.SMS.Enabled || !cfg.Security.Login.AllowPhonePasswordReset {
+		response.BadRequest(c, "Phone password reset is disabled")
+		return
+	}
+	var req struct {
+		Phone        string `json:"phone" binding:"required"`
+		PhoneCode    string `json:"phone_code"`
+		CaptchaToken string `json:"captcha_token"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request parameters")
+		return
+	}
+	req.Phone = strings.TrimSpace(req.Phone)
+	req.PhoneCode = strings.TrimSpace(req.PhoneCode)
+	if !validatePhone(req.Phone) {
+		response.BadRequest(c, "Invalid phone number format")
+		return
+	}
+	ip := utils.GetRealIP(c)
+	ipKey := fmt.Sprintf("phone_reset_cooldown:ip:%s", ip)
+	phoneKey := fmt.Sprintf("phone_reset_cooldown:phone:%s", req.Phone)
+	if n, _ := cache.Exists(ipKey); n > 0 {
+		response.Error(c, 429, response.CodeCooldown, "Please wait 60 seconds before requesting again")
+		return
+	}
+	if n, _ := cache.Exists(phoneKey); n > 0 {
+		response.Error(c, 429, response.CodeCooldown, "Please wait 60 seconds before requesting again")
+		return
+	}
+	if h.captchaService.NeedCaptcha("login") {
+		if req.CaptchaToken == "" {
+			response.Error(c, 400, response.CodeParamMissing, "Captcha is required")
+			return
+		}
+		if err := h.captchaService.VerifyCaptcha(req.CaptchaToken, ip); err != nil {
+			response.Error(c, 400, response.CodeParamError, "Captcha verification failed")
+			return
+		}
+	}
+	cache.Set(ipKey, "1", 60*time.Second)
+	cache.Set(phoneKey, "1", 60*time.Second)
+	code, err := h.authService.GeneratePhoneResetCode(req.Phone)
+	if err == nil && h.smsService != nil {
+		go h.smsService.SendVerificationCode(req.Phone, req.PhoneCode, code, "reset_password")
+	}
+	response.Success(c, gin.H{"message": "If the phone is registered, a verification code has been sent"})
+}
+
+// PhoneResetPassword 使用手机验证码重置密码
+func (h *AuthHandler) PhoneResetPassword(c *gin.Context) {
+	var req struct {
+		Phone       string `json:"phone" binding:"required"`
+		PhoneCode   string `json:"phone_code"`
+		Code        string `json:"code" binding:"required,len=6"`
+		NewPassword string `json:"new_password" binding:"required,min=8"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request parameters")
+		return
+	}
+	phone := strings.TrimSpace(req.Phone)
+	if !validatePhone(phone) {
+		response.BadRequest(c, "Invalid phone number format")
+		return
+	}
+	if err := h.authService.ResetPasswordByPhone(phone, req.Code, req.NewPassword); err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	response.Success(c, gin.H{"message": "Password reset successfully"})
+}
+
+// SendBindEmailCode 发送绑定邮箱验证码
+func (h *AuthHandler) SendBindEmailCode(c *gin.Context) {
+	userID := middleware.MustGetUserID(c)
+	var req struct {
+		Email        string `json:"email" binding:"required,email"`
+		CaptchaToken string `json:"captcha_token"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request parameters")
+		return
+	}
+	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
+
+	if h.captchaService.NeedCaptcha("bind") {
+		if req.CaptchaToken == "" {
+			response.Error(c, 400, response.CodeParamMissing, "Captcha is required")
+			return
+		}
+		if err := h.captchaService.VerifyCaptcha(req.CaptchaToken, utils.GetRealIP(c)); err != nil {
+			response.Error(c, 400, response.CodeParamError, "Captcha verification failed")
+			return
+		}
+	}
+
+	ip := utils.GetRealIP(c)
+	ipKey := fmt.Sprintf("bind_email_cooldown:ip:%s", ip)
+	emailKey := fmt.Sprintf("bind_email_cooldown:email:%s", req.Email)
+	if n, _ := cache.Exists(ipKey); n > 0 {
+		response.Error(c, 429, response.CodeCooldown, "Please wait 60 seconds before requesting again")
+		return
+	}
+	if n, _ := cache.Exists(emailKey); n > 0 {
+		response.Error(c, 429, response.CodeCooldown, "Please wait 60 seconds before requesting again")
+		return
+	}
+	cache.Set(ipKey, "1", 60*time.Second)
+	cache.Set(emailKey, "1", 60*time.Second)
+
+	code, err := h.authService.SendBindEmailCode(userID, req.Email)
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+
+	if h.emailService != nil {
+		user, _ := h.authService.GetUserByID(userID)
+		locale := "en"
+		if user != nil && user.Locale != "" {
+			locale = user.Locale
+		}
+		go h.emailService.SendLoginCodeEmail(req.Email, code, locale)
+	}
+	response.Success(c, gin.H{"message": "Verification code sent"})
+}
+
+// BindEmail 绑定邮箱
+func (h *AuthHandler) BindEmail(c *gin.Context) {
+	userID := middleware.MustGetUserID(c)
+	var req struct {
+		Email string `json:"email" binding:"required,email"`
+		Code  string `json:"code" binding:"required,len=6"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request parameters")
+		return
+	}
+	if err := h.authService.BindEmail(userID, strings.ToLower(strings.TrimSpace(req.Email)), req.Code); err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	response.Success(c, gin.H{"message": "Email bound successfully"})
+}
+
+// SendBindPhoneCode 发送绑定手机验证码
+func (h *AuthHandler) SendBindPhoneCode(c *gin.Context) {
+	userID := middleware.MustGetUserID(c)
+	var req struct {
+		Phone        string `json:"phone" binding:"required"`
+		PhoneCode    string `json:"phone_code"`
+		CaptchaToken string `json:"captcha_token"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request parameters")
+		return
+	}
+	req.Phone = strings.TrimSpace(req.Phone)
+	if !validatePhone(req.Phone) {
+		response.BadRequest(c, "Invalid phone number format")
+		return
+	}
+
+	if h.captchaService.NeedCaptcha("bind") {
+		if req.CaptchaToken == "" {
+			response.Error(c, 400, response.CodeParamMissing, "Captcha is required")
+			return
+		}
+		if err := h.captchaService.VerifyCaptcha(req.CaptchaToken, utils.GetRealIP(c)); err != nil {
+			response.Error(c, 400, response.CodeParamError, "Captcha verification failed")
+			return
+		}
+	}
+
+	ip := utils.GetRealIP(c)
+	ipKey := fmt.Sprintf("bind_phone_cooldown:ip:%s", ip)
+	phoneKey := fmt.Sprintf("bind_phone_cooldown:phone:%s", req.Phone)
+	if n, _ := cache.Exists(ipKey); n > 0 {
+		response.Error(c, 429, response.CodeCooldown, "Please wait 60 seconds before requesting again")
+		return
+	}
+	if n, _ := cache.Exists(phoneKey); n > 0 {
+		response.Error(c, 429, response.CodeCooldown, "Please wait 60 seconds before requesting again")
+		return
+	}
+	cache.Set(ipKey, "1", 60*time.Second)
+	cache.Set(phoneKey, "1", 60*time.Second)
+
+	code, err := h.authService.SendBindPhoneCode(userID, req.Phone)
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	if h.smsService != nil {
+		go h.smsService.SendVerificationCode(req.Phone, req.PhoneCode, code, "bind_phone")
+	}
+	response.Success(c, gin.H{"message": "Verification code sent"})
+}
+
+// BindPhone 绑定手机号
+func (h *AuthHandler) BindPhone(c *gin.Context) {
+	userID := middleware.MustGetUserID(c)
+	var req struct {
+		Phone string `json:"phone" binding:"required"`
+		Code  string `json:"code" binding:"required,len=6"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request parameters")
+		return
+	}
+	phone := strings.TrimSpace(req.Phone)
+	if !validatePhone(phone) {
+		response.BadRequest(c, "Invalid phone number format")
+		return
+	}
+	if err := h.authService.BindPhone(userID, phone, req.Code); err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	response.Success(c, gin.H{"message": "Phone bound successfully"})
+}
+
+// SendPhoneRegisterCode 发送手机注册验证码
+func (h *AuthHandler) SendPhoneRegisterCode(c *gin.Context) {
+	cfg := config.GetConfig()
+	if !cfg.SMS.Enabled || !cfg.Security.Login.AllowPhoneRegister {
+		response.BadRequest(c, "Phone registration is disabled")
+		return
+	}
+	var req struct {
+		Phone        string `json:"phone" binding:"required"`
+		PhoneCode    string `json:"phone_code"`
+		CaptchaToken string `json:"captcha_token"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request parameters")
+		return
+	}
+	req.Phone = strings.TrimSpace(req.Phone)
+	req.PhoneCode = strings.TrimSpace(req.PhoneCode)
+	if !validatePhone(req.Phone) {
+		response.BadRequest(c, "Invalid phone number format")
+		return
+	}
+
+	ip := utils.GetRealIP(c)
+	ipKey := fmt.Sprintf("phone_register_cooldown:ip:%s", ip)
+	phoneKey := fmt.Sprintf("phone_register_cooldown:phone:%s", req.Phone)
+	if n, _ := cache.Exists(ipKey); n > 0 {
+		response.Error(c, 429, response.CodeCooldown, "Please wait 60 seconds before requesting again")
+		return
+	}
+	if n, _ := cache.Exists(phoneKey); n > 0 {
+		response.Error(c, 429, response.CodeCooldown, "Please wait 60 seconds before requesting again")
+		return
+	}
+	if h.captchaService.NeedCaptcha("register") {
+		if req.CaptchaToken == "" {
+			response.Error(c, 400, response.CodeParamMissing, "Captcha is required")
+			return
+		}
+		if err := h.captchaService.VerifyCaptcha(req.CaptchaToken, ip); err != nil {
+			response.Error(c, 400, response.CodeParamError, "Captcha verification failed")
+			return
+		}
+	}
+	cache.Set(ipKey, "1", 60*time.Second)
+	cache.Set(phoneKey, "1", 60*time.Second)
+
+	code, err := h.authService.SendPhoneRegisterCode(req.Phone)
+	if err != nil {
+		response.Success(c, gin.H{"message": "Verification code sent"})
+		return
+	}
+	if h.smsService != nil {
+		go h.smsService.SendVerificationCode(req.Phone, req.PhoneCode, code, "register")
+	}
+	response.Success(c, gin.H{"message": "Verification code sent"})
 }

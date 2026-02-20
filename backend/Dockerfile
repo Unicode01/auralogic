@@ -28,6 +28,9 @@ RUN apk --no-cache add ca-certificates tzdata sqlite-libs
 # 从构建阶段复制编译好的二进制文件
 COPY --from=builder /app/bin/api /app/api
 
+# 复制邮件模板
+COPY --from=builder /app/templates /app/templates
+
 # 复制配置文件目录（需要挂载实际配置）
 RUN mkdir -p /app/config /app/data /app/logs /app/uploads
 

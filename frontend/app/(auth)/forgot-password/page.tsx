@@ -6,20 +6,24 @@ import { Input } from '@/components/ui/input'
 import { useLocale } from '@/hooks/use-locale'
 import { usePageTitle } from '@/hooks/use-page-title'
 import { getTranslations } from '@/lib/i18n'
-import { Loader2, Mail, ArrowLeft } from 'lucide-react'
+import { Loader2, Mail, ArrowLeft, Phone, Lock, KeyRound } from 'lucide-react'
 import Link from 'next/link'
 import { useQuery } from '@tanstack/react-query'
-import { getPublicConfig, getCaptcha, forgotPassword } from '@/lib/api'
+import { getPublicConfig, getCaptcha, forgotPassword, phoneForgotPassword, phoneResetPassword } from '@/lib/api'
 import { useTheme } from '@/contexts/theme-context'
 import toast from 'react-hot-toast'
 import { AuthBrandingPanel } from '@/components/auth-branding-panel'
+import { PhoneInput } from '@/components/phone-input'
+import { useRouter } from 'next/navigation'
 
 export default function ForgotPasswordPage() {
   const { locale } = useLocale()
   const t = getTranslations(locale)
   usePageTitle(t.pageTitle.forgotPassword)
   const { resolvedTheme } = useTheme()
+  const router = useRouter()
 
+  const [resetMode, setResetMode] = useState<'email' | 'phone'>('email')
   const [email, setEmail] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [sent, setSent] = useState(false)
@@ -29,11 +33,40 @@ export default function ForgotPasswordPage() {
   const captchaContainerRef = useRef<HTMLDivElement>(null)
   const widgetRendered = useRef(false)
   const widgetIdRef = useRef<any>(null)
+  // Phone reset state
+  const [phoneNumber, setPhoneNumber] = useState('')
+  const [phoneCountryCode, setPhoneCountryCode] = useState('+86')
+  const [phoneCode, setPhoneCode] = useState('')
+  const [newPassword, setNewPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [phoneCountdown, setPhoneCountdown] = useState(0)
+  const [isSendingPhoneCode, setIsSendingPhoneCode] = useState(false)
+  const [phoneCodeSent, setPhoneCodeSent] = useState(false)
+  const [isResettingPhone, setIsResettingPhone] = useState(false)
 
   const { data: publicConfig } = useQuery({
     queryKey: ['publicConfig'],
     queryFn: getPublicConfig,
   })
+
+  const allowPasswordReset = publicConfig?.data?.allow_password_reset
+  const smsEnabled = publicConfig?.data?.sms_enabled
+  const allowPhonePasswordReset = publicConfig?.data?.allow_phone_password_reset
+  const phoneResetAvailable = smsEnabled && allowPhonePasswordReset
+
+  // 密码重置被禁用时跳转回登录页
+  useEffect(() => {
+    if (publicConfig && !allowPasswordReset && !phoneResetAvailable) {
+      router.replace('/login')
+    }
+  }, [publicConfig, allowPasswordReset, phoneResetAvailable, router])
+
+  // Auto-switch to phone mode when email reset disabled
+  useEffect(() => {
+    if (publicConfig && !allowPasswordReset && phoneResetAvailable) {
+      setResetMode('phone')
+    }
+  }, [publicConfig, allowPasswordReset, phoneResetAvailable])
 
   const captchaConfig = publicConfig?.data?.captcha
   const needCaptcha = captchaConfig?.provider && captchaConfig.provider !== 'none' && captchaConfig.enable_for_login
@@ -58,6 +91,17 @@ export default function ForgotPasswordPage() {
     }, 1000)
     return () => clearTimeout(timer)
   }, [countdown, refetchCaptcha])
+
+  // Phone countdown
+  useEffect(() => {
+    if (phoneCountdown <= 0) return
+    const timer = setTimeout(() => {
+      const next = phoneCountdown - 1
+      setPhoneCountdown(next)
+      if (next === 0) setPhoneCodeSent(false)
+    }, 1000)
+    return () => clearTimeout(timer)
+  }, [phoneCountdown])
 
   // Load third-party captcha scripts
   useEffect(() => {
@@ -143,6 +187,45 @@ export default function ForgotPasswordPage() {
     }
   }
 
+  async function handleSendPhoneCode() {
+    if (!phoneNumber || phoneCountdown > 0 || isSendingPhoneCode) return
+    let token = captchaToken
+    if (needCaptcha && captchaConfig.provider === 'builtin') {
+      token = `${builtinCaptcha?.data?.captcha_id}:${builtinCode}`
+    }
+    setIsSendingPhoneCode(true)
+    try {
+      await phoneForgotPassword({ phone: phoneNumber, phone_code: phoneCountryCode, captcha_token: token || undefined })
+      toast.success(t.auth.phoneResetCodeSent)
+      setPhoneCountdown(60)
+      setPhoneCodeSent(true)
+    } catch (e: any) {
+      const msg = e?.code === 42902 ? t.auth.cooldownWait : (e?.message || t.auth.requestFailed)
+      toast.error(msg)
+    } finally {
+      setIsSendingPhoneCode(false)
+    }
+  }
+
+  async function handlePhoneReset(e: React.FormEvent) {
+    e.preventDefault()
+    if (!phoneNumber || !phoneCode || !newPassword || isResettingPhone) return
+    if (newPassword !== confirmPassword) {
+      toast.error(t.auth.passwordMismatch)
+      return
+    }
+    setIsResettingPhone(true)
+    try {
+      await phoneResetPassword({ phone: phoneNumber, phone_code: phoneCountryCode, code: phoneCode, new_password: newPassword })
+      toast.success(t.auth.passwordResetSuccess)
+      router.push('/login')
+    } catch (e: any) {
+      toast.error(e?.message || t.auth.requestFailed)
+    } finally {
+      setIsResettingPhone(false)
+    }
+  }
+
   return (
     <div className="min-h-screen flex">
       <AuthBrandingPanel />
@@ -159,11 +242,34 @@ export default function ForgotPasswordPage() {
               {t.auth.forgotPasswordTitle}
             </h2>
             <p className="text-sm text-muted-foreground">
-              {t.auth.forgotPasswordDesc}
+              {resetMode === 'phone' ? t.auth.phoneResetDesc : t.auth.forgotPasswordDesc}
             </p>
           </div>
 
-          <form onSubmit={handleSubmit} className="space-y-5">
+          {/* Mode switcher */}
+          {allowPasswordReset && phoneResetAvailable && (
+            <div className="flex rounded-lg border border-border p-1 bg-muted/50">
+              <button
+                type="button"
+                className={`flex-1 text-xs sm:text-sm py-2 rounded-md transition-colors whitespace-nowrap ${resetMode === 'email' ? 'bg-background text-foreground shadow-sm font-medium' : 'text-muted-foreground hover:text-foreground'}`}
+                onClick={() => setResetMode('email')}
+              >
+                <Mail className="inline h-3.5 w-3.5 mr-1 -mt-0.5" />
+                {t.auth.emailResetTab}
+              </button>
+              <button
+                type="button"
+                className={`flex-1 text-xs sm:text-sm py-2 rounded-md transition-colors whitespace-nowrap ${resetMode === 'phone' ? 'bg-background text-foreground shadow-sm font-medium' : 'text-muted-foreground hover:text-foreground'}`}
+                onClick={() => setResetMode('phone')}
+              >
+                <Phone className="inline h-3.5 w-3.5 mr-1 -mt-0.5" />
+                {t.auth.phoneResetTab}
+              </button>
+            </div>
+          )}
+
+          {/* Email reset form */}
+          {resetMode === 'email' && <form onSubmit={handleSubmit} className="space-y-5">
             <div className="space-y-2">
               <label className="text-sm font-medium">{t.auth.email}</label>
               <div className="relative">
@@ -223,12 +329,119 @@ export default function ForgotPasswordPage() {
                 t.auth.sendResetLink
               )}
             </Button>
-          </form>
+          </form>}
 
-          {sent && (
+          {resetMode === 'email' && sent && (
             <p className="text-sm text-center text-muted-foreground">
               {t.auth.resetEmailSent}
             </p>
+          )}
+
+          {/* Phone reset form */}
+          {resetMode === 'phone' && (
+            <form onSubmit={handlePhoneReset} className="space-y-5">
+              <div className="space-y-2">
+                <label className="text-sm font-medium">{t.auth.phone}</label>
+                <PhoneInput countryCode={phoneCountryCode} onCountryCodeChange={setPhoneCountryCode}
+                  phone={phoneNumber} onPhoneChange={setPhoneNumber} placeholder={t.auth.phonePlaceholder} className="h-11" />
+              </div>
+
+              {needCaptcha && !phoneCodeSent && (
+                <div className="space-y-2">
+                  {(captchaConfig.provider === 'cloudflare' || captchaConfig.provider === 'google') && (
+                    <div ref={captchaContainerRef} />
+                  )}
+                  {captchaConfig.provider === 'builtin' && builtinCaptcha?.data && (
+                    <>
+                      <label className="text-sm font-medium">{t.auth.captcha}</label>
+                      <div className="flex items-center gap-2">
+                        <Input
+                          placeholder={t.auth.captchaPlaceholder}
+                          value={builtinCode}
+                          onChange={(e) => setBuiltinCode(e.target.value)}
+                          maxLength={4}
+                          className="h-11"
+                        />
+                        <img
+                          src={builtinCaptcha.data.image}
+                          alt="captcha"
+                          className="border border-border rounded-md h-11 shrink-0 cursor-pointer dark:brightness-90"
+                          onClick={() => { refetchCaptcha(); setBuiltinCode('') }}
+                          title={t.auth.captchaRefresh}
+                        />
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+
+              <div className="space-y-2">
+                <label className="text-sm font-medium">{t.auth.phoneCode}</label>
+                <div className="flex gap-2">
+                  <Input
+                    placeholder={t.auth.phoneCodePlaceholder}
+                    value={phoneCode}
+                    onChange={(e) => setPhoneCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                    maxLength={6}
+                    className="h-11"
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="h-11 shrink-0 text-sm"
+                    disabled={!phoneNumber || phoneCountdown > 0 || isSendingPhoneCode || (needCaptcha && !captchaToken && !(captchaConfig?.provider === 'builtin' && builtinCode))}
+                    onClick={handleSendPhoneCode}
+                  >
+                    {isSendingPhoneCode ? t.auth.sendingCode
+                      : phoneCountdown > 0 ? (t.auth.codeResendIn as string).replace('{n}', String(phoneCountdown))
+                      : t.auth.sendPhoneCode}
+                  </Button>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-medium">{t.auth.newPassword}</label>
+                <div className="relative">
+                  <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    type="password"
+                    placeholder={t.auth.passwordPlaceholder}
+                    className="pl-10 h-11"
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-medium">{t.auth.confirmNewPassword}</label>
+                <div className="relative">
+                  <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    type="password"
+                    placeholder={t.auth.confirmPasswordPlaceholder}
+                    className="pl-10 h-11"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <Button
+                type="submit"
+                className="w-full h-11 text-sm font-medium"
+                disabled={isResettingPhone || !phoneNumber || phoneCode.length !== 6 || !newPassword || !confirmPassword}
+              >
+                {isResettingPhone ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    {t.auth.sending}
+                  </>
+                ) : (
+                  t.auth.resetPassword
+                )}
+              </Button>
+            </form>
           )}
 
           <p className="text-center text-xs text-muted-foreground">

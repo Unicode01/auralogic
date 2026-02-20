@@ -18,18 +18,19 @@ import { createLoginSchema, loginSchema } from '@/lib/validators'
 import { useLocale } from '@/hooks/use-locale'
 import { usePageTitle } from '@/hooks/use-page-title'
 import { getTranslations } from '@/lib/i18n'
-import { Loader2, Mail, Lock, ArrowRight, KeyRound } from 'lucide-react'
+import { Loader2, Mail, Lock, ArrowRight, KeyRound, Phone } from 'lucide-react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useQuery } from '@tanstack/react-query'
-import { getPublicConfig, getCaptcha, sendLoginCode } from '@/lib/api'
+import { getPublicConfig, getCaptcha, sendLoginCode, sendPhoneCode } from '@/lib/api'
 import { useState, useEffect, useRef } from 'react'
 import { useTheme } from '@/contexts/theme-context'
 import toast from 'react-hot-toast'
 import { AuthBrandingPanel } from '@/components/auth-branding-panel'
+import { PhoneInput } from '@/components/phone-input'
 
 export default function LoginPage() {
-  const { login, loginWithCode, isLoggingIn, isLoggingInWithCode, isAuthenticated, isLoading } = useAuth()
+  const { login, loginWithCode, loginWithPhoneCode, isLoggingIn, isLoggingInWithCode, isLoggingInWithPhoneCode, isAuthenticated, isLoading } = useAuth()
   const router = useRouter()
   const { locale } = useLocale()
   const t = getTranslations(locale)
@@ -43,12 +44,18 @@ export default function LoginPage() {
   }, [isLoading, isAuthenticated, router])
   const [captchaToken, setCaptchaToken] = useState('')
   const [builtinCode, setBuiltinCode] = useState('')
-  const [loginMode, setLoginMode] = useState<'password' | 'code'>('password')
+  const [loginMode, setLoginMode] = useState<'password' | 'code' | 'phone'>('password')
   const [codeEmail, setCodeEmail] = useState('')
   const [codeValue, setCodeValue] = useState('')
   const [countdown, setCountdown] = useState(0)
   const [isSendingCode, setIsSendingCode] = useState(false)
   const [codeSent, setCodeSent] = useState(false)
+  const [phoneNumber, setPhoneNumber] = useState('')
+  const [phoneCountryCode, setPhoneCountryCode] = useState('+86')
+  const [phoneCode, setPhoneCode] = useState('')
+  const [phoneCountdown, setPhoneCountdown] = useState(0)
+  const [isSendingPhoneCode, setIsSendingPhoneCode] = useState(false)
+  const [phoneCodeSent, setPhoneCodeSent] = useState(false)
   const { resolvedTheme } = useTheme()
   const captchaContainerRef = useRef<HTMLDivElement>(null)
   const widgetRendered = useRef(false)
@@ -61,9 +68,24 @@ export default function LoginPage() {
 
   const allowRegistration = publicConfig?.data?.allow_registration
   const smtpEnabled = publicConfig?.data?.smtp_enabled
+  const allowPasswordLogin = publicConfig?.data?.allow_password_login !== false
+  const allowEmailLogin = publicConfig?.data?.allow_email_login
+  const allowPasswordReset = publicConfig?.data?.allow_password_reset
   const captchaConfig = publicConfig?.data?.captcha
   const needCaptcha = captchaConfig?.provider && captchaConfig.provider !== 'none' && captchaConfig.enable_for_login
-  const emailCodeAvailable = smtpEnabled && needCaptcha
+  const emailCodeAvailable = smtpEnabled && allowEmailLogin
+  const smsEnabled = publicConfig?.data?.sms_enabled
+  const allowPhoneLogin = publicConfig?.data?.allow_phone_login
+  const phoneLoginAvailable = smsEnabled && allowPhoneLogin
+
+  // 密码登录禁用时自动切换到可用模式
+  useEffect(() => {
+    if (!publicConfig) return
+    if (!allowPasswordLogin) {
+      if (emailCodeAvailable) setLoginMode('code')
+      else if (phoneLoginAvailable) setLoginMode('phone')
+    }
+  }, [publicConfig, allowPasswordLogin, emailCodeAvailable, phoneLoginAvailable])
 
   const { data: builtinCaptcha, refetch: refetchCaptcha } = useQuery({
     queryKey: ['captcha', 'login'],
@@ -71,7 +93,7 @@ export default function LoginPage() {
     enabled: needCaptcha && captchaConfig?.provider === 'builtin',
   })
 
-  // 60秒倒计时
+  // 60秒倒计时 (email)
   useEffect(() => {
     if (countdown <= 0) return
     const timer = setTimeout(() => {
@@ -86,6 +108,17 @@ export default function LoginPage() {
     }, 1000)
     return () => clearTimeout(timer)
   }, [countdown, refetchCaptcha])
+
+  // 60秒倒计时 (phone)
+  useEffect(() => {
+    if (phoneCountdown <= 0) return
+    const timer = setTimeout(() => {
+      const next = phoneCountdown - 1
+      setPhoneCountdown(next)
+      if (next === 0) setPhoneCodeSent(false)
+    }, 1000)
+    return () => clearTimeout(timer)
+  }, [phoneCountdown])
 
   // Load Turnstile/reCAPTCHA scripts
   useEffect(() => {
@@ -216,6 +249,34 @@ export default function LoginPage() {
     })
   }
 
+  async function handleSendPhoneCode() {
+    if (!phoneNumber || phoneCountdown > 0 || isSendingPhoneCode) return
+    let token = captchaToken
+    if (needCaptcha && captchaConfig.provider === 'builtin') {
+      token = `${builtinCaptcha?.data?.captcha_id}:${builtinCode}`
+    }
+    setIsSendingPhoneCode(true)
+    try {
+      await sendPhoneCode({ phone: phoneNumber, phone_code: phoneCountryCode, captcha_token: token || undefined })
+      toast.success(t.auth.phoneCodeSent)
+      setPhoneCountdown(60)
+      setPhoneCodeSent(true)
+    } catch (e: any) {
+      const msg = e?.code === 42902 ? t.auth.cooldownWait : (e?.message || t.auth.requestFailed)
+      toast.error(msg)
+      if (e?.code !== 42902) resetCaptcha()
+    } finally {
+      setIsSendingPhoneCode(false)
+    }
+  }
+
+  function onPhoneCodeSubmit() {
+    if (!phoneNumber || !phoneCode) return
+    loginWithPhoneCode({ phone: phoneNumber, phone_code: phoneCountryCode, code: phoneCode }, {
+      onError: () => setPhoneCode(''),
+    })
+  }
+
   return (
     <div className="min-h-screen flex">
       <AuthBrandingPanel />
@@ -233,32 +294,46 @@ export default function LoginPage() {
           {/* Header */}
           <div className="space-y-2">
             <h2 className="text-2xl font-semibold tracking-tight text-foreground">
-              {locale === 'zh' ? '欢迎回来' : 'Welcome back'}
+              {t.auth.welcomeBack}
             </h2>
             <p className="text-sm text-muted-foreground">
-              {locale === 'zh' ? '请登录您的账户' : 'Sign in to your account'}
+              {t.auth.signInDescription}
             </p>
           </div>
 
-          {/* Mode switcher */}
-          {emailCodeAvailable && (
+          {/* Mode switcher - show when 2+ methods available */}
+          {[allowPasswordLogin, emailCodeAvailable, phoneLoginAvailable].filter(Boolean).length >= 2 && (
             <div className="flex rounded-lg border border-border p-1 bg-muted/50">
-              <button
-                type="button"
-                className={`flex-1 text-xs sm:text-sm py-2 rounded-md transition-colors whitespace-nowrap ${loginMode === 'password' ? 'bg-background text-foreground shadow-sm font-medium' : 'text-muted-foreground hover:text-foreground'}`}
-                onClick={() => { setLoginMode('password'); widgetRendered.current = false }}
-              >
-                <Lock className="inline h-3.5 w-3.5 mr-1 -mt-0.5" />
-                {t.auth.passwordLogin}
-              </button>
-              <button
-                type="button"
-                className={`flex-1 text-xs sm:text-sm py-2 rounded-md transition-colors whitespace-nowrap ${loginMode === 'code' ? 'bg-background text-foreground shadow-sm font-medium' : 'text-muted-foreground hover:text-foreground'}`}
-                onClick={() => { setLoginMode('code'); widgetRendered.current = false }}
-              >
-                <KeyRound className="inline h-3.5 w-3.5 mr-1 -mt-0.5" />
-                {t.auth.emailCodeLogin}
-              </button>
+              {allowPasswordLogin && (
+                <button
+                  type="button"
+                  className={`flex-1 text-xs sm:text-sm py-2 rounded-md transition-colors whitespace-nowrap ${loginMode === 'password' ? 'bg-background text-foreground shadow-sm font-medium' : 'text-muted-foreground hover:text-foreground'}`}
+                  onClick={() => { setLoginMode('password'); widgetRendered.current = false }}
+                >
+                  <Lock className="inline h-3.5 w-3.5 mr-1 -mt-0.5" />
+                  {t.auth.passwordLogin}
+                </button>
+              )}
+              {emailCodeAvailable && (
+                <button
+                  type="button"
+                  className={`flex-1 text-xs sm:text-sm py-2 rounded-md transition-colors whitespace-nowrap ${loginMode === 'code' ? 'bg-background text-foreground shadow-sm font-medium' : 'text-muted-foreground hover:text-foreground'}`}
+                  onClick={() => { setLoginMode('code'); widgetRendered.current = false }}
+                >
+                  <KeyRound className="inline h-3.5 w-3.5 mr-1 -mt-0.5" />
+                  {t.auth.emailCodeLogin}
+                </button>
+              )}
+              {phoneLoginAvailable && (
+                <button
+                  type="button"
+                  className={`flex-1 text-xs sm:text-sm py-2 rounded-md transition-colors whitespace-nowrap ${loginMode === 'phone' ? 'bg-background text-foreground shadow-sm font-medium' : 'text-muted-foreground hover:text-foreground'}`}
+                  onClick={() => { setLoginMode('phone'); widgetRendered.current = false }}
+                >
+                  <Phone className="inline h-3.5 w-3.5 mr-1 -mt-0.5" />
+                  {t.auth.phoneLogin}
+                </button>
+              )}
             </div>
           )}
 
@@ -294,7 +369,7 @@ export default function LoginPage() {
                   <FormItem className="space-y-2">
                     <div className="flex items-center justify-between">
                       <FormLabel className="text-sm font-medium">{t.auth.password}</FormLabel>
-                      {smtpEnabled && (
+                      {allowPasswordReset && (
                         <Link href="/forgot-password" className="text-xs text-muted-foreground hover:text-primary transition-colors">
                           {t.auth.forgotPassword}
                         </Link>
@@ -443,6 +518,88 @@ export default function LoginPage() {
                 onClick={onCodeSubmit}
               >
                 {isLoggingInWithCode ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    {t.auth.loggingIn}
+                  </>
+                ) : (
+                  <>
+                    {t.auth.login}
+                    <ArrowRight className="ml-2 h-4 w-4" />
+                  </>
+                )}
+              </Button>
+            </div>
+          )}
+
+          {/* Phone login form */}
+          {loginMode === 'phone' && (
+            <div className="space-y-5">
+              <div className="space-y-2">
+                <label className="text-sm font-medium">{t.auth.phone}</label>
+                <PhoneInput countryCode={phoneCountryCode} onCountryCodeChange={setPhoneCountryCode}
+                  phone={phoneNumber} onPhoneChange={setPhoneNumber} placeholder={t.auth.phonePlaceholder} className="h-11" />
+              </div>
+
+              {needCaptcha && !phoneCodeSent && (
+                <div className="space-y-2">
+                  {(captchaConfig.provider === 'cloudflare' || captchaConfig.provider === 'google') && (
+                    <div ref={captchaContainerRef} />
+                  )}
+                  {captchaConfig.provider === 'builtin' && builtinCaptcha?.data && (
+                    <>
+                      <label className="text-sm font-medium">{t.auth.captcha}</label>
+                      <div className="flex items-center gap-2">
+                        <Input
+                          placeholder={t.auth.captchaPlaceholder}
+                          value={builtinCode}
+                          onChange={(e) => setBuiltinCode(e.target.value)}
+                          maxLength={4}
+                          className="h-11"
+                        />
+                        <img
+                          src={builtinCaptcha.data.image}
+                          alt="captcha"
+                          className="border border-border rounded-md h-11 shrink-0 cursor-pointer dark:brightness-90"
+                          onClick={() => { refetchCaptcha(); setBuiltinCode('') }}
+                          title={t.auth.captchaRefresh}
+                        />
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+
+              <div className="space-y-2">
+                <label className="text-sm font-medium">{t.auth.phoneCode}</label>
+                <div className="flex gap-2">
+                  <Input
+                    placeholder={t.auth.phoneCodePlaceholder}
+                    value={phoneCode}
+                    onChange={(e) => setPhoneCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                    maxLength={6}
+                    className="h-11"
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="h-11 shrink-0 text-sm"
+                    disabled={!phoneNumber || phoneCountdown > 0 || isSendingPhoneCode || (needCaptcha && !captchaToken && !(captchaConfig?.provider === 'builtin' && builtinCode))}
+                    onClick={handleSendPhoneCode}
+                  >
+                    {isSendingPhoneCode ? t.auth.sendingCode
+                      : phoneCountdown > 0 ? (t.auth.codeResendIn as string).replace('{n}', String(phoneCountdown))
+                      : t.auth.sendPhoneCode}
+                  </Button>
+                </div>
+              </div>
+
+              <Button
+                className="w-full h-11 text-sm font-medium"
+                disabled={isLoggingInWithPhoneCode || phoneCode.length !== 6}
+                onClick={onPhoneCodeSubmit}
+              >
+                {isLoggingInWithPhoneCode ? (
                   <>
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                     {t.auth.loggingIn}
