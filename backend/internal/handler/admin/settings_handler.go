@@ -759,7 +759,7 @@ func (h *SettingsHandler) UpdateSettings(c *gin.Context) {
 	}
 
 	response.Success(c, gin.H{
-		"message": "设置已保存并应用，部分配置（数据库、Redis、JWT）需重启服务后生效",
+		"message": "Settings saved and applied. Some configurations (Database, Redis, JWT) require service restart to take effect",
 	})
 }
 
@@ -789,7 +789,7 @@ func (h *SettingsHandler) TestSMTP(c *gin.Context) {
 	m := gomail.NewMessage()
 	m.SetHeader("From", req.User)
 	m.SetHeader("To", req.ToEmail)
-	m.SetHeader("Subject", "AuraLogic SMTP 测试邮件 / SMTP Test Email")
+	m.SetHeader("Subject", "AuraLogic SMTP Test Email")
 
 	appName := h.cfg.App.Name
 	if appName == "" {
@@ -799,12 +799,11 @@ func (h *SettingsHandler) TestSMTP(c *gin.Context) {
 	body := fmt.Sprintf(`
 		<html>
 		<body style="font-family: Arial, sans-serif; padding: 20px;">
-			<h2>SMTP 配置测试成功 / SMTP Configuration Test Successful</h2>
-			<p>这是一封来自 <strong>%s</strong> 的测试邮件。</p>
+			<h2>SMTP Configuration Test Successful</h2>
+			<p>This is a test email from <strong>%s</strong>.</p>
 			<p>This is a test email from <strong>%s</strong>.</p>
 			<hr>
 			<p style="color: #666; font-size: 12px;">
-				如果您收到此邮件，说明 SMTP 配置正确。<br>
 				If you received this email, your SMTP configuration is correct.
 			</p>
 		</body>
@@ -815,12 +814,12 @@ func (h *SettingsHandler) TestSMTP(c *gin.Context) {
 
 	// 发送邮件
 	if err := dialer.DialAndSend(m); err != nil {
-		response.InternalError(c, fmt.Sprintf("发送测试邮件失败: %v", err))
+		response.InternalError(c, fmt.Sprintf("Failed to send test email: %v", err))
 		return
 	}
 
 	response.Success(c, gin.H{
-		"message": "测试邮件已发送，请检查收件箱",
+		"message": "Test email sent, please check your inbox",
 	})
 }
 
@@ -841,12 +840,12 @@ func (h *SettingsHandler) TestSMS(c *gin.Context) {
 	}
 
 	if err := h.smsService.TestSMS(req.Phone); err != nil {
-		response.InternalError(c, fmt.Sprintf("发送测试短信失败: %v", err))
+		response.InternalError(c, fmt.Sprintf("Failed to send test SMS: %v", err))
 		return
 	}
 
 	response.Success(c, gin.H{
-		"message": "测试短信已发送，请检查手机",
+		"message": "Test SMS sent, please check your phone",
 	})
 }
 

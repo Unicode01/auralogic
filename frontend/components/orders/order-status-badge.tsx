@@ -23,6 +23,7 @@ export function OrderStatusBadge({ status, className }: OrderStatusBadgeProps) {
     shipped: { label: '已发货', labelKey: 'shipped' as const, variant: 'default' as const },
     completed: { label: '已完成', labelKey: 'completed' as const, variant: 'outline' as const },
     cancelled: { label: '已取消', labelKey: 'cancelled' as const, variant: 'secondary' as const },
+    refunded: { label: '已退款', labelKey: 'refunded' as const, variant: 'destructive' as const },
   }
 
   const config = statusConfig[status] || statusConfig.draft

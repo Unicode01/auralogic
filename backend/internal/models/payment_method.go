@@ -83,7 +83,7 @@ func (PaymentPollingTask) TableName() string {
 var BuiltinPaymentMethods = []PaymentMethod{
 	{
 		Name:        "USDT TRC20",
-		Description: "使用USDT TRC20网络转账支付，支持自动确认",
+		Description: "Pay with USDT via TRC20 network, supports auto-confirmation",
 		Type:        PaymentMethodTypeCustom,
 		Icon:        "Coins",
 		SortOrder:   1,
@@ -317,11 +317,30 @@ function onCheckPaymentStatus(order, config) {
 
     return { paid: false, message: '等待区块确认...' };
 }
+
+/**
+ * 退款处理
+ * USDT为去中心化加密货币，无法自动退款，需要管理员手动转账
+ */
+function onRefund(order, config) {
+    var orderKey = 'order_' + order.id;
+    var savedAmount = AuraLogic.storage.get(orderKey + '_amount') || '';
+
+    return {
+        success: true,
+        message: 'USDT TRC20退款需手动操作，请将' + (savedAmount || order.total_amount) + ' USDT转回用户地址',
+        data: {
+            network: 'TRC20',
+            amount: savedAmount || order.total_amount.toString(),
+            wallet_address: config.wallet_address || ''
+        }
+    };
+}
 `,
 	},
 	{
 		Name:        "USDT BEP20 (BSC)",
-		Description: "使用USDT BEP20(BSC)网络转账支付，支持自动确认",
+		Description: "Pay with USDT via BEP20 (BSC) network, supports auto-confirmation",
 		Type:        PaymentMethodTypeCustom,
 		Icon:        "Coins",
 		SortOrder:   2,
@@ -575,6 +594,25 @@ function onCheckPaymentStatus(order, config) {
     }
 
     return { paid: false, message: '等待区块确认...' };
+}
+
+/**
+ * 退款处理
+ * USDT为去中心化加密货币，无法自动退款，需要管理员手动转账
+ */
+function onRefund(order, config) {
+    var orderKey = 'order_' + order.id;
+    var savedAmount = AuraLogic.storage.get(orderKey + '_amount') || '';
+
+    return {
+        success: true,
+        message: 'USDT BEP20退款需手动操作，请将' + (savedAmount || order.total_amount) + ' USDT转回用户地址',
+        data: {
+            network: 'BEP20',
+            amount: savedAmount || order.total_amount.toString(),
+            wallet_address: config.wallet_address || ''
+        }
+    };
 }
 `,
 	},

@@ -208,6 +208,15 @@ function SerialVerifyContent() {
     }
   }, [needCaptcha, captchaCfg?.provider])
 
+  // 验证码超时自动刷新（后端TTL为5分钟，提前30秒刷新）
+  useEffect(() => {
+    if (!needCaptcha || captchaCfg?.provider !== 'builtin') return
+    const timer = setInterval(() => {
+      refreshBuiltinCaptcha()
+    }, 270000)
+    return () => clearInterval(timer)
+  }, [needCaptcha, captchaCfg?.provider])
+
   // Load Turnstile/reCAPTCHA scripts for serial verify
   useEffect(() => {
     if (!needCaptcha) return

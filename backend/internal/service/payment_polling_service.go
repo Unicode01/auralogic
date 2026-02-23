@@ -403,14 +403,7 @@ func (s *PaymentPollingService) handlePaymentSuccess(task *PollingTask, order *m
 		}
 	}
 
-	if err := s.db.Model(order).Updates(updates).Error; err != nil {
-		logger.LogPaymentOperation(s.db, "payment_update_failed", task.OrderID, map[string]interface{}{
-			"error": err.Error(),
-		})
-		return
-	}
-
-	// 更新订单付款记录
+	// 在事务中原子更新订单状态和付款记录，防止部分失败导致状态不一致
 	paymentData := map[string]interface{}{
 		"paid_at": time.Now().Format(time.RFC3339),
 	}
@@ -423,9 +416,20 @@ func (s *PaymentPollingService) handlePaymentSuccess(task *PollingTask, order *m
 		}
 	}
 	paymentDataJSON, _ := json.Marshal(paymentData)
-	s.db.Model(&models.OrderPaymentMethod{}).
-		Where("order_id = ?", task.OrderID).
-		Update("payment_data", string(paymentDataJSON))
+
+	if err := s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(order).Updates(updates).Error; err != nil {
+			return err
+		}
+		return tx.Model(&models.OrderPaymentMethod{}).
+			Where("order_id = ?", task.OrderID).
+			Update("payment_data", string(paymentDataJSON)).Error
+	}); err != nil {
+		logger.LogPaymentOperation(s.db, "payment_update_failed", task.OrderID, map[string]interface{}{
+			"error": err.Error(),
+		})
+		return
+	}
 
 	// 记录付款成功日志
 	logger.LogPaymentOperation(s.db, "payment_success", task.OrderID, map[string]interface{}{

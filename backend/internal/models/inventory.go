@@ -60,9 +60,9 @@ func (i *Inventory) CanPurchase(quantity int) (bool, string) {
 	availableStock := i.GetAvailableStock()
 	if quantity > availableStock {
 		if availableStock <= 0 {
-			return false, "该规格已售罄"
+			return false, "This specification is sold out"
 		}
-		return false, "Inventoryinsufficient, current可购买数量: " + string(rune(availableStock))
+		return false, "Insufficient stock, available quantity: " + string(rune(availableStock))
 	}
 	
 	// 检查实际Inventory

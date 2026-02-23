@@ -1,6 +1,7 @@
 package response
 
 import (
+	"log"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -84,7 +85,7 @@ func ErrorWithData(c *gin.Context, httpCode, code int, message string, data inte
 func ValidationError(c *gin.Context, errors interface{}) {
 	c.JSON(http.StatusBadRequest, Response{
 		Code:    CodeParamError,
-		Message: "参数验证Failed",
+		Message: "Validation failed",
 		Errors:  errors,
 	})
 }
@@ -112,7 +113,7 @@ func Paginated(c *gin.Context, items interface{}, page, limit int, total int64) 
 // Unauthorized 未授权
 func Unauthorized(c *gin.Context, message string) {
 	if message == "" {
-		message = "未授权"
+		message = "Unauthorized"
 	}
 	Error(c, http.StatusUnauthorized, CodeUnauthorized, message)
 }
@@ -128,7 +129,7 @@ func Forbidden(c *gin.Context, message string) {
 // NotFound 资源does not exist
 func NotFound(c *gin.Context, message string) {
 	if message == "" {
-		message = "资源does not exist"
+		message = "Resource not found"
 	}
 	Error(c, http.StatusNotFound, CodeNotFound, message)
 }
@@ -136,9 +137,20 @@ func NotFound(c *gin.Context, message string) {
 // InternalError 服务器内部Error
 func InternalError(c *gin.Context, message string) {
 	if message == "" {
-		message = "服务器内部Error"
+		message = "Internal server error"
 	}
 	Error(c, http.StatusInternalServerError, CodeInternalError, message)
+}
+
+// InternalServerError 服务器内部Error（记录详细错误日志，仅返回安全消息给客户端）
+func InternalServerError(c *gin.Context, userMessage string, err error) {
+	if err != nil {
+		log.Printf("[ERROR] %s %s: %s - %v", c.Request.Method, c.Request.URL.Path, userMessage, err)
+	}
+	if userMessage == "" {
+		userMessage = "Internal server error"
+	}
+	Error(c, http.StatusInternalServerError, CodeInternalError, userMessage)
 }
 
 // BadRequest Error请求
@@ -152,7 +164,7 @@ func BadRequest(c *gin.Context, message string) {
 // Conflict 资源冲突
 func Conflict(c *gin.Context, message string) {
 	if message == "" {
-		message = "资源已存在"
+		message = "Resource already exists"
 	}
 	Error(c, http.StatusConflict, CodeConflict, message)
 }

@@ -241,9 +241,10 @@ func (s *JSRuntimeService) ExecutePaymentCard(pm *models.PaymentMethod, order *m
 	}
 
 	// 设置超时
-	time.AfterFunc(5*time.Second, func() {
+	timer := time.AfterFunc(5*time.Second, func() {
 		vm.Interrupt("execution timeout")
 	})
+	defer timer.Stop()
 
 	// 注册系统API
 	s.registerAPIs(vm, ctx, pm)
@@ -278,8 +279,8 @@ func (s *JSRuntimeService) generateDefaultCard(pm *models.PaymentMethod, order *
 	html := fmt.Sprintf(`
 		<div class="text-sm text-muted-foreground">
 			<p>%s</p>
-			<p class="mt-2">付款金额: <span class="font-bold text-primary">%s %.2f</span></p>
-			<p class="mt-1">订单号: <code class="bg-muted px-1 rounded">%s</code></p>
+			<p class="mt-2">Amount: <span class="font-bold text-primary">%s %.2f</span></p>
+			<p class="mt-1">Order No: <code class="bg-muted px-1 rounded">%s</code></p>
 		</div>
 	`, pm.Description, order.Currency, order.TotalAmount, order.OrderNo)
 
@@ -857,7 +858,7 @@ func getConfigString(config map[string]interface{}, key, defaultVal string) stri
 func (s *JSRuntimeService) CheckPaymentStatus(pm *models.PaymentMethod, order *models.Order) (*PaymentCheckResult, error) {
 	// 没有脚本时返回需要人工确认
 	if pm.Script == "" {
-		return &PaymentCheckResult{Paid: false, Message: "付款方式需要人工确认"}, nil
+		return &PaymentCheckResult{Paid: false, Message: "Payment method requires manual confirmation"}, nil
 	}
 
 	vm := goja.New()
@@ -869,9 +870,10 @@ func (s *JSRuntimeService) CheckPaymentStatus(pm *models.PaymentMethod, order *m
 	}
 
 	// 设置超时
-	time.AfterFunc(10*time.Second, func() {
+	timer := time.AfterFunc(10*time.Second, func() {
 		vm.Interrupt("execution timeout")
 	})
+	defer timer.Stop()
 
 	// 注册系统API
 	s.registerAPIs(vm, ctx, pm)
@@ -886,7 +888,7 @@ func (s *JSRuntimeService) CheckPaymentStatus(pm *models.PaymentMethod, order *m
 	fn, ok := goja.AssertFunction(vm.Get("onCheckPaymentStatus"))
 	if !ok {
 		// 如果没有定义此方法，返回未付款
-		return &PaymentCheckResult{Paid: false, Message: "付款方式未实现状态检查"}, nil
+		return &PaymentCheckResult{Paid: false, Message: "Payment method has not implemented status check"}, nil
 	}
 
 	// 准备订单数据
@@ -938,6 +940,85 @@ type PaymentCheckResult struct {
 	TransactionID string                 `json:"transaction_id,omitempty"`
 	Message       string                 `json:"message,omitempty"`
 	Data          map[string]interface{} `json:"data,omitempty"`
+}
+
+// RefundResult 退款结果
+type RefundResult struct {
+	Success       bool                   `json:"success"`
+	TransactionID string                 `json:"transaction_id,omitempty"`
+	Message       string                 `json:"message,omitempty"`
+	Data          map[string]interface{} `json:"data,omitempty"`
+}
+
+// ExecuteRefund 执行退款
+func (s *JSRuntimeService) ExecuteRefund(pm *models.PaymentMethod, order *models.Order) (*RefundResult, error) {
+	if pm.Script == "" {
+		return &RefundResult{Success: false, Message: "Payment method has no script configured"}, nil
+	}
+
+	vm := goja.New()
+	ctx := &JSContext{
+		PaymentMethodID: pm.ID,
+		OrderID:         order.ID,
+		Order:           order,
+		DB:              s.db,
+	}
+
+	time.AfterFunc(10*time.Second, func() {
+		vm.Interrupt("execution timeout")
+	})
+
+	s.registerAPIs(vm, ctx, pm)
+
+	_, err := vm.RunString(pm.Script)
+	if err != nil {
+		return nil, fmt.Errorf("script execution error: %w", err)
+	}
+
+	fn, ok := goja.AssertFunction(vm.Get("onRefund"))
+	if !ok {
+		return &RefundResult{Success: false, Message: "Payment method has not implemented refund"}, nil
+	}
+
+	orderData := s.orderToJS(order)
+	configData := s.parseConfig(pm.Config)
+
+	result, err := fn(goja.Undefined(), vm.ToValue(orderData), vm.ToValue(configData))
+	if err != nil {
+		return nil, fmt.Errorf("onRefund error: %w", err)
+	}
+
+	return s.parseRefundResult(result)
+}
+
+// parseRefundResult 解析退款结果
+func (s *JSRuntimeService) parseRefundResult(result goja.Value) (*RefundResult, error) {
+	if result == nil || goja.IsUndefined(result) || goja.IsNull(result) {
+		return &RefundResult{Success: false}, nil
+	}
+
+	exported := result.Export()
+	switch v := exported.(type) {
+	case bool:
+		return &RefundResult{Success: v}, nil
+	case map[string]interface{}:
+		refundResult := &RefundResult{}
+		if success, ok := v["success"].(bool); ok {
+			refundResult.Success = success
+		}
+		if txID, ok := v["transaction_id"].(string); ok {
+			refundResult.TransactionID = txID
+		}
+		if msg, ok := v["message"].(string); ok {
+			refundResult.Message = msg
+		}
+		if data, ok := v["data"].(map[string]interface{}); ok {
+			refundResult.Data = data
+		}
+		return refundResult, nil
+	default:
+		return &RefundResult{Success: false}, nil
+	}
 }
 
 // 新增 API 函数

@@ -10,25 +10,27 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { useTheme, Theme } from '@/contexts/theme-context'
 import { useLocale } from '@/hooks/use-locale'
+import { getTranslations } from '@/lib/i18n'
 
 export function ThemeToggle() {
   const { theme, setTheme, resolvedTheme } = useTheme()
   const { locale } = useLocale()
+  const t = getTranslations(locale)
 
   const themes: { value: Theme; label: string; icon: React.ReactNode }[] = [
     {
       value: 'light',
-      label: locale === 'zh' ? '浅色' : 'Light',
+      label: t.theme.light,
       icon: <Sun className="h-4 w-4" />,
     },
     {
       value: 'dark',
-      label: locale === 'zh' ? '深色' : 'Dark',
+      label: t.theme.dark,
       icon: <Moon className="h-4 w-4" />,
     },
     {
       value: 'system',
-      label: locale === 'zh' ? '跟随系统' : 'System',
+      label: t.theme.system,
       icon: <Monitor className="h-4 w-4" />,
     },
   ]
@@ -43,7 +45,7 @@ export function ThemeToggle() {
             <Sun className="h-4 w-4" />
           )}
           <span className="sr-only">
-            {locale === 'zh' ? '切换主题' : 'Toggle theme'}
+            {t.theme.toggleTheme}
           </span>
         </Button>
       </DropdownMenuTrigger>

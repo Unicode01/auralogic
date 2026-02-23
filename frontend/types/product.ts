@@ -38,6 +38,8 @@ export interface Product {
   is_featured?: boolean
   isRecommended?: boolean
   is_recommended?: boolean
+  auto_delivery?: boolean
+  autoDelivery?: boolean
   viewCount?: number
   view_count?: number
   saleCount?: number

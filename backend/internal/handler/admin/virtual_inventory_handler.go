@@ -361,7 +361,7 @@ func (h *VirtualInventoryHandler) DeleteStock(c *gin.Context) {
 	}
 
 	if err := h.service.DeleteStock(stockID); err != nil {
-		response.InternalError(c, err.Error())
+		response.InternalError(c, "Operation failed")
 		return
 	}
 
@@ -381,7 +381,7 @@ func (h *VirtualInventoryHandler) DeleteBatch(c *gin.Context) {
 
 	count, err := h.service.DeleteBatch(req.BatchNo)
 	if err != nil {
-		response.InternalError(c, err.Error())
+		response.InternalError(c, "Operation failed")
 		return
 	}
 
@@ -512,7 +512,7 @@ func (h *VirtualInventoryHandler) SaveVariantBindings(c *gin.Context) {
 	}
 
 	if err := h.service.SaveVariantBindings(productID, req.Bindings); err != nil {
-		response.InternalError(c, err.Error())
+		response.InternalError(c, "Operation failed")
 		return
 	}
 
@@ -652,7 +652,7 @@ func (h *VirtualInventoryHandler) DeleteStockByID(c *gin.Context) {
 	}
 
 	if err := h.service.DeleteStock(stockID); err != nil {
-		response.InternalError(c, err.Error())
+		response.InternalError(c, "Operation failed")
 		return
 	}
 

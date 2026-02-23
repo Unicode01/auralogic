@@ -94,10 +94,10 @@ func (h *OrderHandler) ExportOrders(c *gin.Context) {
 
 	// 设置表头
 	headers := []string{
-		"Order号", "UserEmail", "Order状态", "隐私保护",
-		"收货人", "Phone", "国家", "省", "市", "区", "详细Address", "邮编",
-		"物流单号",
-		"Create时间", "完成时间",
+		"Order No.", "User Email", "Order Status", "Privacy Protected",
+		"Recipient", "Phone", "Country", "Province", "City", "District", "Address", "Postcode",
+		"Tracking No.",
+		"Created At", "Completed At",
 	}
 
 	for i, header := range headers {
@@ -133,24 +133,24 @@ func (h *OrderHandler) ExportOrders(c *gin.Context) {
 	for i, order := range orders {
 		row := i + 2
 
-		// Order状态转换
+		// Order status translation
 		statusMap := map[string]string{
-			"draft":         "草稿",
-			"pending":       "待发货",
-			"need_resubmit": "需重填",
-			"shipped":       "已发货",
-			"completed":     "已完成",
-			"cancelled":     "已取消",
+			"draft":         "Draft",
+			"pending":       "Pending Shipment",
+			"need_resubmit": "Needs Resubmit",
+			"shipped":       "Shipped",
+			"completed":     "Completed",
+			"cancelled":     "Cancelled",
 		}
 		statusText := statusMap[string(order.Status)]
 		if statusText == "" {
 			statusText = string(order.Status)
 		}
 
-		// 隐私保护
-		privacyText := "否"
+		// Privacy protected
+		privacyText := "No"
 		if order.PrivacyProtected {
-			privacyText = "是"
+			privacyText = "Yes"
 		}
 
 		// 完成时间
@@ -317,12 +317,12 @@ func (h *OrderHandler) ImportOrders(c *gin.Context) {
 		if order.Status != models.OrderStatusPending && order.Status != models.OrderStatusNeedResubmit {
 			skipCount++
 			statusText := map[string]string{
-				"draft":         "草稿",
-				"pending":       "待发货",
-				"need_resubmit": "需重填",
-				"shipped":       "已发货",
-				"completed":     "已完成",
-				"cancelled":     "已取消",
+				"draft":         "Draft",
+				"pending":       "Pending Shipment",
+				"need_resubmit": "Needs Resubmit",
+				"shipped":       "Shipped",
+				"completed":     "Completed",
+				"cancelled":     "Cancelled",
 			}[string(order.Status)]
 			if statusText == "" {
 				statusText = string(order.Status)
@@ -369,7 +369,7 @@ func (h *OrderHandler) DownloadTemplate(c *gin.Context) {
 	}()
 
 	// Create工作表
-	sheetName := "物流Info导入模板"
+	sheetName := "Shipping Info Import Template"
 	index, err := f.NewSheet(sheetName)
 	if err != nil {
 		response.InternalError(c, "CreateExcelFailed")
@@ -402,10 +402,10 @@ func (h *OrderHandler) DownloadTemplate(c *gin.Context) {
 
 	// 设置表头
 	headers := []string{
-		"Order号*", "UserEmail", "Order状态", "隐私保护",
-		"收货人", "Phone", "国家", "省", "市", "区", "详细Address", "邮编",
-		"物流单号*",
-		"Create时间", "完成时间",
+		"Order No.*", "User Email", "Order Status", "Privacy Protected",
+		"Recipient", "Phone", "Country", "Province", "City", "District", "Address", "Postcode",
+		"Tracking No.*",
+		"Created At", "Completed At",
 	}
 
 	for i, header := range headers {
@@ -429,15 +429,15 @@ func (h *OrderHandler) DownloadTemplate(c *gin.Context) {
 	exampleData := []interface{}{
 		"ORD202601050001",
 		"user@example.com",
-		"待发货",
-		"否",
-		"张三",
+		"Pending Shipment",
+		"No",
+		"John Doe",
 		"13800138000",
-		"中国",
-		"广东省",
-		"深圳市",
-		"南山区",
-		"科技园南区",
+		"China",
+		"Guangdong",
+		"Shenzhen",
+		"Nanshan",
+		"Science Park South",
 		"518000",
 		"SF1234567890",
 		"2026-01-05 10:00:00",
@@ -450,16 +450,16 @@ func (h *OrderHandler) DownloadTemplate(c *gin.Context) {
 	}
 
 	// 添加说明
-	f.SetCellValue(sheetName, "A4", "说明：")
-	f.SetCellValue(sheetName, "A5", "1. 带*的列为必填项")
-	f.SetCellValue(sheetName, "A6", "2. 只会Update物流Info为空的Order")
-	f.SetCellValue(sheetName, "A7", "3. 可以先导出Order，在导出的文件中填写物流Info后再导入")
+	f.SetCellValue(sheetName, "A4", "Notes:")
+	f.SetCellValue(sheetName, "A5", "1. Columns marked with * are required")
+	f.SetCellValue(sheetName, "A6", "2. Only orders with empty tracking info will be updated")
+	f.SetCellValue(sheetName, "A7", "3. You can export orders first, fill in tracking info, then import")
 
 	// 设置默认工作表
 	f.SetActiveSheet(index)
 
 	// generate文件名
-	fileName := "Order物流Info导入模板.xlsx"
+	fileName := "Order_Shipping_Import_Template.xlsx"
 
 	// 设置响应头
 	c.Header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")

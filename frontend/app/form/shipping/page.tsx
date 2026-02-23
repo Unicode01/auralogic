@@ -9,6 +9,7 @@ import { Globe } from 'lucide-react'
 import { useLocale } from '@/hooks/use-locale'
 import { getTranslations } from '@/lib/i18n'
 import { usePageTitle } from '@/hooks/use-page-title'
+import { getToken } from '@/lib/auth'
 
 function ShippingFormContent() {
   const searchParams = useSearchParams()
@@ -115,7 +116,7 @@ function ShippingFormContent() {
         {lang === 'zh' ? 'English' : '中文'}
       </Button>
 
-      <ShippingForm formToken={token!} orderInfo={formData} lang={lang} hidePassword={typeof window !== 'undefined' && !!localStorage.getItem('auth_token')} />
+      <ShippingForm formToken={token!} orderInfo={formData} lang={lang} hidePassword={typeof window !== 'undefined' && !!getToken()} />
     </div>
   )
 }

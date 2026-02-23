@@ -2,7 +2,7 @@
 
 import { useState, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
-import { useMutation } from '@tanstack/react-query'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useCart } from '@/contexts/cart-context'
 import { createOrder, validatePromoCode } from '@/lib/api'
 import { Card, CardContent, CardHeader, CardFooter } from '@/components/ui/card'
@@ -19,6 +19,7 @@ import { useCurrency, formatPrice } from '@/contexts/currency-context'
 
 export default function CartPage() {
   const router = useRouter()
+  const queryClient = useQueryClient()
   const { locale } = useLocale()
   const t = getTranslations(locale)
   usePageTitle(t.pageTitle.cart)
@@ -100,16 +101,17 @@ export default function CartPage() {
   // 创建订单
   const createOrderMutation = useMutation({
     mutationFn: createOrder,
-    onSuccess: (data) => {
+    onSuccess: async (data) => {
       const orderNo = data?.data?.order_no
       toast.success(t.cart.orderSuccess)
       // 只清空已选中的商品
       const selectedItemIds = Array.from(selectedItems)
-      removeItems(selectedItemIds)
+      await removeItems(selectedItemIds)
       setSelectedItems(new Set())
       // 清空优惠码状态
       setAppliedPromo(null)
       setPromoCodeInput('')
+      queryClient.invalidateQueries({ queryKey: ['orders'] })
       router.push(`/orders/${orderNo}`)
     },
     onError: (error: Error) => {
@@ -633,7 +635,7 @@ export default function CartPage() {
                     className="text-xs md:text-sm text-primary hover:text-primary/80 font-medium whitespace-nowrap truncate"
                     onClick={() => setPromoCodeExpanded(true)}
                   >
-                    {locale === 'zh' ? '我有优惠码?' : 'Have a promo code?'}
+                    {t.cart.havePromoCode}
                   </button>
                 )}
                 {/* PC端：优惠码输入框内联显示 */}

@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation'
 import { useLocale } from '@/hooks/use-locale'
 import { getTranslations } from '@/lib/i18n'
 import { usePageTitle } from '@/hooks/use-page-title'
-import { getAdminOrderDetail, assignTracking, adminCompleteOrder, adminCancelOrder, adminDeleteOrder, updateOrderShippingInfo, requestOrderResubmit, getCountries, adminMarkOrderAsPaid, updateOrderPrice, adminDeliverVirtualStock } from '@/lib/api'
+import { getAdminOrderDetail, assignTracking, adminCompleteOrder, adminCancelOrder, adminDeleteOrder, updateOrderShippingInfo, requestOrderResubmit, getCountries, adminMarkOrderAsPaid, updateOrderPrice, adminDeliverVirtualStock, adminRefundOrder } from '@/lib/api'
 import { OrderDetail } from '@/components/orders/order-detail'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -33,7 +33,7 @@ import {
 } from '@/components/ui/alert-dialog'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { ArrowLeft, Truck, CheckCircle, XCircle, Trash2, Edit, RotateCcw, CreditCard, Wallet, Clock, Coins, DollarSign, Key } from 'lucide-react'
+import { ArrowLeft, Truck, CheckCircle, XCircle, Trash2, Edit, RotateCcw, CreditCard, Wallet, Clock, Coins, DollarSign, Key, Undo2 } from 'lucide-react'
 import * as LucideIcons from 'lucide-react'
 import Link from 'next/link'
 import { useToast } from '@/hooks/use-toast'
@@ -51,10 +51,12 @@ export default function AdminOrderDetailPage({ params }: { params: Promise<{ id:
   const [trackingNo, setTrackingNo] = useState('')
   const [adminRemark, setAdminRemark] = useState('')
   const [cancelReason, setCancelReason] = useState('')
+  const [refundReason, setRefundReason] = useState('')
   const [resubmitReason, setResubmitReason] = useState('')
   const [openTracking, setOpenTracking] = useState(false)
   const [openComplete, setOpenComplete] = useState(false)
   const [openCancel, setOpenCancel] = useState(false)
+  const [openRefund, setOpenRefund] = useState(false)
   const [openEdit, setOpenEdit] = useState(false)
   const [openResubmit, setOpenResubmit] = useState(false)
   const [openUpdatePrice, setOpenUpdatePrice] = useState(false)
@@ -121,6 +123,19 @@ export default function AdminOrderDetailPage({ params }: { params: Promise<{ id:
     },
     onError: (error: any) => {
       toast.error(error.message || t.order.cancelFailed)
+    },
+  })
+
+  const refundMutation = useMutation({
+    mutationFn: () => adminRefundOrder(orderId, refundReason),
+    onSuccess: () => {
+      toast.success(t.order.orderRefunded)
+      queryClient.invalidateQueries({ queryKey: ['adminOrderDetail', orderId] })
+      setOpenRefund(false)
+      setRefundReason('')
+    },
+    onError: (error: any) => {
+      toast.error(error.message || t.order.refundFailed)
     },
   })
 
@@ -245,7 +260,7 @@ export default function AdminOrderDetailPage({ params }: { params: Promise<{ id:
   }, [data])
 
   if (isLoading) {
-    return <div className="text-center py-12">{locale === 'zh' ? '加载中...' : 'Loading...'}</div>
+    return <div className="text-center py-12">{t.common.loading}</div>
   }
 
   if (!data?.data) {
@@ -737,11 +752,54 @@ export default function AdminOrderDetailPage({ params }: { params: Promise<{ id:
             </Dialog>
           )}
 
+          {/* 退款 */}
+          {(order.status === 'draft' || order.status === 'pending' || order.status === 'need_resubmit' || order.status === 'shipped' || order.status === 'completed') && (
+            <Dialog open={openRefund} onOpenChange={setOpenRefund}>
+              <DialogTrigger asChild>
+                <Button variant="outline">
+                  <Undo2 className="mr-2 h-4 w-4" />
+                  {t.order.refundOrder}
+                </Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>{t.order.refundOrderTitle}</DialogTitle>
+                  <DialogDescription>
+                    {t.order.refundOrderDesc}
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="space-y-4 py-4">
+                  <div className="space-y-2">
+                    <Label>{t.order.refundReasonLabel}</Label>
+                    <Textarea
+                      placeholder={t.order.refundReasonPlaceholder}
+                      value={refundReason}
+                      onChange={(e) => setRefundReason(e.target.value)}
+                      rows={3}
+                    />
+                  </div>
+                </div>
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => setOpenRefund(false)}>
+                    {t.order.back}
+                  </Button>
+                  <Button
+                    variant="destructive"
+                    onClick={() => refundMutation.mutate()}
+                    disabled={refundMutation.isPending}
+                  >
+                    {refundMutation.isPending ? t.order.refunding : t.order.confirmRefund}
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+          )}
+
           {/* 删除订单 */}
-          {(order.status === 'pending_payment' || order.status === 'draft' || order.status === 'cancelled') && (
+          {(order.status === 'pending_payment' || order.status === 'draft' || order.status === 'cancelled' || order.status === 'refunded') && (
             <AlertDialog>
               <AlertDialogTrigger asChild>
-                <Button variant="destructive" size="sm">
+                <Button variant="destructive">
                   <Trash2 className="mr-2 h-4 w-4" />
                   {t.order.delete}
                 </Button>

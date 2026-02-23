@@ -624,6 +624,10 @@ export async function adminDeleteOrder(id: number) {
   return apiClient.delete(`/api/admin/orders/${id}`)
 }
 
+export async function adminRefundOrder(id: number, reason?: string) {
+  return apiClient.post(`/api/admin/orders/${id}/refund`, { reason })
+}
+
 export async function completeAllShippedOrders() {
   return apiClient.post('/api/admin/orders/batch/complete-shipped')
 }

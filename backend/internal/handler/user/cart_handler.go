@@ -25,7 +25,7 @@ func (h *CartHandler) GetCart(c *gin.Context) {
 
 	items, err := h.cartService.GetCart(userID)
 	if err != nil {
-		response.InternalError(c, "获取购物车失败: "+err.Error())
+		response.InternalError(c, "Failed to get cart")
 		return
 	}
 
@@ -60,7 +60,7 @@ func (h *CartHandler) AddToCart(c *gin.Context) {
 
 	var req AddToCartRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "请求参数无效")
+		response.BadRequest(c, "Invalid request parameters")
 		return
 	}
 
@@ -76,7 +76,7 @@ func (h *CartHandler) AddToCart(c *gin.Context) {
 
 	response.Success(c, gin.H{
 		"item":    item,
-		"message": "已添加到购物车",
+		"message": "Added to cart",
 	})
 }
 
@@ -91,13 +91,13 @@ func (h *CartHandler) UpdateQuantity(c *gin.Context) {
 
 	itemID, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
-		response.BadRequest(c, "无效的购物车项ID")
+		response.BadRequest(c, "Invalid cart item ID")
 		return
 	}
 
 	var req UpdateQuantityRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "请求参数无效")
+		response.BadRequest(c, "Invalid request parameters")
 		return
 	}
 
@@ -109,7 +109,7 @@ func (h *CartHandler) UpdateQuantity(c *gin.Context) {
 
 	response.Success(c, gin.H{
 		"item":    item,
-		"message": "数量已更新",
+		"message": "Quantity updated",
 	})
 }
 
@@ -119,7 +119,7 @@ func (h *CartHandler) RemoveFromCart(c *gin.Context) {
 
 	itemID, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
-		response.BadRequest(c, "无效的购物车项ID")
+		response.BadRequest(c, "Invalid cart item ID")
 		return
 	}
 
@@ -129,7 +129,7 @@ func (h *CartHandler) RemoveFromCart(c *gin.Context) {
 	}
 
 	response.Success(c, gin.H{
-		"message": "已从购物车移除",
+		"message": "Removed from cart",
 	})
 }
 
@@ -138,12 +138,12 @@ func (h *CartHandler) ClearCart(c *gin.Context) {
 	userID := middleware.MustGetUserID(c)
 
 	if err := h.cartService.ClearCart(userID); err != nil {
-		response.InternalError(c, "清空购物车失败")
+		response.InternalError(c, "Failed to clear cart")
 		return
 	}
 
 	response.Success(c, gin.H{
-		"message": "购物车已清空",
+		"message": "Cart cleared",
 	})
 }
 
@@ -153,7 +153,7 @@ func (h *CartHandler) GetCartCount(c *gin.Context) {
 
 	count, err := h.cartService.GetCartCount(userID)
 	if err != nil {
-		response.InternalError(c, "获取购物车数量失败")
+		response.InternalError(c, "Failed to get cart count")
 		return
 	}
 

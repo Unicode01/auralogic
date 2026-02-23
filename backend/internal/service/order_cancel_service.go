@@ -164,7 +164,7 @@ func (s *OrderCancelService) cancelOrder(order *models.Order) error {
 
 	// 更新订单状态
 	order.Status = models.OrderStatusCancelled
-	order.AdminRemark = fmt.Sprintf("系统自动取消：订单超过 %d 小时未付款", s.cfg.Order.AutoCancelHours)
+	order.AdminRemark = fmt.Sprintf("System auto-cancelled: order unpaid after %d hours", s.cfg.Order.AutoCancelHours)
 
 	if err := s.db.Save(order).Error; err != nil {
 		return err

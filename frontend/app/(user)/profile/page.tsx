@@ -33,6 +33,7 @@ import { usePageTitle } from '@/hooks/use-page-title'
 import { getTranslations } from '@/lib/i18n'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { useTheme, Theme } from '@/contexts/theme-context'
+import { clearToken } from '@/lib/auth'
 
 // 角色颜色
 const roleColors: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
@@ -65,7 +66,7 @@ export default function ProfilePage() {
 
   const handleLogout = () => {
     if (typeof window !== 'undefined') {
-      localStorage.removeItem('auth_token')
+      clearToken()
       window.location.href = '/login'
     }
   }

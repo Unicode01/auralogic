@@ -11,13 +11,14 @@ export function useOrders(params: OrderQueryParams = {}) {
   })
 }
 
-export function useOrderDetail(orderNo: string) {
+export function useOrderDetail(orderNo: string, options?: { refetchInterval?: number | false }) {
   return useQuery({
     queryKey: ['order', orderNo],
     queryFn: () => getOrder(orderNo),
     enabled: !!orderNo,
     staleTime: 0, // 数据立即过期，确保每次都获取最新数据
     refetchOnMount: true, // 组件挂载时重新获取
+    refetchInterval: options?.refetchInterval,
   })
 }
 

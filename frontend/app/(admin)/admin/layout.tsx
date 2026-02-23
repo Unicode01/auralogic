@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/hooks/use-auth'
 import { useLocale } from '@/hooks/use-locale'
+import { getTranslations } from '@/lib/i18n'
 import { usePreventScrollLock } from '@/hooks/use-prevent-scroll-lock'
 import { Sidebar } from '@/components/layout/sidebar'
 import { getToken } from '@/lib/auth'
@@ -31,9 +32,9 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     }
   }, [mounted, user, isLoading, isAuthenticated, router])
 
-  const loadingText = localeMounted ? (locale === 'zh' ? '加载中...' : 'Loading...') : '...'
-  const verifyingText = localeMounted ? (locale === 'zh' ? '验证权限...' : 'Verifying...') : '...'
-  const noAccessText = localeMounted ? (locale === 'zh' ? '无权限访问...' : 'No access...') : '...'
+  const loadingText = localeMounted ? getTranslations(locale).common.loading : '...'
+  const verifyingText = localeMounted ? getTranslations(locale).common.verifying : '...'
+  const noAccessText = localeMounted ? getTranslations(locale).common.noAccess : '...'
 
   // 在挂载前，显示完整布局（避免 hydration 错误）
   if (!mounted) {

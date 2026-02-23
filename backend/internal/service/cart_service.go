@@ -105,11 +105,11 @@ func (s *CartService) AddToCart(userID uint, req AddToCartRequest) (*models.Cart
 	// 验证商品是否存在且上架
 	product, err := s.productRepo.FindByID(req.ProductID)
 	if err != nil {
-		return nil, errors.New("商品不存在")
+		return nil, errors.New("Product not found")
 	}
 
 	if product.Status != models.ProductStatusActive {
-		return nil, errors.New("商品已下架")
+		return nil, errors.New("Product is no longer available")
 	}
 
 	// 验证属性是否有效（对于需要选择属性的商品）
@@ -119,7 +119,7 @@ func (s *CartService) AddToCart(userID uint, req AddToCartRequest) (*models.Cart
 			if attr.Mode == models.AttributeModeUserSelect {
 				val, exists := req.Attributes[attr.Name]
 				if !exists || val == "" {
-					return nil, fmt.Errorf("请选择%s", attr.Name)
+					return nil, fmt.Errorf("Please select %s", attr.Name)
 				}
 				// 验证属性值是否有效
 				valid := false
@@ -130,7 +130,7 @@ func (s *CartService) AddToCart(userID uint, req AddToCartRequest) (*models.Cart
 					}
 				}
 				if !valid {
-					return nil, fmt.Errorf("无效的%s选项", attr.Name)
+					return nil, fmt.Errorf("Invalid %s option", attr.Name)
 				}
 			}
 		}
@@ -151,15 +151,15 @@ func (s *CartService) AddToCart(userID uint, req AddToCartRequest) (*models.Cart
 		// 检查库存
 		stock, err := s.getAvailableStock(req.ProductID, attributes)
 		if err != nil {
-			return nil, errors.New("获取库存失败")
+			return nil, errors.New("Failed to get inventory")
 		}
 		if newQuantity > stock {
-			return nil, fmt.Errorf("库存不足，当前可用库存: %d", stock)
+			return nil, fmt.Errorf("Insufficient stock, available: %d", stock)
 		}
 
 		// 检查购买限制
 		if product.MaxPurchaseLimit > 0 && newQuantity > product.MaxPurchaseLimit {
-			return nil, fmt.Errorf("超过购买限制，最多可购买 %d 件", product.MaxPurchaseLimit)
+			return nil, fmt.Errorf("Exceeds purchase limit, maximum allowed: %d", product.MaxPurchaseLimit)
 		}
 
 		existingItem.Quantity = newQuantity
@@ -174,15 +174,15 @@ func (s *CartService) AddToCart(userID uint, req AddToCartRequest) (*models.Cart
 	// 检查库存
 	stock, err := s.getAvailableStock(req.ProductID, attributes)
 	if err != nil {
-		return nil, errors.New("获取库存失败")
+		return nil, errors.New("Failed to get inventory")
 	}
 	if req.Quantity > stock {
-		return nil, fmt.Errorf("库存不足，当前可用库存: %d", stock)
+		return nil, fmt.Errorf("Insufficient stock, available: %d", stock)
 	}
 
 	// 检查购买限制
 	if product.MaxPurchaseLimit > 0 && req.Quantity > product.MaxPurchaseLimit {
-		return nil, fmt.Errorf("超过购买限制，最多可购买 %d 件", product.MaxPurchaseLimit)
+		return nil, fmt.Errorf("Exceeds purchase limit, maximum allowed: %d", product.MaxPurchaseLimit)
 	}
 
 	// 获取商品主图
@@ -221,35 +221,35 @@ func (s *CartService) AddToCart(userID uint, req AddToCartRequest) (*models.Cart
 // UpdateQuantity 更新购物车项数量
 func (s *CartService) UpdateQuantity(userID, itemID uint, quantity int) (*models.CartItem, error) {
 	if quantity < 1 {
-		return nil, errors.New("数量必须大于0")
+		return nil, errors.New("Quantity must be greater than 0")
 	}
 
 	item, err := s.cartRepo.GetCartItem(itemID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errors.New("购物车项不存在")
+			return nil, errors.New("Cart item not found")
 		}
 		return nil, err
 	}
 
 	// 验证所有权
 	if item.UserID != userID {
-		return nil, errors.New("无权操作此购物车项")
+		return nil, errors.New("No permission to modify this cart item")
 	}
 
 	// 检查库存
 	stock, err := s.getAvailableStock(item.ProductID, item.Attributes)
 	if err != nil {
-		return nil, errors.New("获取库存失败")
+		return nil, errors.New("Failed to get inventory")
 	}
 	if quantity > stock {
-		return nil, fmt.Errorf("库存不足，当前可用库存: %d", stock)
+		return nil, fmt.Errorf("Insufficient stock, available: %d", stock)
 	}
 
 	// 检查购买限制
 	product, _ := s.productRepo.FindByID(item.ProductID)
 	if product != nil && product.MaxPurchaseLimit > 0 && quantity > product.MaxPurchaseLimit {
-		return nil, fmt.Errorf("超过购买限制，最多可购买 %d 件", product.MaxPurchaseLimit)
+		return nil, fmt.Errorf("Exceeds purchase limit, maximum allowed: %d", product.MaxPurchaseLimit)
 	}
 
 	item.Quantity = quantity
@@ -272,7 +272,7 @@ func (s *CartService) RemoveFromCart(userID, itemID uint) error {
 
 	// 验证所有权
 	if item.UserID != userID {
-		return errors.New("无权操作此购物车项")
+		return errors.New("No permission to modify this cart item")
 	}
 
 	return s.cartRepo.DeleteCartItem(itemID)

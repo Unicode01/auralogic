@@ -24,6 +24,7 @@ import { useLocale } from '@/hooks/use-locale'
 import { getTranslations } from '@/lib/i18n'
 import { getPublicConfig } from '@/lib/api'
 import { LanguageSwitcher } from './language-switcher'
+import { clearToken } from '@/lib/auth'
 
 const getMenuItems = (t: any) => [
   {
@@ -146,7 +147,7 @@ export function UserSidebar({ className }: UserSidebarProps) {
             size="sm"
             onClick={() => {
               if (typeof window !== 'undefined') {
-                localStorage.removeItem('auth_token')
+                clearToken()
                 window.location.href = '/login'
               }
             }}

@@ -57,6 +57,17 @@
     body {
         @apply bg-background text-foreground;
     }
+
+    /* 隐藏数字输入框的原生上下箭头按钮（暗色模式下不可见） */
+    input[type="number"]::-webkit-inner-spin-button,
+    input[type="number"]::-webkit-outer-spin-button {
+        -webkit-appearance: none;
+        margin: 0;
+    }
+
+    input[type="number"] {
+        -moz-appearance: textfield;
+    }
 }
 
 @layer utilities {
@@ -186,6 +197,18 @@ body:has(.sidebar-layout) {
 
 .dark * {
     scrollbar-color: hsl(215 20.2% 40%) hsl(217.2 32.6% 12%);
+}
+
+/* 修复 CodeMirror 编辑器长代码行撑开容器宽度的问题 */
+/* contain:inline-size 阻止编辑器内容宽度向上传播影响 grid/flex 布局，
+   让编辑器宽度由父容器决定而非内容决定，从而在内部产生横向滚动。 */
+[class*="cm-theme"] {
+    min-width: 0;
+    contain: inline-size;
+}
+
+.cm-editor .cm-scroller {
+    overflow: auto !important;
 }
 
 /* 付款卡片多语言支持 */

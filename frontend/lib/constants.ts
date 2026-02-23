@@ -6,6 +6,7 @@ export const ORDER_STATUS_CONFIG = {
   shipped: { label: '已发货', color: 'green' },
   completed: { label: '已完成', color: 'purple' },
   cancelled: { label: '已取消', color: 'gray' },
+  refunded: { label: '已退款', color: 'red' },
 } as const
 
 // 权限列表 - 与后端保持一致
@@ -16,6 +17,7 @@ export const PERMISSIONS = [
   { value: 'order.edit', labelKey: 'permOrderEdit' as const, category: 'order' },
   { value: 'order.delete', labelKey: 'permOrderDelete' as const, category: 'order' },
   { value: 'order.status_update', labelKey: 'permOrderStatusUpdate' as const, category: 'order' },
+  { value: 'order.refund', labelKey: 'permOrderRefund' as const, category: 'order' },
   { value: 'order.assign_tracking', labelKey: 'permOrderAssignTracking' as const, category: 'order' },
   { value: 'order.request_resubmit', labelKey: 'permOrderRequestResubmit' as const, category: 'order' },
 

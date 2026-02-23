@@ -27,7 +27,7 @@ func (h *SerialHandler) VerifySerial(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "请输入序列号")
+		response.BadRequest(c, "Please enter a serial number")
 		return
 	}
 
@@ -44,7 +44,7 @@ func (h *SerialHandler) VerifySerial(c *gin.Context) {
 
 	serial, err := h.serialService.VerifySerial(req.SerialNumber)
 	if err != nil {
-		response.NotFound(c, "序列号不存在或无效")
+		response.NotFound(c, "Serial number not found or invalid")
 		return
 	}
 
@@ -60,7 +60,7 @@ func (h *SerialHandler) GetSerialByNumber(c *gin.Context) {
 	captchaToken := c.Query("captcha_token")
 
 	if serialNumber == "" {
-		response.BadRequest(c, "请输入序列号")
+		response.BadRequest(c, "Please enter a serial number")
 		return
 	}
 
@@ -77,7 +77,7 @@ func (h *SerialHandler) GetSerialByNumber(c *gin.Context) {
 
 	serial, err := h.serialService.VerifySerial(serialNumber)
 	if err != nil {
-		response.NotFound(c, "序列号不存在或无效")
+		response.NotFound(c, "Serial number not found or invalid")
 		return
 	}
 

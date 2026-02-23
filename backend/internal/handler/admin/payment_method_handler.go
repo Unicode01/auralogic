@@ -27,7 +27,7 @@ func (h *PaymentMethodHandler) List(c *gin.Context) {
 	enabledOnly := c.Query("enabled_only") == "true"
 	methods, err := h.service.List(enabledOnly)
 	if err != nil {
-		response.InternalError(c, "获取付款方式列表失败")
+		response.InternalError(c, "Failed to get payment method list")
 		return
 	}
 	response.Success(c, gin.H{"items": methods})
@@ -37,13 +37,13 @@ func (h *PaymentMethodHandler) List(c *gin.Context) {
 func (h *PaymentMethodHandler) Get(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
-		response.BadRequest(c, "无效的ID")
+		response.BadRequest(c, "Invalid ID")
 		return
 	}
 
 	pm, err := h.service.Get(uint(id))
 	if err != nil {
-		response.NotFound(c, "付款方式不存在")
+		response.NotFound(c, "Payment method not found")
 		return
 	}
 	response.Success(c, pm)
@@ -63,7 +63,7 @@ type CreatePaymentMethodRequest struct {
 func (h *PaymentMethodHandler) Create(c *gin.Context) {
 	var req CreatePaymentMethodRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "请求参数错误: "+err.Error())
+		response.BadRequest(c, "Invalid request parameters")
 		return
 	}
 
@@ -78,7 +78,7 @@ func (h *PaymentMethodHandler) Create(c *gin.Context) {
 	}
 
 	if err := h.service.Create(pm); err != nil {
-		response.InternalError(c, "创建付款方式失败: "+err.Error())
+		response.InternalError(c, "Failed to create payment method")
 		return
 	}
 
@@ -99,13 +99,13 @@ type UpdatePaymentMethodRequest struct {
 func (h *PaymentMethodHandler) Update(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
-		response.BadRequest(c, "无效的ID")
+		response.BadRequest(c, "Invalid ID")
 		return
 	}
 
 	var req UpdatePaymentMethodRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "请求参数错误: "+err.Error())
+		response.BadRequest(c, "Invalid request parameters")
 		return
 	}
 
@@ -130,7 +130,7 @@ func (h *PaymentMethodHandler) Update(c *gin.Context) {
 	}
 
 	if err := h.service.Update(uint(id), updates); err != nil {
-		response.InternalError(c, "更新付款方式失败: "+err.Error())
+		response.InternalError(c, "Failed to update payment method")
 		return
 	}
 
@@ -142,12 +142,12 @@ func (h *PaymentMethodHandler) Update(c *gin.Context) {
 func (h *PaymentMethodHandler) Delete(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
-		response.BadRequest(c, "无效的ID")
+		response.BadRequest(c, "Invalid ID")
 		return
 	}
 
 	if err := h.service.Delete(uint(id)); err != nil {
-		response.InternalError(c, "删除付款方式失败: "+err.Error())
+		response.InternalError(c, "Failed to delete payment method")
 		return
 	}
 
@@ -158,12 +158,12 @@ func (h *PaymentMethodHandler) Delete(c *gin.Context) {
 func (h *PaymentMethodHandler) ToggleEnabled(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
-		response.BadRequest(c, "无效的ID")
+		response.BadRequest(c, "Invalid ID")
 		return
 	}
 
 	if err := h.service.ToggleEnabled(uint(id)); err != nil {
-		response.InternalError(c, "切换状态失败: "+err.Error())
+		response.InternalError(c, "Failed to toggle status")
 		return
 	}
 
@@ -180,12 +180,12 @@ type ReorderPaymentMethodRequest struct {
 func (h *PaymentMethodHandler) Reorder(c *gin.Context) {
 	var req ReorderPaymentMethodRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "请求参数错误: "+err.Error())
+		response.BadRequest(c, "Invalid request parameters")
 		return
 	}
 
 	if err := h.service.Reorder(req.IDs); err != nil {
-		response.InternalError(c, "排序失败: "+err.Error())
+		response.InternalError(c, "Reorder failed")
 		return
 	}
 
@@ -202,13 +202,13 @@ type TestScriptRequest struct {
 func (h *PaymentMethodHandler) TestScript(c *gin.Context) {
 	var req TestScriptRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "请求参数错误: "+err.Error())
+		response.BadRequest(c, "Invalid request parameters")
 		return
 	}
 
 	result, err := h.service.TestScript(req.Script, req.Config)
 	if err != nil {
-		response.BadRequest(c, "脚本执行失败: "+err.Error())
+		response.BadRequest(c, "Script execution failed")
 		return
 	}
 
@@ -218,8 +218,8 @@ func (h *PaymentMethodHandler) TestScript(c *gin.Context) {
 // InitBuiltinMethods 初始化内置付款方式
 func (h *PaymentMethodHandler) InitBuiltinMethods(c *gin.Context) {
 	if err := h.service.InitBuiltinPaymentMethods(); err != nil {
-		response.InternalError(c, "初始化失败: "+err.Error())
+		response.InternalError(c, "Initialization failed")
 		return
 	}
-	response.Success(c, gin.H{"message": "内置付款方式已初始化"})
+	response.Success(c, gin.H{"message": "Built-in payment methods initialized"})
 }

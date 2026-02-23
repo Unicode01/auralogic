@@ -252,6 +252,11 @@ func (h *UserHandler) UpdateUser(c *gin.Context) {
 		return
 	}
 
+	// 角色变更时清除权限缓存
+	if req.Role != "" {
+		middleware.InvalidatePermissionCache(user.ID)
+	}
+
 	// 记录操作日志
 	details := map[string]interface{}{
 		"name":      req.Name,

@@ -89,6 +89,39 @@ function onCheckPaymentStatus(order, config) {
 }
 ```
 
+### onRefund(order, config)
+
+处理退款请求，当管理员在订单详情页点击退款时调用。
+
+**参数：** 同 `onGeneratePaymentCard`
+
+**返回值：**
+```javascript
+{
+  success: true,                     // 是否退款成功
+  transaction_id: "TX123456",        // 可选：退款交易ID
+  message: "退款成功",                // 可选：状态消息
+  data: { key: "value" }             // 可选：附加数据
+}
+```
+
+或直接返回 `true`/`false`。
+
+**示例：**
+```javascript
+function onRefund(order, config) {
+  // 对于加密货币等无法自动退款的付款方式
+  return {
+    success: true,
+    message: '请手动将款项退回用户地址',
+    data: {
+      amount: order.total_amount,
+      wallet_address: config.wallet_address
+    }
+  };
+}
+```
+
 ---
 
 ## AuraLogic API
@@ -543,6 +576,7 @@ function onGeneratePaymentCard(order, config) {
       </div>
     `,
     title: 'USDT TRC20 付款',
+    ttl: 60,  // 钱包地址是固定的，缓存60秒减少重复生成
     data: {
       wallet_address: walletAddress,
       usdt_amount: usdtAmount
@@ -555,6 +589,18 @@ function onCheckPaymentStatus(order, config) {
   return {
     paid: false,
     message: '加密货币付款需要人工确认'
+  };
+}
+
+function onRefund(order, config) {
+  // 加密货币无法自动退款，提示管理员手动处理
+  return {
+    success: true,
+    message: '请手动将 USDT 退回用户钱包地址',
+    data: {
+      amount: order.total_amount,
+      wallet_address: config.wallet_address
+    }
   };
 }
 ```
@@ -588,7 +634,8 @@ function onGeneratePaymentCard(order, config) {
         </p>
       </div>
     `,
-    title: '银行转账'
+    title: '银行转账',
+    ttl: 3600  // 银行账号等信息是静态的，缓存1小时
   };
 }
 
@@ -596,6 +643,15 @@ function onCheckPaymentStatus(order, config) {
   return {
     paid: false,
     message: '银行转账需要人工确认'
+  };
+}
+
+function onRefund(order, config) {
+  // 银行转账需要人工退款
+  const amount = AuraLogic.utils.formatPrice(order.total_amount, order.currency);
+  return {
+    success: true,
+    message: '请通过银行将 ' + amount + ' 退回用户账户'
   };
 }
 ```

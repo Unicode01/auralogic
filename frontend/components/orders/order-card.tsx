@@ -48,10 +48,10 @@ export function OrderCard({ order }: OrderCardProps) {
         // 跳转到填表页
         router.push(`/form/shipping?token=${formToken}`)
       } else {
-        toast.error(locale === 'zh' ? '获取表单令牌失败' : 'Failed to get form token')
+        toast.error(t.order.getFormTokenFailed)
       }
     } catch (error: any) {
-      toast.error(error.message || (locale === 'zh' ? '获取表单令牌失败' : 'Failed to get form token'))
+      toast.error(error.message || t.order.getFormTokenFailed)
     } finally {
       setIsGettingToken(false)
     }
@@ -78,7 +78,7 @@ export function OrderCard({ order }: OrderCardProps) {
                 </Badge>
               )}
               {(order.sharedToSupport || order.shared_to_support) && (
-                <Badge variant="secondary" className="flex items-center gap-1" title={locale === 'zh' ? '已发送至客服' : 'Shared to Support'}>
+                <Badge variant="secondary" className="flex items-center gap-1" title={t.order.sharedToSupport}>
                   <Headphones className="h-3 w-3" />
                 </Badge>
               )}
@@ -138,14 +138,14 @@ export function OrderCard({ order }: OrderCardProps) {
           ))}
           {order.items.length > 1 && (
             <p className="text-xs text-muted-foreground text-center py-1">
-              {locale === 'zh' ? `共 ${order.items.length} 件商品` : `${order.items.length} items in total`}
+              {t.order.totalItemsCount.replace('{count}', String(order.items.length))}
             </p>
           )}
         </div>
 
         {/* 订单金额 */}
         <div className="flex items-center justify-between pt-2 border-t">
-          <span className="text-sm text-muted-foreground">{locale === 'zh' ? '订单金额' : 'Amount'}</span>
+          <span className="text-sm text-muted-foreground">{t.order.amountLabel}</span>
           <span className="text-sm font-semibold text-foreground">
             {formatCurrency(order.totalAmount || order.total_amount, order.currency)}
           </span>
@@ -174,9 +174,9 @@ export function OrderCard({ order }: OrderCardProps) {
           <div className="flex items-start gap-2 p-2 border-t bg-amber-500/10 rounded mt-auto">
             <FileEdit className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400 mt-0.5 flex-shrink-0" />
             <p className="text-xs text-amber-700 dark:text-amber-300 leading-tight">
-              {isDraft 
-                ? (locale === 'zh' ? '请填写收货信息' : 'Please fill in shipping info')
-                : (locale === 'zh' ? '需重新填写' : 'Need to resubmit')}
+              {isDraft
+                ? t.order.fillShippingPrompt
+                : t.order.needResubmitShort}
             </p>
           </div>
         )}
@@ -194,12 +194,12 @@ export function OrderCard({ order }: OrderCardProps) {
               {isGettingToken ? (
                 <>
                   <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
-                  {locale === 'zh' ? '获取中' : 'Loading'}
+                  {t.order.gettingTokenShort}
                 </>
               ) : (
                 <>
                   <FileEdit className="mr-1 h-3.5 w-3.5" />
-                  {locale === 'zh' ? '填写' : 'Fill'}
+                  {t.order.fillFormShort}
                 </>
               )}
             </Button>

@@ -13,6 +13,7 @@ import toast from 'react-hot-toast'
 import { useLocale } from '@/hooks/use-locale'
 import { getTranslations } from '@/lib/i18n'
 import { usePageTitle } from '@/hooks/use-page-title'
+import { getToken } from '@/lib/auth'
 
 interface ProductSerial {
     id: number
@@ -49,7 +50,7 @@ async function getSerials(page: number, limit: number, filters: any) {
     if (filters.order_id) params.append('order_id', filters.order_id)
 
     const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080'
-    const token = localStorage.getItem('auth_token')
+    const token = getToken()
     const response = await fetch(`${API_BASE_URL}/api/admin/serials?${params}`, {
         headers: {
             'Authorization': `Bearer ${token}`,
@@ -65,7 +66,7 @@ async function getSerials(page: number, limit: number, filters: any) {
 
 async function getStatistics() {
     const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080'
-    const token = localStorage.getItem('auth_token')
+    const token = getToken()
     const response = await fetch(`${API_BASE_URL}/api/admin/serials/statistics`, {
         headers: {
             'Authorization': `Bearer ${token}`,
@@ -81,7 +82,7 @@ async function getStatistics() {
 
 async function deleteSerial(id: number) {
     const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080'
-    const token = localStorage.getItem('auth_token')
+    const token = getToken()
     const response = await fetch(`${API_BASE_URL}/api/admin/serials/${id}`, {
         method: 'DELETE',
         headers: {
@@ -261,7 +262,7 @@ export default function SerialsPage() {
         <div className="space-y-6">
             <div className="flex items-center justify-between">
                 <h1 className="text-3xl font-bold">{t.admin.serialManagement}</h1>
-                <Button variant="outline" size="sm" onClick={() => refetch()}>
+                <Button variant="outline" onClick={() => refetch()}>
                     <RefreshCw className="mr-2 h-4 w-4" />
                     {t.admin.refresh}
                 </Button>

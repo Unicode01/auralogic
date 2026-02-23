@@ -38,6 +38,7 @@ function sanitizeHtml(html: string): string {
     ],
     FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'link', 'meta', 'base', 'input'],
     FORBID_ATTR: ['onerror', 'onload'],
+    FORCE_BODY: true,
   })
 }
 

@@ -44,7 +44,7 @@ func (h *BindingHandler) CreateBinding(c *gin.Context) {
 
 	var req CreateBindingRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "Invalid request parameters: "+err.Error())
+		response.BadRequest(c, "Invalid request parameters")
 		return
 	}
 
@@ -84,7 +84,7 @@ func (h *BindingHandler) BatchCreateBindings(c *gin.Context) {
 
 	var req BatchCreateBindingsRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "Invalid request parameters: "+err.Error())
+		response.BadRequest(c, "Invalid request parameters")
 		return
 	}
 
@@ -139,7 +139,7 @@ func (h *BindingHandler) GetProductBindings(c *gin.Context) {
 	bindings, err := h.bindingService.GetProductBindings(uint(productID))
 	if err != nil {
 		c.Error(err)
-		response.InternalError(c, "QueryFailed: "+err.Error())
+		response.InternalError(c, "Query failed")
 		return
 	}
 
@@ -156,7 +156,7 @@ func (h *BindingHandler) UpdateBinding(c *gin.Context) {
 
 	var req UpdateBindingRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "Invalid request parameters: "+err.Error())
+		response.BadRequest(c, "Invalid request parameters")
 		return
 	}
 
@@ -204,7 +204,7 @@ func (h *BindingHandler) DeleteAllProductBindings(c *gin.Context) {
 	}
 
 	response.Success(c, gin.H{
-		"message": "批量DeleteSuccess",
+		"message": "Batch delete successful",
 		"count":   count,
 	})
 }
@@ -219,14 +219,14 @@ func (h *BindingHandler) ReplaceProductBindings(c *gin.Context) {
 
 	var req BatchCreateBindingsRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "Invalid request parameters: "+err.Error())
+		response.BadRequest(c, "Invalid request parameters")
 		return
 	}
 
 	// 1. Delete所有旧绑定
 	deletedCount, err := h.bindingService.DeleteAllProductBindings(uint(productID))
 	if err != nil {
-		response.BadRequest(c, "Failed to delete old bindings: "+err.Error())
+		response.BadRequest(c, "Failed to delete old bindings")
 		return
 	}
 
@@ -285,7 +285,7 @@ func (h *BindingHandler) GetInventoryProducts(c *gin.Context) {
 	bindings, err := h.bindingService.GetInventoryBindings(uint(inventoryID))
 	if err != nil {
 		c.Error(err)
-		response.InternalError(c, "QueryFailed: "+err.Error())
+		response.InternalError(c, "Query failed")
 		return
 	}
 

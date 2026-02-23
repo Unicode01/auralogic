@@ -54,7 +54,7 @@ type AdjustStockRequest struct {
 func (h *InventoryHandler) CreateInventory(c *gin.Context) {
 	var req CreateInventoryRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "Invalid request parameters: "+err.Error())
+		response.BadRequest(c, "Invalid request parameters")
 		return
 	}
 
@@ -110,7 +110,7 @@ func (h *InventoryHandler) UpdateInventory(c *gin.Context) {
 
 	var req UpdateInventoryRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "Invalid request parameters: "+err.Error())
+		response.BadRequest(c, "Invalid request parameters")
 		return
 	}
 
@@ -198,7 +198,7 @@ func (h *InventoryHandler) ListInventories(c *gin.Context) {
 	if err != nil {
 		// 记录详细ErrorInfo
 		c.Error(err)
-		response.InternalError(c, "QueryFailed: "+err.Error())
+		response.InternalError(c, "Query failed")
 		return
 	}
 
@@ -249,7 +249,7 @@ func (h *InventoryHandler) AdjustStock(c *gin.Context) {
 
 	var req AdjustStockRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "Invalid request parameters: "+err.Error())
+		response.BadRequest(c, "Invalid request parameters")
 		return
 	}
 

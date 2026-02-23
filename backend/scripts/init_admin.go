@@ -79,6 +79,7 @@ func main() {
 		"order.edit",
 		"order.delete",
 		"order.status_update",
+		"order.refund",
 		"order.assign_tracking",
 		"order.request_resubmit",
 		// Product

@@ -190,7 +190,7 @@ export default function AdminPromoCodesPage() {
               {t.promoCode.addPromoCode}
             </Link>
           </Button>
-          <Button variant="outline" size="sm" onClick={() => refetch()}>
+          <Button variant="outline" onClick={() => refetch()}>
             <RefreshCw className="mr-2 h-4 w-4" />
             {t.admin.refresh}
           </Button>
