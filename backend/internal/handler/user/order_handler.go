@@ -65,7 +65,7 @@ func (h *OrderHandler) CreateOrder(c *gin.Context) {
 			response.BadRequest(c, err.Error())
 			return
 		}
-		response.InternalError(c, "CreateOrderFailed: "+err.Error())
+		response.InternalError(c, "Failed to create order")
 		return
 	}
 
@@ -85,6 +85,9 @@ func (h *OrderHandler) ListOrders(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
 	status := c.Query("status")
 
+	if page < 1 {
+		page = 1
+	}
 	if limit > 100 {
 		limit = 100
 	}

@@ -132,7 +132,7 @@ func (r *InventoryRepository) Reserve(inventoryID uint, quantity int, orderNo st
 			AfterStock:  inventory.ReservedQuantity,
 			OrderNo:     orderNo,
 			Operator:    "system",
-			Reason:      "下单预留库存",
+			Reason:      "Reserve inventory for order",
 		}
 
 		return tx.Create(log).Error
@@ -168,7 +168,7 @@ func (r *InventoryRepository) ReleaseReserve(inventoryID uint, quantity int, ord
 			AfterStock:  inventory.ReservedQuantity,
 			OrderNo:     orderNo,
 			Operator:    "system",
-			Reason:      "取消订单释放预留库存",
+			Reason:      "Release reserved inventory on order cancellation",
 		}
 
 		return tx.Create(log).Error
@@ -192,6 +192,11 @@ func (r *InventoryRepository) Deduct(inventoryID uint, quantity int, orderNo str
 		// 记录扣减前的状态
 		beforeStock := inventory.Stock
 
+		// 验证库存充足
+		if inventory.Stock < quantity {
+			return fmt.Errorf("insufficient stock: available %d, required %d", inventory.Stock, quantity)
+		}
+
 		// 1. 增加已售数量
 		inventory.SoldQuantity += quantity
 
@@ -199,16 +204,11 @@ func (r *InventoryRepository) Deduct(inventoryID uint, quantity int, orderNo str
 		if inventory.ReservedQuantity >= quantity {
 			inventory.ReservedQuantity -= quantity
 		} else {
-			// 如果预留数量不足，说明可能是旧订单或异常情况，清零预留
 			inventory.ReservedQuantity = 0
 		}
 
 		// 3. 减少总Inventory
-		if inventory.Stock >= quantity {
-			inventory.Stock -= quantity
-		} else {
-			inventory.Stock = 0
-		}
+		inventory.Stock -= quantity
 
 		// 4. 减少可购买数
 		if inventory.AvailableQuantity >= quantity {
@@ -231,7 +231,7 @@ func (r *InventoryRepository) Deduct(inventoryID uint, quantity int, orderNo str
 			AfterStock:  inventory.Stock,
 			OrderNo:     orderNo,
 			Operator:    "system",
-			Reason:      "订单发货扣减库存",
+			Reason:      "Deduct inventory on order shipment",
 		}
 
 		return tx.Create(log).Error
@@ -242,7 +242,7 @@ func (r *InventoryRepository) Deduct(inventoryID uint, quantity int, orderNo str
 func (r *InventoryRepository) Adjust(inventoryID uint, newStock, newAvailable int, operator, reason string) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
 		var inventory models.Inventory
-		if err := tx.First(&inventory, inventoryID).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&inventory, inventoryID).Error; err != nil {
 			return err
 		}
 
@@ -287,17 +287,17 @@ func (r *InventoryRepository) AdjustByDelta(inventoryID uint, stockDelta, availa
 
 		// 验证：库存不能为负
 		if newStock < 0 {
-			return errors.New("调整后库存不能为负数")
+			return errors.New("Adjusted inventory cannot be negative")
 		}
 
 		// 验证：可售数量不能为负
 		if newAvailable < 0 {
-			return errors.New("调整后可售数量不能为负数")
+			return errors.New("Adjusted available quantity cannot be negative")
 		}
 
 		// 验证：可售数量不能超过库存
 		if newAvailable > newStock {
-			return errors.New("可售数量不能超过总库存")
+			return errors.New("Available quantity cannot exceed total stock")
 		}
 
 		inventory.Stock = newStock

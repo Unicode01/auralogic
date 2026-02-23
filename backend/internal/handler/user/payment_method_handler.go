@@ -30,7 +30,7 @@ func NewPaymentMethodHandler(db *gorm.DB, pollingService *service.PaymentPolling
 func (h *PaymentMethodHandler) List(c *gin.Context) {
 	methods, err := h.service.GetEnabledMethods()
 	if err != nil {
-		response.InternalError(c, "获取付款方式失败")
+		response.InternalError(c, "Failed to get payment methods")
 		return
 	}
 
@@ -54,34 +54,34 @@ func (h *PaymentMethodHandler) GetPaymentCard(c *gin.Context) {
 	orderNo := c.Param("order_no")
 	paymentMethodID, err := strconv.ParseUint(c.Query("payment_method_id"), 10, 32)
 	if err != nil {
-		response.BadRequest(c, "无效的付款方式ID")
+		response.BadRequest(c, "Invalid payment method ID")
 		return
 	}
 
 	// 获取当前用户
 	userID, exists := c.Get("user_id")
 	if !exists {
-		response.Unauthorized(c, "用户未登录")
+		response.Unauthorized(c, "User not logged in")
 		return
 	}
 
 	// 获取订单
 	var order models.Order
 	if err := h.db.Where("order_no = ? AND user_id = ?", orderNo, userID).First(&order).Error; err != nil {
-		response.NotFound(c, "订单不存在")
+		response.NotFound(c, "Order not found")
 		return
 	}
 
 	// 验证订单状态
 	if order.Status != models.OrderStatusPendingPayment {
-		response.BadRequest(c, "订单状态不支持付款")
+		response.BadRequest(c, "Order status does not support payment")
 		return
 	}
 
 	// 生成付款卡片
 	result, err := h.service.GeneratePaymentCard(uint(paymentMethodID), &order)
 	if err != nil {
-		response.InternalError(c, "生成付款信息失败: "+err.Error())
+		response.InternalError(c, "Failed to generate payment info")
 		return
 	}
 
@@ -96,21 +96,21 @@ func (h *PaymentMethodHandler) SelectPaymentMethod(c *gin.Context) {
 		PaymentMethodID uint `json:"payment_method_id" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "请求参数错误")
+		response.BadRequest(c, "Invalid request parameters")
 		return
 	}
 
 	// 获取当前用户
 	userID, exists := c.Get("user_id")
 	if !exists {
-		response.Unauthorized(c, "用户未登录")
+		response.Unauthorized(c, "User not logged in")
 		return
 	}
 
 	// 获取订单
 	var order models.Order
 	if err := h.db.Where("order_no = ? AND user_id = ?", orderNo, userID).First(&order).Error; err != nil {
-		response.NotFound(c, "订单不存在")
+		response.NotFound(c, "Order not found")
 		return
 	}
 
@@ -128,7 +128,7 @@ func (h *PaymentMethodHandler) SelectPaymentMethod(c *gin.Context) {
 	// 生成付款卡片并缓存
 	result, err := h.service.GeneratePaymentCard(req.PaymentMethodID, &order)
 	if err != nil {
-		response.InternalError(c, "生成付款信息失败: "+err.Error())
+		response.InternalError(c, "Failed to generate payment info")
 		return
 	}
 
@@ -148,21 +148,21 @@ func (h *PaymentMethodHandler) GetOrderPaymentInfo(c *gin.Context) {
 	// 获取当前用户
 	userID, exists := c.Get("user_id")
 	if !exists {
-		response.Unauthorized(c, "用户未登录")
+		response.Unauthorized(c, "User not logged in")
 		return
 	}
 
 	// 获取订单
 	var order models.Order
 	if err := h.db.Where("order_no = ? AND user_id = ?", orderNo, userID).First(&order).Error; err != nil {
-		response.NotFound(c, "订单不存在")
+		response.NotFound(c, "Order not found")
 		return
 	}
 
 	// 获取订单选择的付款方式
 	pm, opm, err := h.service.GetOrderPaymentMethod(order.ID)
 	if err != nil {
-		response.InternalError(c, "获取付款信息失败")
+		response.InternalError(c, "Failed to get payment info")
 		return
 	}
 
@@ -191,7 +191,7 @@ func (h *PaymentMethodHandler) GetOrderPaymentInfo(c *gin.Context) {
 		// 缓存不存在或失败，重新生成并缓存
 		result, err = h.service.GeneratePaymentCard(pm.ID, &order)
 		if err != nil {
-			response.InternalError(c, "生成付款信息失败")
+			response.InternalError(c, "Failed to generate payment info")
 			return
 		}
 		_ = h.service.CachePaymentCard(order.ID, result)

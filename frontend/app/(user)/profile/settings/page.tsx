@@ -61,6 +61,16 @@ export default function SettingsPage() {
     enabled: !!needBindCaptcha && captchaConfig?.provider === 'builtin',
   })
 
+  // 验证码超时自动刷新（后端TTL为5分钟，提前30秒刷新）
+  useEffect(() => {
+    if (!needBindCaptcha || captchaConfig?.provider !== 'builtin') return
+    const timer = setInterval(() => {
+      refetchCaptcha()
+      setBuiltinCode('')
+    }, 270000)
+    return () => clearInterval(timer)
+  }, [needBindCaptcha, captchaConfig?.provider, refetchCaptcha])
+
   // Bind email state
   const [bindEmailAddr, setBindEmailAddr] = useState('')
   const [bindEmailCode, setBindEmailCode] = useState('')

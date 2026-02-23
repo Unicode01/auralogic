@@ -12,6 +12,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { useLocale } from '@/hooks/use-locale'
+import { getTranslations } from '@/lib/i18n'
 
 interface DataTableProps<T> {
   columns: {
@@ -35,12 +36,13 @@ export function DataTable<T>({
   pagination,
 }: DataTableProps<T>) {
   const { locale } = useLocale()
+  const t = getTranslations(locale)
   const [pageInput, setPageInput] = useState('')
   // 确保 data 是数组
   const safeData = Array.isArray(data) ? data : []
 
   if (isLoading) {
-    return <div className="text-center py-8">{locale === 'zh' ? '加载中...' : 'Loading...'}</div>
+    return <div className="text-center py-8">{t.common.loading}</div>
   }
 
   return (
@@ -62,7 +64,7 @@ export function DataTable<T>({
                   colSpan={columns.length}
                   className="text-center py-8 text-muted-foreground"
                 >
-                  {locale === 'zh' ? '暂无数据' : 'No data'}
+                  {t.common.noData}
                 </TableCell>
               </TableRow>
             ) : (
@@ -88,9 +90,9 @@ export function DataTable<T>({
       {pagination && (
         <div className="flex items-center justify-between">
           <p className="text-sm text-muted-foreground">
-            {locale === 'zh'
-              ? `第 ${pagination.page} 页，共 ${pagination.total_pages} 页`
-              : `Page ${pagination.page} of ${pagination.total_pages}`}
+            {t.common.pageInfo
+              .replace('{page}', String(pagination.page))
+              .replace('{totalPages}', String(pagination.total_pages))}
           </p>
 
           <div className="flex items-center gap-2">
@@ -102,7 +104,7 @@ export function DataTable<T>({
               disabled={pagination.page === 1}
             >
               <ChevronLeft className="h-4 w-4" />
-              {locale === 'zh' ? '上一页' : 'Prev'}
+              {t.common.prevPage}
             </Button>
 
             <input
@@ -141,7 +143,7 @@ export function DataTable<T>({
               onClick={() => pagination.onPageChange(pagination.page + 1)}
               disabled={pagination.page === pagination.total_pages}
             >
-              {locale === 'zh' ? '下一页' : 'Next'}
+              {t.common.nextPage}
               <ChevronRight className="h-4 w-4" />
             </Button>
           </div>

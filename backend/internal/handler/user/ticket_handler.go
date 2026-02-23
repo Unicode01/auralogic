@@ -47,7 +47,7 @@ type CreateTicketRequest struct {
 func (h *TicketHandler) CreateTicket(c *gin.Context) {
 	var req CreateTicketRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "无效的请求参数")
+		response.BadRequest(c, "Invalid request parameters")
 		return
 	}
 
@@ -65,7 +65,7 @@ func (h *TicketHandler) CreateTicket(c *gin.Context) {
 	// 检查内容长度限制
 	cfg := config.GetConfig()
 	if cfg.Ticket.MaxContentLength > 0 && len([]rune(sanitizedContent)) > cfg.Ticket.MaxContentLength {
-		response.BadRequest(c, fmt.Sprintf("内容长度不能超过%d个字符", cfg.Ticket.MaxContentLength))
+		response.BadRequest(c, fmt.Sprintf("Content cannot exceed %d characters", cfg.Ticket.MaxContentLength))
 		return
 	}
 
@@ -85,7 +85,7 @@ func (h *TicketHandler) CreateTicket(c *gin.Context) {
 	}
 
 	if err := h.db.Create(ticket).Error; err != nil {
-		response.InternalError(c, "创建工单失败")
+		response.InternalError(c, "Failed to create ticket")
 		return
 	}
 
@@ -129,7 +129,7 @@ func (h *TicketHandler) CreateTicket(c *gin.Context) {
 					SenderType:    "user",
 					SenderID:      userID,
 					SenderName:    user.Name,
-					Content:       fmt.Sprintf("分享了订单 %s", order.OrderNo),
+					Content:       fmt.Sprintf("Shared order %s", order.OrderNo),
 					ContentType:   "order",
 					IsReadByUser:  true,
 					IsReadByAdmin: false,
@@ -144,7 +144,7 @@ func (h *TicketHandler) CreateTicket(c *gin.Context) {
 
 				// 更新工单最后消息预览
 				h.db.Model(ticket).Updates(map[string]interface{}{
-					"last_message_preview": fmt.Sprintf("分享了订单 %s", order.OrderNo),
+					"last_message_preview": fmt.Sprintf("Shared order %s", order.OrderNo),
 				})
 			}
 		}
@@ -187,7 +187,7 @@ func (h *TicketHandler) ListTickets(c *gin.Context) {
 
 	offset := (page - 1) * limit
 	if err := query.Order("last_message_at DESC").Offset(offset).Limit(limit).Find(&tickets).Error; err != nil {
-		response.InternalError(c, "查询失败")
+		response.InternalError(c, "Query failed")
 		return
 	}
 
@@ -199,18 +199,18 @@ func (h *TicketHandler) GetTicket(c *gin.Context) {
 	userID := middleware.MustGetUserID(c)
 	ticketID, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
-		response.BadRequest(c, "无效的工单ID")
+		response.BadRequest(c, "Invalid ticket ID")
 		return
 	}
 
 	var ticket models.Ticket
 	if err := h.db.First(&ticket, ticketID).Error; err != nil {
-		response.NotFound(c, "工单不存在")
+		response.NotFound(c, "Ticket not found")
 		return
 	}
 
 	if ticket.UserID != userID {
-		response.Forbidden(c, "无权访问此工单")
+		response.Forbidden(c, "No permission to access this ticket")
 		return
 	}
 
@@ -226,18 +226,18 @@ func (h *TicketHandler) GetTicketMessages(c *gin.Context) {
 	userID := middleware.MustGetUserID(c)
 	ticketID, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
-		response.BadRequest(c, "无效的工单ID")
+		response.BadRequest(c, "Invalid ticket ID")
 		return
 	}
 
 	var ticket models.Ticket
 	if err := h.db.First(&ticket, ticketID).Error; err != nil {
-		response.NotFound(c, "工单不存在")
+		response.NotFound(c, "Ticket not found")
 		return
 	}
 
 	if ticket.UserID != userID {
-		response.Forbidden(c, "无权访问此工单")
+		response.Forbidden(c, "No permission to access this ticket")
 		return
 	}
 
@@ -247,7 +247,7 @@ func (h *TicketHandler) GetTicketMessages(c *gin.Context) {
 
 	var messages []models.TicketMessage
 	if err := h.db.Where("ticket_id = ?", ticketID).Order("created_at ASC").Find(&messages).Error; err != nil {
-		response.InternalError(c, "查询失败")
+		response.InternalError(c, "Query failed")
 		return
 	}
 
@@ -265,29 +265,29 @@ func (h *TicketHandler) SendMessage(c *gin.Context) {
 	userID := middleware.MustGetUserID(c)
 	ticketID, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
-		response.BadRequest(c, "无效的工单ID")
+		response.BadRequest(c, "Invalid ticket ID")
 		return
 	}
 
 	var req SendMessageRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "无效的请求参数")
+		response.BadRequest(c, "Invalid request parameters")
 		return
 	}
 
 	var ticket models.Ticket
 	if err := h.db.First(&ticket, ticketID).Error; err != nil {
-		response.NotFound(c, "工单不存在")
+		response.NotFound(c, "Ticket not found")
 		return
 	}
 
 	if ticket.UserID != userID {
-		response.Forbidden(c, "无权访问此工单")
+		response.Forbidden(c, "No permission to access this ticket")
 		return
 	}
 
 	if ticket.Status == models.TicketStatusClosed {
-		response.BadRequest(c, "工单已关闭，无法发送消息")
+		response.BadRequest(c, "Ticket is closed, cannot send messages")
 		return
 	}
 
@@ -305,7 +305,7 @@ func (h *TicketHandler) SendMessage(c *gin.Context) {
 	// 检查内容长度限制
 	cfg := config.GetConfig()
 	if cfg.Ticket.MaxContentLength > 0 && len([]rune(sanitizedContent)) > cfg.Ticket.MaxContentLength {
-		response.BadRequest(c, fmt.Sprintf("消息长度不能超过%d个字符", cfg.Ticket.MaxContentLength))
+		response.BadRequest(c, fmt.Sprintf("Message cannot exceed %d characters", cfg.Ticket.MaxContentLength))
 		return
 	}
 
@@ -321,7 +321,7 @@ func (h *TicketHandler) SendMessage(c *gin.Context) {
 	}
 
 	if err := h.db.Create(message).Error; err != nil {
-		response.InternalError(c, "发送失败")
+		response.InternalError(c, "Failed to send")
 		return
 	}
 
@@ -353,24 +353,24 @@ func (h *TicketHandler) UpdateTicketStatus(c *gin.Context) {
 	userID := middleware.MustGetUserID(c)
 	ticketID, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
-		response.BadRequest(c, "无效的工单ID")
+		response.BadRequest(c, "Invalid ticket ID")
 		return
 	}
 
 	var req UpdateTicketStatusRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "无效的请求参数")
+		response.BadRequest(c, "Invalid request parameters")
 		return
 	}
 
 	var ticket models.Ticket
 	if err := h.db.First(&ticket, ticketID).Error; err != nil {
-		response.NotFound(c, "工单不存在")
+		response.NotFound(c, "Ticket not found")
 		return
 	}
 
 	if ticket.UserID != userID {
-		response.Forbidden(c, "无权操作此工单")
+		response.Forbidden(c, "No permission to operate this ticket")
 		return
 	}
 
@@ -384,11 +384,11 @@ func (h *TicketHandler) UpdateTicketStatus(c *gin.Context) {
 	}
 
 	if err := h.db.Model(&ticket).Updates(updates).Error; err != nil {
-		response.InternalError(c, "更新失败")
+		response.InternalError(c, "Failed to update")
 		return
 	}
 
-	response.Success(c, gin.H{"message": "状态更新成功"})
+	response.Success(c, gin.H{"message": "Status updated successfully"})
 }
 
 // ShareOrderRequest 分享订单请求
@@ -401,36 +401,36 @@ func (h *TicketHandler) ShareOrder(c *gin.Context) {
 	userID := middleware.MustGetUserID(c)
 	ticketID, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
-		response.BadRequest(c, "无效的工单ID")
+		response.BadRequest(c, "Invalid ticket ID")
 		return
 	}
 
 	var req ShareOrderRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "无效的请求参数")
+		response.BadRequest(c, "Invalid request parameters")
 		return
 	}
 
 	var ticket models.Ticket
 	if err := h.db.First(&ticket, ticketID).Error; err != nil {
-		response.NotFound(c, "工单不存在")
+		response.NotFound(c, "Ticket not found")
 		return
 	}
 
 	if ticket.UserID != userID {
-		response.Forbidden(c, "无权操作此工单")
+		response.Forbidden(c, "No permission to operate this ticket")
 		return
 	}
 
 	// 验证订单属于用户
 	var order models.Order
 	if err := h.db.First(&order, req.OrderID).Error; err != nil {
-		response.NotFound(c, "订单不存在")
+		response.NotFound(c, "Order not found")
 		return
 	}
 
 	if order.UserID == nil || *order.UserID != userID {
-		response.Forbidden(c, "无权分享此订单")
+		response.Forbidden(c, "No permission to share this order")
 		return
 	}
 
@@ -465,7 +465,7 @@ func (h *TicketHandler) ShareOrder(c *gin.Context) {
 		SenderType:    "user",
 		SenderID:      userID,
 		SenderName:    user.Name,
-		Content:       fmt.Sprintf("分享了订单 %s", order.OrderNo),
+		Content:       fmt.Sprintf("Shared order %s", order.OrderNo),
 		ContentType:   "order",
 		Metadata:      models.JSON(metadataBytes),
 		IsReadByUser:  true,
@@ -477,12 +477,12 @@ func (h *TicketHandler) ShareOrder(c *gin.Context) {
 	now := time.Now()
 	h.db.Model(&ticket).Updates(map[string]interface{}{
 		"last_message_at":      now,
-		"last_message_preview": fmt.Sprintf("分享了订单 %s", order.OrderNo),
+		"last_message_preview": fmt.Sprintf("Shared order %s", order.OrderNo),
 		"last_message_by":      "user",
 		"unread_count_admin":   gorm.Expr("unread_count_admin + 1"),
 	})
 
-	response.Success(c, gin.H{"message": "订单分享成功"})
+	response.Success(c, gin.H{"message": "Order shared successfully"})
 }
 
 // GetSharedOrders 获取工单中分享的订单
@@ -490,24 +490,24 @@ func (h *TicketHandler) GetSharedOrders(c *gin.Context) {
 	userID := middleware.MustGetUserID(c)
 	ticketID, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
-		response.BadRequest(c, "无效的工单ID")
+		response.BadRequest(c, "Invalid ticket ID")
 		return
 	}
 
 	var ticket models.Ticket
 	if err := h.db.First(&ticket, ticketID).Error; err != nil {
-		response.NotFound(c, "工单不存在")
+		response.NotFound(c, "Ticket not found")
 		return
 	}
 
 	if ticket.UserID != userID {
-		response.Forbidden(c, "无权访问此工单")
+		response.Forbidden(c, "No permission to access this ticket")
 		return
 	}
 
 	var accesses []models.TicketOrderAccess
 	if err := h.db.Preload("Order").Where("ticket_id = ?", ticketID).Find(&accesses).Error; err != nil {
-		response.InternalError(c, "查询失败")
+		response.InternalError(c, "Query failed")
 		return
 	}
 
@@ -519,33 +519,33 @@ func (h *TicketHandler) RevokeOrderAccess(c *gin.Context) {
 	userID := middleware.MustGetUserID(c)
 	ticketID, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
-		response.BadRequest(c, "无效的工单ID")
+		response.BadRequest(c, "Invalid ticket ID")
 		return
 	}
 
 	orderID, err := strconv.ParseUint(c.Param("orderId"), 10, 32)
 	if err != nil {
-		response.BadRequest(c, "无效的订单ID")
+		response.BadRequest(c, "Invalid order ID")
 		return
 	}
 
 	var ticket models.Ticket
 	if err := h.db.First(&ticket, ticketID).Error; err != nil {
-		response.NotFound(c, "工单不存在")
+		response.NotFound(c, "Ticket not found")
 		return
 	}
 
 	if ticket.UserID != userID {
-		response.Forbidden(c, "无权操作此工单")
+		response.Forbidden(c, "No permission to operate this ticket")
 		return
 	}
 
 	if err := h.db.Where("ticket_id = ? AND order_id = ?", ticketID, orderID).Delete(&models.TicketOrderAccess{}).Error; err != nil {
-		response.InternalError(c, "撤销失败")
+		response.InternalError(c, "Failed to revoke")
 		return
 	}
 
-	response.Success(c, gin.H{"message": "授权已撤销"})
+	response.Success(c, gin.H{"message": "Access revoked"})
 }
 
 // UploadFile 用户上传工单附件
@@ -553,23 +553,23 @@ func (h *TicketHandler) UploadFile(c *gin.Context) {
 	userID := middleware.MustGetUserID(c)
 	ticketID, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
-		response.BadRequest(c, "无效的工单ID")
+		response.BadRequest(c, "Invalid ticket ID")
 		return
 	}
 
 	// 验证工单属于当前用户
 	var ticket models.Ticket
 	if err := h.db.First(&ticket, ticketID).Error; err != nil {
-		response.NotFound(c, "工单不存在")
+		response.NotFound(c, "Ticket not found")
 		return
 	}
 	if ticket.UserID != userID {
-		response.Forbidden(c, "无权操作此工单")
+		response.Forbidden(c, "No permission to operate this ticket")
 		return
 	}
 
 	if ticket.Status == models.TicketStatusClosed {
-		response.BadRequest(c, "工单已关闭，无法上传文件")
+		response.BadRequest(c, "Ticket is closed, cannot upload files")
 		return
 	}
 
@@ -578,7 +578,7 @@ func (h *TicketHandler) UploadFile(c *gin.Context) {
 
 	file, err := c.FormFile("file")
 	if err != nil {
-		response.BadRequest(c, "请选择文件")
+		response.BadRequest(c, "Please select a file")
 		return
 	}
 
@@ -588,7 +588,7 @@ func (h *TicketHandler) UploadFile(c *gin.Context) {
 	isAudio := strings.HasPrefix(file.Header.Get("Content-Type"), "audio/")
 	if isAudio {
 		if attachment != nil && !attachment.EnableVoice {
-			response.BadRequest(c, "不允许上传语音")
+			response.BadRequest(c, "Voice upload not allowed")
 			return
 		}
 		allowedAudioTypes := []string{".mp3", ".wav", ".m4a", ".ogg", ".aac", ".webm"}
@@ -600,7 +600,7 @@ func (h *TicketHandler) UploadFile(c *gin.Context) {
 			}
 		}
 		if !audioAllowed {
-			response.BadRequest(c, "错误的音频格式")
+			response.BadRequest(c, "Invalid audio format")
 			return
 		}
 		maxSize := int64(10 * 1024 * 1024)
@@ -608,12 +608,12 @@ func (h *TicketHandler) UploadFile(c *gin.Context) {
 			maxSize = attachment.MaxVoiceSize
 		}
 		if file.Size > maxSize {
-			response.BadRequest(c, fmt.Sprintf("语音文件大小不能超过%dMB", maxSize/1024/1024))
+			response.BadRequest(c, fmt.Sprintf("Voice file size cannot exceed %dMB", maxSize/1024/1024))
 			return
 		}
 	} else {
 		if attachment != nil && !attachment.EnableImage {
-			response.BadRequest(c, "不允许上传图片")
+			response.BadRequest(c, "Image upload not allowed")
 			return
 		}
 		maxSize := int64(5 * 1024 * 1024)
@@ -621,7 +621,7 @@ func (h *TicketHandler) UploadFile(c *gin.Context) {
 			maxSize = attachment.MaxImageSize
 		}
 		if file.Size > maxSize {
-			response.BadRequest(c, fmt.Sprintf("图片大小不能超过%dMB", maxSize/1024/1024))
+			response.BadRequest(c, fmt.Sprintf("Image size cannot exceed %dMB", maxSize/1024/1024))
 			return
 		}
 
@@ -638,7 +638,7 @@ func (h *TicketHandler) UploadFile(c *gin.Context) {
 			}
 		}
 		if !allowed {
-			response.BadRequest(c, "不支持的图片格式")
+			response.BadRequest(c, "Unsupported image format")
 			return
 		}
 	}
@@ -649,13 +649,13 @@ func (h *TicketHandler) UploadFile(c *gin.Context) {
 	targetDir := filepath.Join(cfg.Upload.Dir, "tickets", dateDir)
 
 	if err := os.MkdirAll(targetDir, 0755); err != nil {
-		response.InternalError(c, "创建目录失败")
+		response.InternalError(c, "Failed to create directory")
 		return
 	}
 
 	targetPath := filepath.Join(targetDir, filename)
 	if err := c.SaveUploadedFile(file, targetPath); err != nil {
-		response.InternalError(c, "保存文件失败")
+		response.InternalError(c, "Failed to save file")
 		return
 	}
 

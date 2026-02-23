@@ -128,7 +128,7 @@ func (h *PromoCodeHandler) UpdatePromoCode(c *gin.Context) {
 
 	var req UpdatePromoCodeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "Invalid request parameters: "+err.Error())
+		response.BadRequest(c, "Invalid request parameters")
 		return
 	}
 

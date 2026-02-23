@@ -13,7 +13,7 @@ import (
 	"auralogic/internal/pkg/response"
 )
 
-const permCacheTTL = 5 * time.Minute
+const permCacheTTL = 1 * time.Minute
 
 // permCacheEntry 权限缓存条目
 type permCacheEntry struct {
@@ -155,11 +155,19 @@ func RequireRole(roles ...string) gin.HandlerFunc {
 	}
 }
 
-// RequireAdmin 要求AdminPermission（API Key认证跳过角色检查，由scopes控制）
+// RequireAdmin 要求AdminPermission（API Key认证需至少拥有一个scope）
 func RequireAdmin() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if IsAPIKeyAuth(c) {
-			c.Next()
+			scopes, exists := c.Get("api_scopes")
+			if exists {
+				if scopeList, ok := scopes.([]string); ok && len(scopeList) > 0 {
+					c.Next()
+					return
+				}
+			}
+			response.Forbidden(c, "No permission")
+			c.Abort()
 			return
 		}
 		role, exists := GetUserRole(c)
@@ -177,11 +185,13 @@ func RequireAdmin() gin.HandlerFunc {
 	}
 }
 
-// RequireSuperAdmin 要求超级AdminPermission（API Key认证跳过角色检查，由scopes控制）
+// RequireSuperAdmin 要求超级管理员权限（API Key 不允许访问超级管理员端点）
 func RequireSuperAdmin() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		// API Key 不允许访问超级管理员端点，必须使用 JWT 登录
 		if IsAPIKeyAuth(c) {
-			c.Next()
+			response.Forbidden(c, "API keys cannot access super admin endpoints")
+			c.Abort()
 			return
 		}
 		role, exists := GetUserRole(c)
@@ -204,7 +214,7 @@ func RequireTicketEnabled() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		cfg := config.GetConfig()
 		if !cfg.Ticket.Enabled {
-			response.BadRequest(c, "工单系统已关闭")
+			response.BadRequest(c, "Ticket system is disabled")
 			c.Abort()
 			return
 		}
@@ -217,7 +227,7 @@ func RequireSerialEnabled() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		cfg := config.GetConfig()
 		if !cfg.Serial.Enabled {
-			response.BadRequest(c, "序列号查询功能已关闭")
+			response.BadRequest(c, "Serial number query feature is disabled")
 			c.Abort()
 			return
 		}

@@ -312,7 +312,21 @@ func (s *OrderService) CreateAdminOrder(req AdminOrderRequest) (*models.Order, e
 	// 订单状态：默认待付款
 	status := models.OrderStatusPendingPayment
 	if req.Status != "" {
-		status = models.OrderStatus(req.Status)
+		validStatuses := map[models.OrderStatus]bool{
+			models.OrderStatusPendingPayment: true,
+			models.OrderStatusDraft:          true,
+			models.OrderStatusPending:        true,
+			models.OrderStatusNeedResubmit:   true,
+			models.OrderStatusShipped:        true,
+			models.OrderStatusCompleted:      true,
+			models.OrderStatusCancelled:      true,
+			models.OrderStatusRefunded:       true,
+		}
+		requested := models.OrderStatus(req.Status)
+		if !validStatuses[requested] {
+			return nil, fmt.Errorf("invalid order status: %s", req.Status)
+		}
+		status = requested
 	}
 
 	// 生成表单Token（用于后续用户填写收货信息）
@@ -916,7 +930,7 @@ func (s *OrderService) SubmitShippingForm(formToken string, receiverInfo map[str
 	if userRemark != "" {
 		if order.Remark != "" {
 			// 如果已有平台备注，追加User备注
-			order.Remark = order.Remark + "\n\n【User备注】\n" + userRemark
+			order.Remark = order.Remark + "\n\n[User Remark]\n" + userRemark
 		} else {
 			// 如果没有平台备注，直接保存User备注
 			order.Remark = userRemark
@@ -1280,9 +1294,9 @@ func (s *OrderService) DeleteOrder(orderID uint) error {
 		return err
 	}
 
-	// 只有待付款、草稿和已取消的Order可以Delete
-	if order.Status != models.OrderStatusPendingPayment && order.Status != models.OrderStatusDraft && order.Status != models.OrderStatusCancelled {
-		return errors.New("Only pending payment, draft or cancelled orders can be deleted")
+	// 只有待付款、草稿、已取消和已退款的Order可以Delete
+	if order.Status != models.OrderStatusPendingPayment && order.Status != models.OrderStatusDraft && order.Status != models.OrderStatusCancelled && order.Status != models.OrderStatusRefunded {
+		return errors.New("Only pending payment, draft, cancelled or refunded orders can be deleted")
 	}
 
 	// 删除待付款订单时释放预留库存
@@ -1393,6 +1407,33 @@ func (s *OrderService) CancelOrder(orderID uint, reason string) error {
 	}
 
 	return nil
+}
+
+// ReleaseOrderReserves 释放订单预留的库存和优惠码（用于退款/取消等场景）
+func (s *OrderService) ReleaseOrderReserves(order *models.Order) {
+	// 释放物理商品库存
+	for i := range order.Items {
+		item := &order.Items[i]
+		if inventoryID, exists := order.InventoryBindings[i]; exists && inventoryID > 0 {
+			if err := s.inventoryRepo.ReleaseReserve(inventoryID, item.Quantity, order.OrderNo); err != nil {
+				fmt.Printf("Warning: Order %s failed to release reserved inventory: %v\n", order.OrderNo, err)
+			}
+		}
+	}
+
+	// 释放虚拟商品库存
+	if s.virtualProductSvc != nil {
+		if err := s.virtualProductSvc.ReleaseStock(order.OrderNo); err != nil {
+			fmt.Printf("Warning: Order %s failed to release virtual product stock: %v\n", order.OrderNo, err)
+		}
+	}
+
+	// 释放优惠码
+	if order.PromoCodeID != nil && s.promoCodeRepo != nil {
+		if err := s.promoCodeRepo.ReleaseReserve(*order.PromoCodeID, order.OrderNo); err != nil {
+			fmt.Printf("Warning: Order %s failed to release promo code: %v\n", order.OrderNo, err)
+		}
+	}
 }
 
 // MarkAsPaid 标记订单为已付款

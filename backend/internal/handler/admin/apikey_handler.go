@@ -98,7 +98,7 @@ func (h *APIKeyHandler) CreateAPIKey(c *gin.Context) {
 
 	// 使用bcrypt哈希存储Secret
 	if err := key.SetSecret(apiSecret); err != nil {
-		response.InternalError(c, "生成API Secret失败")
+		response.InternalError(c, "Failed to generate API secret")
 		return
 	}
 
@@ -127,7 +127,7 @@ func (h *APIKeyHandler) CreateAPIKey(c *gin.Context) {
 		"scopes":     key.Scopes,
 		"rate_limit": key.RateLimit,
 		"created_at": key.CreatedAt,
-		"message":    "⚠️ API Secret仅显示一次，请妥善保管！",
+		"message":    "⚠️ API Secret is only shown once, please keep it safe!",
 	})
 }
 

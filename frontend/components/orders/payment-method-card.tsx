@@ -21,6 +21,7 @@ import {
   Coins,
 } from 'lucide-react'
 import { useLocale } from '@/hooks/use-locale'
+import { getTranslations } from '@/lib/i18n'
 import toast from 'react-hot-toast'
 
 const iconMap: Record<string, any> = {
@@ -40,6 +41,7 @@ interface PaymentMethodCardProps {
 
 export function PaymentMethodCard({ orderNo, onPaymentSelected }: PaymentMethodCardProps) {
   const { locale } = useLocale()
+  const t = getTranslations(locale)
   const queryClient = useQueryClient()
   const [expanded, setExpanded] = useState(true)
   const [selectedId, setSelectedId] = useState<number | null>(null)
@@ -77,7 +79,7 @@ export function PaymentMethodCard({ orderNo, onPaymentSelected }: PaymentMethodC
           },
         })
       }
-      toast.success(locale === 'zh' ? '已选择付款方式' : 'Payment method selected')
+      toast.success(t.order.paymentMethodSelected)
       onPaymentSelected?.()
     },
     onError: (error: Error) => {
@@ -115,7 +117,7 @@ export function PaymentMethodCard({ orderNo, onPaymentSelected }: PaymentMethodC
           <div className="flex items-center gap-2">
             <CreditCard className="h-5 w-5" />
             <CardTitle className="text-lg">
-              {locale === 'zh' ? '付款方式' : 'Payment Method'}
+              {t.order.paymentMethodTitle}
             </CardTitle>
           </div>
           <Button variant="ghost" size="sm" onClick={() => setExpanded(!expanded)}>
@@ -124,7 +126,7 @@ export function PaymentMethodCard({ orderNo, onPaymentSelected }: PaymentMethodC
         </div>
         {!isSelected && (
           <CardDescription>
-            {locale === 'zh' ? '请选择一种付款方式' : 'Please select a payment method'}
+            {t.order.selectPaymentMethodHint}
           </CardDescription>
         )}
       </CardHeader>
@@ -139,14 +141,14 @@ export function PaymentMethodCard({ orderNo, onPaymentSelected }: PaymentMethodC
                 <span className="font-medium">{currentMethod.name}</span>
                 <Badge variant="secondary" className="ml-auto">
                   <Check className="h-3 w-3 mr-1" />
-                  {locale === 'zh' ? '已选择' : 'Selected'}
+                  {t.order.paymentMethodSelected}
                 </Badge>
               </div>
 
               {paymentCard?.html && (
                 <SandboxedHtmlFrame
                   html={paymentCard.html}
-                  title={locale === 'zh' ? '付款信息' : 'Payment Info'}
+                  title={t.order.paymentInfoTitle}
                   className="payment-card-content"
                   locale={locale}
                 />
@@ -160,7 +162,7 @@ export function PaymentMethodCard({ orderNo, onPaymentSelected }: PaymentMethodC
                   setSelectedId(null)
                 }}
               >
-                {locale === 'zh' ? '更换付款方式' : 'Change Payment Method'}
+                {t.order.changePaymentMethod}
               </Button>
             </div>
           ) : (
@@ -168,7 +170,7 @@ export function PaymentMethodCard({ orderNo, onPaymentSelected }: PaymentMethodC
             <div className="space-y-2">
               {availableMethods.length === 0 ? (
                 <p className="text-sm text-muted-foreground text-center py-4">
-                  {locale === 'zh' ? '暂无可用的付款方式' : 'No payment methods available'}
+                  {t.order.noPaymentMethods}
                 </p>
               ) : (
                 availableMethods.map((method: any) => (
@@ -204,10 +206,10 @@ export function PaymentMethodCard({ orderNo, onPaymentSelected }: PaymentMethodC
                   {selectMutation.isPending ? (
                     <>
                       <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                      {locale === 'zh' ? '处理中...' : 'Processing...'}
+                      {t.common.processing}
                     </>
                   ) : (
-                    locale === 'zh' ? '确认选择' : 'Confirm Selection'
+                    t.order.confirmSelection
                   )}
                 </Button>
               )}

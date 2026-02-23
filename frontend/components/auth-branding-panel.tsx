@@ -2,6 +2,7 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import DOMPurify from 'dompurify'
 import { getPublicConfig } from '@/lib/api'
 import { useLocale } from '@/hooks/use-locale'
 import { getTranslations } from '@/lib/i18n'
@@ -76,22 +77,21 @@ export function AuthBrandingPanel() {
 
   // Custom HTML mode
   if (branding?.mode === 'custom' && branding.custom_html) {
+    const safeHtml = typeof window !== 'undefined'
+      ? DOMPurify.sanitize(branding.custom_html, { FORBID_TAGS: ['script', 'iframe', 'object', 'embed'], FORBID_ATTR: ['onerror', 'onload', 'onclick', 'onmouseover'], FORCE_BODY: true })
+      : ''
     return (
       <div
         className="hidden lg:flex lg:w-1/2 relative overflow-hidden bg-primary"
         style={bgStyle}
-        dangerouslySetInnerHTML={{ __html: branding.custom_html }}
+        dangerouslySetInnerHTML={{ __html: safeHtml }}
       />
     )
   }
 
   // Default mode
-  const title = locale === 'zh'
-    ? (branding?.title || '现代化电商\n管理平台')
-    : (branding?.title_en || 'Modern\nE-commerce\nPlatform')
-  const subtitle = locale === 'zh'
-    ? (branding?.subtitle || t.home.subtitle)
-    : (branding?.subtitle_en || t.home.subtitle)
+  const title = (locale === 'zh' ? branding?.title : branding?.title_en) || t.home.defaultBrandingTitle
+  const subtitle = (locale === 'zh' ? branding?.subtitle : branding?.subtitle_en) || t.home.subtitle
 
   return (
     <div className="hidden lg:flex lg:w-1/2 relative overflow-hidden bg-primary" style={bgStyle}>

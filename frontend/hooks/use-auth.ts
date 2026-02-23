@@ -2,13 +2,25 @@
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { getCurrentUser, login, loginWithCode, loginWithPhoneCode, logout, register, phoneRegister } from '@/lib/api'
-import { setToken, clearToken, setUser } from '@/lib/auth'
+import { getToken, setToken, clearToken, setUser } from '@/lib/auth'
 import { useRouter } from 'next/navigation'
 import toast from 'react-hot-toast'
 import { useLocale } from '@/hooks/use-locale'
 import { getTranslations } from '@/lib/i18n'
 
 type Locale = 'zh' | 'en'
+
+// Resolve which locale to apply after login/register.
+// Priority: pending-sync locale > server locale > stored locale
+function resolvePostLoginLocale(serverLocale: string | undefined): Locale | null {
+  if (typeof window === 'undefined') return null
+  const pending = localStorage.getItem('auralogic_locale_pending_sync')
+  const stored = localStorage.getItem('auralogic_locale')
+  if (pending === 'zh' || pending === 'en') return pending
+  if (serverLocale === 'zh' || serverLocale === 'en') return serverLocale
+  if (stored === 'zh' || stored === 'en') return stored
+  return null
+}
 
 // Map backend error messages to i18n keys
 const errorMessageMap: Record<string, keyof ReturnType<typeof getTranslations>['auth']> = {
@@ -56,7 +68,7 @@ export function useAuth() {
     queryKey: ['currentUser'],
     queryFn: getCurrentUser,
     retry: false,
-    enabled: typeof window !== 'undefined' && !!localStorage.getItem('auth_token'),
+    enabled: typeof window !== 'undefined' && !!getToken(),
   })
 
   // 登录
@@ -65,26 +77,10 @@ export function useAuth() {
     onSuccess: (data: any) => {
       setToken(data.data.token)
       const user = data.data.user
-
-      // If the frontend initialized locale before login, it will be stored here.
-      // Prefer pending-local locale for first-run/default initialization, then server locale, then stored.
-      const pending = typeof window !== 'undefined' ? localStorage.getItem('auralogic_locale_pending_sync') : null
-      const stored = typeof window !== 'undefined' ? localStorage.getItem('auralogic_locale') : null
-      const serverLocale = user?.locale
-
-      let desired: Locale | null = null
-      if (pending === 'zh' || pending === 'en') desired = pending
-      else if (serverLocale === 'zh' || serverLocale === 'en') desired = serverLocale
-      else if (stored === 'zh' || stored === 'en') desired = stored
-
+      const desired = resolvePostLoginLocale(user?.locale)
       const finalUser = desired ? { ...user, locale: desired } : user
       setUser(finalUser)
-
-      if (desired) {
-        // Triggers backend sync (and clears pending on success) via LocaleProvider.
-        setLocale(desired)
-      }
-      // 设置正确的缓存数据结构
+      if (desired) setLocale(desired)
       queryClient.setQueryData(['currentUser'], { data: finalUser })
       router.push('/orders')
     },
@@ -104,13 +100,7 @@ export function useAuth() {
     onSuccess: (data: any) => {
       setToken(data.data.token)
       const user = data.data.user
-      const pending = typeof window !== 'undefined' ? localStorage.getItem('auralogic_locale_pending_sync') : null
-      const stored = typeof window !== 'undefined' ? localStorage.getItem('auralogic_locale') : null
-      const serverLocale = user?.locale
-      let desired: Locale | null = null
-      if (pending === 'zh' || pending === 'en') desired = pending
-      else if (serverLocale === 'zh' || serverLocale === 'en') desired = serverLocale
-      else if (stored === 'zh' || stored === 'en') desired = stored
+      const desired = resolvePostLoginLocale(user?.locale)
       const finalUser = desired ? { ...user, locale: desired } : user
       setUser(finalUser)
       if (desired) setLocale(desired)
@@ -128,13 +118,7 @@ export function useAuth() {
     onSuccess: (data: any) => {
       setToken(data.data.token)
       const user = data.data.user
-      const pending = typeof window !== 'undefined' ? localStorage.getItem('auralogic_locale_pending_sync') : null
-      const stored = typeof window !== 'undefined' ? localStorage.getItem('auralogic_locale') : null
-      const serverLocale = user?.locale
-      let desired: Locale | null = null
-      if (pending === 'zh' || pending === 'en') desired = pending
-      else if (serverLocale === 'zh' || serverLocale === 'en') desired = serverLocale
-      else if (stored === 'zh' || stored === 'en') desired = stored
+      const desired = resolvePostLoginLocale(user?.locale)
       const finalUser = desired ? { ...user, locale: desired } : user
       setUser(finalUser)
       if (desired) setLocale(desired)
@@ -157,23 +141,10 @@ export function useAuth() {
       }
       setToken(data.data.token)
       const user = data.data.user
-
-      const pending = typeof window !== 'undefined' ? localStorage.getItem('auralogic_locale_pending_sync') : null
-      const stored = typeof window !== 'undefined' ? localStorage.getItem('auralogic_locale') : null
-      const serverLocale = user?.locale
-
-      let desired: Locale | null = null
-      if (pending === 'zh' || pending === 'en') desired = pending
-      else if (serverLocale === 'zh' || serverLocale === 'en') desired = serverLocale
-      else if (stored === 'zh' || stored === 'en') desired = stored
-
+      const desired = resolvePostLoginLocale(user?.locale)
       const finalUser = desired ? { ...user, locale: desired } : user
       setUser(finalUser)
-
-      if (desired) {
-        setLocale(desired)
-      }
-
+      if (desired) setLocale(desired)
       queryClient.setQueryData(['currentUser'], { data: finalUser })
       router.push('/orders')
     },
@@ -188,13 +159,7 @@ export function useAuth() {
     onSuccess: (data: any) => {
       setToken(data.data.token)
       const user = data.data.user
-      const pending = typeof window !== 'undefined' ? localStorage.getItem('auralogic_locale_pending_sync') : null
-      const stored = typeof window !== 'undefined' ? localStorage.getItem('auralogic_locale') : null
-      const serverLocale = user?.locale
-      let desired: Locale | null = null
-      if (pending === 'zh' || pending === 'en') desired = pending
-      else if (serverLocale === 'zh' || serverLocale === 'en') desired = serverLocale
-      else if (stored === 'zh' || stored === 'en') desired = stored
+      const desired = resolvePostLoginLocale(user?.locale)
       const finalUser = desired ? { ...user, locale: desired } : user
       setUser(finalUser)
       if (desired) setLocale(desired)
@@ -217,7 +182,7 @@ export function useAuth() {
   })
 
   // 判断认证状态
-  const hasToken = typeof window !== 'undefined' && !!localStorage.getItem('auth_token')
+  const hasToken = typeof window !== 'undefined' && !!getToken()
   // 如果有token且正在loading，或者有token且请求成功有用户数据，则认为已认证
   // 如果请求失败（error），说明token无效，返回false
   const isAuthenticated = hasToken && !error && (isLoading || !!user?.data)

@@ -20,14 +20,16 @@ type OrderHandler struct {
 	orderService            *service.OrderService
 	serialService           *service.SerialService
 	virtualInventoryService *service.VirtualInventoryService
+	jsRuntimeService        *service.JSRuntimeService
 	cfg                     *config.Config
 }
 
-func NewOrderHandler(orderService *service.OrderService, serialService *service.SerialService, virtualInventoryService *service.VirtualInventoryService, cfg *config.Config) *OrderHandler {
+func NewOrderHandler(orderService *service.OrderService, serialService *service.SerialService, virtualInventoryService *service.VirtualInventoryService, jsRuntimeService *service.JSRuntimeService, cfg *config.Config) *OrderHandler {
 	return &OrderHandler{
 		orderService:            orderService,
 		serialService:           serialService,
 		virtualInventoryService: virtualInventoryService,
+		jsRuntimeService:        jsRuntimeService,
 		cfg:                     cfg,
 	}
 }
@@ -67,6 +69,9 @@ func (h *OrderHandler) ListOrders(c *gin.Context) {
 	promoCodeIDStr := c.Query("promo_code_id")
 	userIDStr := c.Query("user_id")
 
+	if page < 1 {
+		page = 1
+	}
 	if limit > 100 {
 		limit = 100
 	}
@@ -324,6 +329,115 @@ func (h *OrderHandler) CancelOrder(c *gin.Context) {
 	})
 }
 
+// RefundOrderRequest 退款请求
+type RefundOrderRequest struct {
+	Reason string `json:"reason"`
+}
+
+// RefundOrder 退款Order
+func (h *OrderHandler) RefundOrder(c *gin.Context) {
+	orderID, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		response.BadRequest(c, "Invalid order ID format")
+		return
+	}
+
+	var req RefundOrderRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		// 允许不传body
+	}
+
+	req.Reason = validator.SanitizeText(req.Reason)
+	if !validator.ValidateLength(req.Reason, 0, 500) {
+		response.BadRequest(c, "Refund reason length cannot exceed 500 characters")
+		return
+	}
+
+	order, err := h.orderService.GetOrderByID(uint(orderID))
+	if err != nil {
+		response.NotFound(c, "Order not found")
+		return
+	}
+
+	// 只允许已付款后的订单退款（包括草稿状态，草稿表示已付款但用户尚未填写收货信息）
+	allowedStatuses := map[models.OrderStatus]bool{
+		models.OrderStatusDraft:        true,
+		models.OrderStatusPending:      true,
+		models.OrderStatusNeedResubmit: true,
+		models.OrderStatusShipped:      true,
+		models.OrderStatusCompleted:    true,
+	}
+	if !allowedStatuses[order.Status] {
+		response.BadRequest(c, "Current order status does not support refund")
+		return
+	}
+
+	// 获取订单的付款方式
+	db := database.GetDB()
+	var opm models.OrderPaymentMethod
+	if err := db.Where("order_id = ?", orderID).First(&opm).Error; err != nil {
+		response.BadRequest(c, "Order payment method not found")
+		return
+	}
+
+	var pm models.PaymentMethod
+	if err := db.First(&pm, opm.PaymentMethodID).Error; err != nil {
+		response.BadRequest(c, "Payment method not found")
+		return
+	}
+
+	// 调用JS退款API
+	refundResult, err := h.jsRuntimeService.ExecuteRefund(&pm, order)
+	if err != nil {
+		response.InternalError(c, "Refund execution failed")
+		return
+	}
+
+	if !refundResult.Success {
+		msg := "Refund failed"
+		if refundResult.Message != "" {
+			msg = refundResult.Message
+		}
+		response.BadRequest(c, msg)
+		return
+	}
+
+	// 未发货的订单退款时释放预留库存（物理库存 + 虚拟库存 + 优惠码）
+	if order.Status == models.OrderStatusDraft || order.Status == models.OrderStatusPending || order.Status == models.OrderStatusNeedResubmit {
+		h.orderService.ReleaseOrderReserves(order)
+	}
+
+	// 更新订单状态为已退款
+	updates := map[string]interface{}{
+		"status": models.OrderStatusRefunded,
+	}
+	if req.Reason != "" {
+		remark := order.AdminRemark
+		if remark != "" {
+			remark += "\n"
+		}
+		remark += "[Refund] " + req.Reason
+		updates["admin_remark"] = remark
+	}
+	db.Model(order).Updates(updates)
+
+	// 记录操作日志
+	logger.LogOrderOperation(db, c, "refund", order.ID, map[string]interface{}{
+		"order_no":       order.OrderNo,
+		"reason":         req.Reason,
+		"refund_message": refundResult.Message,
+		"transaction_id": refundResult.TransactionID,
+	})
+
+	response.Success(c, gin.H{
+		"order_no":       order.OrderNo,
+		"status":         models.OrderStatusRefunded,
+		"message":        refundResult.Message,
+		"transaction_id": refundResult.TransactionID,
+		"data":           refundResult.Data,
+	})
+}
+
 // MarkAsPaid 标记订单为已付款
 func (h *OrderHandler) MarkAsPaid(c *gin.Context) {
 	orderID, err := strconv.ParseUint(c.Param("id"), 10, 32)
@@ -348,7 +462,7 @@ func (h *OrderHandler) MarkAsPaid(c *gin.Context) {
 	response.Success(c, gin.H{
 		"order_no": order.OrderNo,
 		"status":   order.Status,
-		"message":  "订单已标记为已付款",
+		"message":  "Order marked as paid",
 	})
 }
 
@@ -379,7 +493,7 @@ func (h *OrderHandler) DeliverVirtualStock(c *gin.Context) {
 	response.Success(c, gin.H{
 		"order_no": order.OrderNo,
 		"status":   order.Status,
-		"message":  "虚拟商品已发货",
+		"message":  "Virtual goods shipped",
 	})
 }
 
@@ -625,7 +739,7 @@ func (h *OrderHandler) RequestResubmit(c *gin.Context) {
 		"status":         models.OrderStatusNeedResubmit,
 		"new_form_token": newToken,
 		"reason":         req.Reason,
-		"message":        "已要求User重新填写收货Info",
+		"message":        "User has been asked to resubmit shipping info",
 	})
 }
 
@@ -649,7 +763,7 @@ func (h *OrderHandler) CompleteAllShippedOrders(c *gin.Context) {
 	if len(orders) == 0 {
 		response.Success(c, gin.H{
 			"completed_count": 0,
-			"message":         "没有需要完成的已发货订单",
+			"message":         "No shipped orders to complete",
 		})
 		return
 	}
@@ -660,7 +774,7 @@ func (h *OrderHandler) CompleteAllShippedOrders(c *gin.Context) {
 	var failedOrders []string
 
 	for _, order := range orders {
-		err := h.orderService.CompleteOrder(order.ID, userID, "", "批量完成操作")
+		err := h.orderService.CompleteOrder(order.ID, userID, "", "Batch complete")
 		if err != nil {
 			failedCount++
 			failedOrders = append(failedOrders, order.OrderNo)
@@ -685,9 +799,9 @@ func (h *OrderHandler) CompleteAllShippedOrders(c *gin.Context) {
 	if failedCount > 0 {
 		result["failed_count"] = failedCount
 		result["failed_orders"] = failedOrders
-		result["message"] = "部分订单完成失败"
+		result["message"] = "Some orders failed to complete"
 	} else {
-		result["message"] = "所有已发货订单已完成"
+		result["message"] = "All shipped orders completed"
 	}
 
 	response.Success(c, result)
@@ -733,9 +847,9 @@ func (h *OrderHandler) BatchUpdateOrders(c *gin.Context) {
 		var err error
 		switch req.Action {
 		case "complete":
-			err = h.orderService.CompleteOrder(orderID, adminID, "", "批量完成操作")
+			err = h.orderService.CompleteOrder(orderID, adminID, "", "Batch complete")
 		case "cancel":
-			err = h.orderService.CancelOrder(orderID, "批量取消操作")
+			err = h.orderService.CancelOrder(orderID, "Batch cancel")
 		case "delete":
 			err = h.orderService.DeleteOrder(orderID)
 		}
@@ -771,9 +885,9 @@ func (h *OrderHandler) BatchUpdateOrders(c *gin.Context) {
 
 	if failedCount > 0 {
 		result["failed_orders"] = failedOrders
-		result["message"] = "部分订单操作失败"
+		result["message"] = "Some orders failed"
 	} else {
-		result["message"] = "批量操作完成"
+		result["message"] = "Batch operation completed"
 	}
 
 	response.Success(c, result)
@@ -794,7 +908,7 @@ func (h *OrderHandler) UpdateOrderPrice(c *gin.Context) {
 
 	var req UpdateOrderPriceRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "Invalid request parameters: "+err.Error())
+		response.BadRequest(c, "Invalid request parameters")
 		return
 	}
 
@@ -833,7 +947,7 @@ func (h *OrderHandler) UpdateOrderPrice(c *gin.Context) {
 	response.Success(c, gin.H{
 		"order_no":     order.OrderNo,
 		"total_amount": order.TotalAmount,
-		"message":      "订单价格已更新",
+		"message":      "Order price updated",
 	})
 }
 
@@ -1026,11 +1140,17 @@ func (h *OrderHandler) CreateOrderForUser(c *gin.Context) {
 	}
 
 	db := database.GetDB()
-	logger.LogOrderOperation(db, c, "admin_create_order", order.ID, map[string]interface{}{
-		"order_no": order.OrderNo,
-		"user_id":  req.UserID,
-		"status":   order.Status,
-	})
+	logDetails := map[string]interface{}{
+		"order_no":     order.OrderNo,
+		"user_id":      req.UserID,
+		"status":       order.Status,
+		"total_amount": order.TotalAmount,
+	}
+	if req.TotalAmount != nil {
+		logDetails["amount_override"] = true
+		logDetails["override_amount"] = *req.TotalAmount
+	}
+	logger.LogOrderOperation(db, c, "admin_create_order", order.ID, logDetails)
 
 	var formURL string
 	if order.FormToken != nil {

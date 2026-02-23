@@ -293,6 +293,7 @@ export function OrderFilter({
                 <SelectItem value="shipped">{t.order.status.shipped}</SelectItem>
                 <SelectItem value="completed">{t.order.status.completed}</SelectItem>
                 <SelectItem value="cancelled">{t.order.status.cancelled}</SelectItem>
+                <SelectItem value="refunded">{t.order.status.refunded}</SelectItem>
               </SelectContent>
             </Select>
           </div>

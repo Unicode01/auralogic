@@ -383,6 +383,7 @@ export default function SettingsPage() {
       toast.success(t.admin.settingsSaved)
       queryClient.invalidateQueries({ queryKey: ['settings'] })
       queryClient.invalidateQueries({ queryKey: ['publicConfig'] })
+      try { localStorage.removeItem('auralogic-page-inject') } catch {}
     },
     onError: (error: any) => {
       toast.error(error.message || t.admin.saveFailed)

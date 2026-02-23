@@ -201,7 +201,7 @@ func (h *AdminHandler) CreateAdmin(c *gin.Context) {
 			response.Success(c, gin.H{
 				"admin":       admin,
 				"permissions": []string{},
-				"message":     "AdminCreateSuccess，但PermissionCreateFailed，请手动分配Permission",
+				"message":     "Admin created successfully, but permission creation failed. Please assign permissions manually",
 			})
 			return
 		}
@@ -307,6 +307,9 @@ func (h *AdminHandler) UpdateAdmin(c *gin.Context) {
 		return
 	}
 
+	// 清除权限缓存（角色或权限变更时立即生效）
+	middleware.InvalidatePermissionCache(uint(adminID))
+
 	// 如果降级为普通用户，清除管理员权限
 	if req.Role == "user" {
 		h.db.Where("user_id = ?", adminID).Delete(&models.AdminPermission{})
@@ -398,6 +401,9 @@ func (h *AdminHandler) DeleteAdmin(c *gin.Context) {
 	// 同时DeletePermission记录
 	h.db.Where("user_id = ?", adminID).Delete(&models.AdminPermission{})
 
+	// 清除权限缓存
+	middleware.InvalidatePermissionCache(uint(adminID))
+
 	// 记录操作日志
 	logger.LogAdminOperation(h.db, c, "delete", uint(adminID), map[string]interface{}{
 		"email": admin.Email,
@@ -406,6 +412,6 @@ func (h *AdminHandler) DeleteAdmin(c *gin.Context) {
 	})
 
 	response.Success(c, gin.H{
-		"message": "Admin已Delete",
+		"message": "Admin deleted",
 	})
 }

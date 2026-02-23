@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { useAuth } from '@/hooks/use-auth'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { useLocale } from '@/hooks/use-locale'
+import { getTranslations } from '@/lib/i18n'
 import { UserSidebar } from '@/components/layout/user-sidebar'
 import { MobileBottomNav } from '@/components/layout/mobile-bottom-nav'
 import { CartProvider } from '@/contexts/cart-context'
@@ -27,7 +28,7 @@ export default function UserLayout({ children }: { children: React.ReactNode }) 
     }
   }, [mounted, isAuthenticated, isLoading, router])
 
-  const loadingText = localeMounted ? (locale === 'zh' ? '加载中...' : 'Loading...') : '...'
+  const loadingText = localeMounted ? getTranslations(locale).common.loading : '...'
 
   // 在挂载前，显示完整布局（避免 hydration 错误）
   if (!mounted || !mobileMounted) {

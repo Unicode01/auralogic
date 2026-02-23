@@ -116,7 +116,7 @@ export default function ProductsPage() {
       <div>
         <h1 className="text-2xl md:text-3xl font-bold mb-2">{t.sidebar.productCenter}</h1>
         <p className="text-sm md:text-base text-muted-foreground">
-          {locale === 'zh' ? '浏览我们的精选商品' : 'Browse our featured products'}
+          {t.product.browseDesc}
         </p>
       </div>
 
@@ -127,7 +127,7 @@ export default function ProductsPage() {
           {/* 搜索栏 */}
           <div className="flex gap-2 w-full md:flex-1">
             <Input
-              placeholder={locale === 'zh' ? '搜索商品...' : 'Search products...'}
+              placeholder={t.product.searchPlaceholder}
               value={searchInput}
               onChange={(e) => setSearchInput(e.target.value)}
               onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
@@ -145,10 +145,10 @@ export default function ProductsPage() {
               onValueChange={handleCategoryChange}
             >
               <SelectTrigger className="w-full md:w-[200px]">
-                <SelectValue placeholder={locale === 'zh' ? '选择分类' : 'Select category'} />
+                <SelectValue placeholder={t.product.selectCategory} />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">{locale === 'zh' ? '全部分类' : 'All Categories'}</SelectItem>
+                <SelectItem value="all">{t.product.allCategories}</SelectItem>
                 {categories.map((cat: string) => (
                   <SelectItem key={cat} value={cat}>
                     {cat}
@@ -205,17 +205,17 @@ export default function ProductsPage() {
                       <div className="absolute top-1.5 left-1.5 flex flex-wrap gap-1">
                         {isVirtual && (
                           <span className="px-1.5 py-0.5 text-[10px] font-medium bg-purple-500 text-white rounded">
-                            {locale === 'zh' ? '虚拟' : 'V'}
+                            {t.product.virtualBadge}
                           </span>
                         )}
                         {isFeatured && (
                           <span className="px-1.5 py-0.5 text-[10px] font-medium bg-yellow-500 text-white rounded">
-                            {locale === 'zh' ? '精选' : 'HOT'}
+                            {t.product.featuredBadge}
                           </span>
                         )}
                         {hasDiscount && (
                           <span className="px-1.5 py-0.5 text-[10px] font-medium bg-red-500 text-white rounded">
-                            {locale === 'zh' ? '惠' : 'SALE'}
+                            {t.product.saleBadge}
                           </span>
                         )}
                       </div>
@@ -258,15 +258,15 @@ export default function ProductsPage() {
               {(isLoadingMore || isFetching) && hasMore ? (
                 <div className="flex items-center gap-2 text-muted-foreground">
                   <Loader2 className="h-4 w-4 animate-spin" />
-                  <span className="text-sm">{locale === 'zh' ? '加载中...' : 'Loading...'}</span>
+                  <span className="text-sm">{t.common.loading}</span>
                 </div>
               ) : hasMore ? (
                 <span className="text-sm text-muted-foreground">
-                  {locale === 'zh' ? '向下滚动加载更多' : 'Scroll down to load more'}
+                  {t.common.scrollToLoadMore}
                 </span>
               ) : allProducts.length > 0 ? (
                 <span className="text-sm text-muted-foreground">
-                  {locale === 'zh' ? '没有更多商品了' : 'No more products'}
+                  {t.product.noMoreProducts}
                 </span>
               ) : null}
             </div>
@@ -276,9 +276,9 @@ export default function ProductsPage() {
           {!isMobile && pagination && (
             <div className="mt-8 flex items-center justify-between">
               <p className="text-sm text-muted-foreground">
-                {locale === 'zh'
-                  ? `第 ${page} 页，共 ${pagination.total_pages} 页`
-                  : `Page ${page} of ${pagination.total_pages}`}
+                {t.common.pageInfo
+                  .replace('{page}', String(page))
+                  .replace('{totalPages}', String(pagination.total_pages))}
               </p>
               <div className="flex items-center gap-2">
                 <Button
@@ -287,7 +287,7 @@ export default function ProductsPage() {
                   disabled={page === 1}
                   onClick={() => setPage(page - 1)}
                 >
-                  {locale === 'zh' ? '上一页' : 'Previous'}
+                  {t.common.prevPage}
                 </Button>
                 <input
                   type="number"
@@ -318,7 +318,7 @@ export default function ProductsPage() {
                   disabled={page >= pagination.total_pages}
                   onClick={() => setPage(page + 1)}
                 >
-                  {locale === 'zh' ? '下一页' : 'Next'}
+                  {t.common.nextPage}
                 </Button>
               </div>
             </div>
@@ -328,7 +328,7 @@ export default function ProductsPage() {
         <div className="text-center py-12">
           <Package className="w-16 h-16 text-muted-foreground mx-auto mb-4" />
           <p className="text-muted-foreground">
-            {locale === 'zh' ? '没有找到商品' : 'No products found'}
+            {t.product.noProductsFound}
           </p>
         </div>
       )}

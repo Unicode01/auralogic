@@ -133,7 +133,7 @@ func (h *UploadHandler) DeleteImage(c *gin.Context) {
 	}
 
 	response.Success(c, gin.H{
-		"message": "图片已Delete",
+		"message": "Image deleted",
 	})
 }
 

@@ -76,6 +76,7 @@ export type OrderStatus =
   | 'shipped'
   | 'completed'
   | 'cancelled'
+  | 'refunded'
 
 export interface OrderListResponse {
   items: Order[]

@@ -47,7 +47,7 @@ func (h *SerialHandler) ListSerials(c *gin.Context) {
 
 	serials, total, err := h.serialService.ListSerials(page, limit, filters)
 	if err != nil {
-		response.InternalError(c, err.Error())
+		response.InternalError(c, "Query failed")
 		return
 	}
 
@@ -71,7 +71,7 @@ func (h *SerialHandler) GetSerialByNumber(c *gin.Context) {
 func (h *SerialHandler) GetStatistics(c *gin.Context) {
 	stats, err := h.serialService.GetStatistics()
 	if err != nil {
-		response.InternalError(c, err.Error())
+		response.InternalError(c, "Query failed")
 		return
 	}
 
@@ -88,7 +88,7 @@ func (h *SerialHandler) GetSerialsByOrder(c *gin.Context) {
 
 	serials, err := h.serialService.GetSerialsByOrderID(uint(orderID))
 	if err != nil {
-		response.InternalError(c, err.Error())
+		response.InternalError(c, "Query failed")
 		return
 	}
 
@@ -105,7 +105,7 @@ func (h *SerialHandler) GetSerialsByProduct(c *gin.Context) {
 
 	serials, err := h.serialService.GetSerialsByProductID(uint(productID))
 	if err != nil {
-		response.InternalError(c, err.Error())
+		response.InternalError(c, "Query failed")
 		return
 	}
 

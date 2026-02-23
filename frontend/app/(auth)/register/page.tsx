@@ -67,6 +67,16 @@ export default function RegisterPage() {
     enabled: needCaptcha && captchaConfig?.provider === 'builtin',
   })
 
+  // 验证码超时自动刷新（后端TTL为5分钟，提前30秒刷新）
+  useEffect(() => {
+    if (!needCaptcha || captchaConfig?.provider !== 'builtin') return
+    const timer = setInterval(() => {
+      refetchCaptcha()
+      setBuiltinCode('')
+    }, 270000)
+    return () => clearInterval(timer)
+  }, [needCaptcha, captchaConfig?.provider, refetchCaptcha])
+
   // If all registration is disabled, redirect to login
   useEffect(() => {
     if (publicConfig && !allowRegistration && !allowPhoneRegister) {

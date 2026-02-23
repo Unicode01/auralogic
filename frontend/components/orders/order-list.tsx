@@ -75,15 +75,15 @@ export function OrderList({
           {isLoadingMore && hasMore ? (
             <div className="flex items-center gap-2 text-muted-foreground">
               <Loader2 className="h-4 w-4 animate-spin" />
-              <span className="text-sm">{locale === 'zh' ? '加载中...' : 'Loading...'}</span>
+              <span className="text-sm">{t.common.loading}</span>
             </div>
           ) : hasMore ? (
             <span className="text-sm text-muted-foreground">
-              {locale === 'zh' ? '向下滚动加载更多' : 'Scroll down to load more'}
+              {t.common.scrollToLoadMore}
             </span>
           ) : orders.length > 0 ? (
             <span className="text-sm text-muted-foreground">
-              {locale === 'zh' ? '没有更多订单了' : 'No more orders'}
+              {t.order.noMoreOrders}
             </span>
           ) : null}
         </div>
@@ -93,9 +93,9 @@ export function OrderList({
       {!isMobile && pagination && (
         <div className="flex items-center justify-between pt-4">
           <p className="text-sm text-muted-foreground">
-            {locale === 'zh'
-              ? `第 ${pagination.page} 页，共 ${pagination.total_pages} 页`
-              : `Page ${pagination.page} of ${pagination.total_pages}`}
+            {t.common.pageInfo
+              .replace('{page}', String(pagination.page))
+              .replace('{totalPages}', String(pagination.total_pages))}
           </p>
           <div className="flex items-center gap-2">
             <Button
@@ -105,7 +105,7 @@ export function OrderList({
               disabled={pagination.page <= 1}
             >
               <ChevronLeft className="h-4 w-4" />
-              {locale === 'zh' ? '上一页' : 'Previous'}
+              {t.common.prevPage}
             </Button>
             <input
               type="number"
@@ -136,7 +136,7 @@ export function OrderList({
               onClick={() => pagination.onPageChange(pagination.page + 1)}
               disabled={pagination.page >= pagination.total_pages}
             >
-              {locale === 'zh' ? '下一页' : 'Next'}
+              {t.common.nextPage}
               <ChevronRight className="h-4 w-4" />
             </Button>
           </div>

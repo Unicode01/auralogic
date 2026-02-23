@@ -300,7 +300,7 @@ func (h *LogHandler) RetryFailedEmails(c *gin.Context) {
 	}
 
 	response.Success(c, gin.H{
-		"message":  "已将邮件重新加入发送队列",
+		"message":  "Email re-added to send queue",
 		"affected": result.RowsAffected,
 	})
 }

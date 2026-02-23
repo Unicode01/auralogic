@@ -119,7 +119,7 @@ func (s *TicketAutoCloseService) closeInactiveTickets() {
 			SenderType:    "admin",
 			SenderID:      0,
 			SenderName:    "System",
-			Content:       fmt.Sprintf("工单已超过 %d 小时无回复，系统自动关闭。", autoCloseHours),
+			Content:       fmt.Sprintf("Ticket automatically closed after %d hours with no reply.", autoCloseHours),
 			ContentType:   "text",
 			IsReadByUser:  false,
 			IsReadByAdmin: true,

@@ -49,10 +49,10 @@ export function CartProvider({ children }: { children: ReactNode }) {
       addToCart(data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['cart'] })
-      toast.success(locale === 'zh' ? '已添加到购物车' : 'Added to cart')
+      toast.success(t.cart.addedToCart)
     },
     onError: (error: Error) => {
-      toast.error(error.message || (locale === 'zh' ? '添加失败' : 'Failed to add'))
+      toast.error(error.message || t.cart.addFailed)
     },
   })
 
@@ -64,7 +64,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
       queryClient.invalidateQueries({ queryKey: ['cart'] })
     },
     onError: (error: Error) => {
-      toast.error(error.message || (locale === 'zh' ? '更新失败' : 'Failed to update'))
+      toast.error(error.message || t.cart.updateFailed)
     },
   })
 
@@ -73,10 +73,10 @@ export function CartProvider({ children }: { children: ReactNode }) {
     mutationFn: (itemId: number) => removeFromCart(itemId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['cart'] })
-      toast.success(locale === 'zh' ? '已从购物车移除' : 'Removed from cart')
+      toast.success(t.cart.removedFromCart)
     },
     onError: (error: Error) => {
-      toast.error(error.message || (locale === 'zh' ? '移除失败' : 'Failed to remove'))
+      toast.error(error.message || t.cart.removeFailed)
     },
   })
 
@@ -85,10 +85,10 @@ export function CartProvider({ children }: { children: ReactNode }) {
     mutationFn: clearCart,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['cart'] })
-      toast.success(locale === 'zh' ? '购物车已清空' : 'Cart cleared')
+      toast.success(t.cart.cartCleared)
     },
     onError: (error: Error) => {
-      toast.error(error.message || (locale === 'zh' ? '清空失败' : 'Failed to clear'))
+      toast.error(error.message || t.cart.clearFailed)
     },
   })
 

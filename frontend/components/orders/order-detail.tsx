@@ -71,7 +71,7 @@ export function OrderDetail({ order, serials, virtualStocks, isVirtualOnly = fal
               {(order.sharedToSupport || order.shared_to_support) && (
                 <Badge variant="secondary" className="flex items-center gap-1">
                   <Headphones className="h-3 w-3" />
-                  {locale === 'zh' ? '已发送至客服' : 'Shared to Support'}
+                  {t.order.sharedToSupport}
                 </Badge>
               )}
             </div>
@@ -201,8 +201,8 @@ export function OrderDetail({ order, serials, virtualStocks, isVirtualOnly = fal
           </div>
         )}
 
-        {/* 虚拟产品卡密（用户端）- 与商品信息并排显示 */}
-        {!paymentCard && virtualStocks && virtualStocks.length > 0 && (
+        {/* 虚拟产品卡密 - 与商品信息并排显示 */}
+        {virtualStocks && virtualStocks.length > 0 && (
           <Card className="lg:col-span-1">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -260,15 +260,15 @@ export function OrderDetail({ order, serials, virtualStocks, isVirtualOnly = fal
                 ))}
 
                 <div className="text-xs text-muted-foreground mt-2">
-                  {locale === 'zh' ? `共 ${virtualStocks.length} 个卡密` : `${virtualStocks.length} codes in total`}
+                  {t.order.totalItemsCount.replace('{count}', String(virtualStocks.length))}
                 </div>
               </div>
             </CardContent>
           </Card>
         )}
 
-        {/* 收货与物流信息 - 虚拟商品订单或已有虚拟产品内容或有付款卡片时不显示 */}
-        {!isVirtualOnly && !paymentCard && !(virtualStocks && virtualStocks.length > 0) && (
+        {/* 收货与物流信息 - 虚拟商品订单和待付款订单不显示 */}
+        {!isVirtualOnly && order.status !== 'pending_payment' && (
           (order.receiverName || order.receiver_name || order.trackingNo || order.tracking_no) ? (
           <Card className="lg:col-span-1">
             <CardHeader>

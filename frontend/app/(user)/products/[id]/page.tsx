@@ -80,6 +80,7 @@ export default function ProductDetailPage() {
       queryClient.invalidateQueries({ queryKey: ['product', productId] })
       queryClient.invalidateQueries({ queryKey: ['products'] })
       queryClient.invalidateQueries({ queryKey: ['productStock', productId] })
+      queryClient.invalidateQueries({ queryKey: ['orders'] })
       setTimeout(() => router.push('/orders'), 1000)
     },
     onError: (error: Error) => {
@@ -315,9 +316,10 @@ export default function ProductDetailPage() {
         quantity: quantity,
         attributes: selectedAttributes,
       })
-      toast.success(locale === 'zh' ? '已添加到购物车' : 'Added to cart')
+      queryClient.invalidateQueries({ queryKey: ['cart'] })
+      toast.success(t.cart.addedToCart)
     } catch (error: any) {
-      toast.error(error.message || (locale === 'zh' ? '添加失败' : 'Failed to add'))
+      toast.error(error.message || t.cart.addFailed)
     } finally {
       setIsAddingToCart(false)
     }
@@ -624,9 +626,9 @@ export default function ProductDetailPage() {
               <div className="flex items-start gap-3">
                 <Key className="w-5 h-5 text-purple-500 mt-0.5 shrink-0" />
                 <div className="text-sm text-purple-700 dark:text-purple-300 leading-relaxed">
-                  {locale === 'zh'
-                    ? '虚拟商品 – 购买后立即发货。卡密/激活码将在订单详情中显示。'
-                    : 'Virtual Product – Instant delivery after purchase. Card key/activation code will be displayed in order details.'}
+                  {product.auto_delivery || product.autoDelivery
+                    ? t.product.virtualProductNoticeInstant
+                    : t.product.virtualProductNoticeManual}
                 </div>
               </div>
             </div>
@@ -737,7 +739,7 @@ export default function ProductDetailPage() {
           {/* Quantity */}
           <div className="flex items-center gap-4">
             <span className="text-sm text-muted-foreground">
-              {locale === 'zh' ? '数量' : 'Quantity'}:
+              {t.product.quantity}:
             </span>
             <div className="flex items-center">
               <Button
@@ -850,7 +852,7 @@ export default function ProductDetailPage() {
                 {isAddingToCart ? (
                   <>
                     <Loader2 className="mr-2 h-4 w-4 animate-spin shrink-0" />
-                    {locale === 'zh' ? '添加中...' : 'Adding...'}
+                    {t.product.addingToCart}
                   </>
                 ) : (
                   <>

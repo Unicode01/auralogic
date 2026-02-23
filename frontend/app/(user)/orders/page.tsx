@@ -89,7 +89,7 @@ export default function OrdersPage() {
         <h1 className="text-3xl font-bold">{t.order.myOrders}</h1>
         <Button variant="outline" size="sm" onClick={handleRefresh}>
           <RefreshCw className="mr-2 h-4 w-4" />
-          {locale === 'zh' ? '刷新' : 'Refresh'}
+          {t.common.refresh}
         </Button>
       </div>
 

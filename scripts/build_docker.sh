@@ -1041,6 +1041,12 @@ copy_docker_files() {
   cp "$(dirname "$0")/docker/supervisord.conf" "$WORK_DIR/docker-build/supervisord.conf"
   cp "$(dirname "$0")/docker/entrypoint.sh" "$WORK_DIR/docker-build/entrypoint.sh"
 
+  # 复制后端邮件模板文件到构建目录 (用户可在此目录自定义模板)
+  if [ -d "$PROJECT_ROOT/backend/templates" ]; then
+    cp -r "$PROJECT_ROOT/backend/templates" "$WORK_DIR/docker-build/templates"
+    ok "邮件模板已复制到 docker-build/templates/"
+  fi
+
   ok "Docker 构建文件已准备"
 }
 
@@ -1081,6 +1087,7 @@ services:
       - "${EXPOSE_PORT}:80"
     volumes:
       - ./docker-build/config.json:/app/backend/config/config.json
+      - ./docker-build/templates:/app/backend/templates
       - auralogic_data:/app/backend/data
       - auralogic_logs:/app/backend/logs
       - auralogic_uploads:/app/backend/uploads
@@ -1104,6 +1111,7 @@ services:
       - "${EXPOSE_PORT}:80"
     volumes:
       - ./docker-build/config.json:/app/backend/config/config.json
+      - ./docker-build/templates:/app/backend/templates
       - auralogic_logs:/app/backend/logs
       - auralogic_uploads:/app/backend/uploads
       - redis_data:/var/lib/redis
@@ -1149,6 +1157,7 @@ services:
       - "${EXPOSE_PORT}:80"
     volumes:
       - ./docker-build/config.json:/app/backend/config/config.json
+      - ./docker-build/templates:/app/backend/templates
       - auralogic_logs:/app/backend/logs
       - auralogic_uploads:/app/backend/uploads
       - redis_data:/var/lib/redis
@@ -1225,6 +1234,25 @@ update_container() {
     exit 0
   fi
 
+  # 可选: 覆盖邮件模板文件
+  if [ -d "$PROJECT_ROOT/backend/templates" ]; then
+    echo ""
+    if [ -d "$WORK_DIR/docker-build/templates" ]; then
+      read -rp "$(echo -e "${CYAN}是否用最新源码覆盖邮件模板文件?${NC} (如果您自定义过模板请选 N) [y/N]: ")" overwrite_templates
+      if [[ "$overwrite_templates" =~ ^[Yy]$ ]]; then
+        rm -rf "$WORK_DIR/docker-build/templates"
+        cp -r "$PROJECT_ROOT/backend/templates" "$WORK_DIR/docker-build/templates"
+        ok "邮件模板已更新为最新版本"
+      else
+        info "保留现有邮件模板"
+      fi
+    else
+      info "未发现已有模板目录，自动复制源码模板..."
+      cp -r "$PROJECT_ROOT/backend/templates" "$WORK_DIR/docker-build/templates"
+      ok "邮件模板已复制到 docker-build/templates/"
+    fi
+  fi
+
   # 重新构建镜像
   step "重新构建 Docker 镜像"
   cd "$WORK_DIR"
@@ -1257,6 +1285,12 @@ update_container() {
     # 移除 config.json 挂载的 :ro 标志（如有）
     sed -i 's|:/app/backend/config/config.json:ro|:/app/backend/config/config.json|g' "$WORK_DIR/docker-compose.yml"
 
+    # 如果 compose 文件中没有模板挂载，自动添加
+    if ! grep -q 'docker-build/templates:/app/backend/templates' "$WORK_DIR/docker-compose.yml"; then
+      sed -i '/docker-build\/config.json:\/app\/backend\/config\/config.json/a\      - ./docker-build/templates:/app/backend/templates' "$WORK_DIR/docker-compose.yml"
+      info "已为 docker-compose.yml 添加模板挂载"
+    fi
+
     cd "$WORK_DIR"
     docker compose up -d --force-recreate
     ok "容器已通过 docker compose 更新"
@@ -1276,6 +1310,7 @@ update_container() {
       -p "${EXPOSE_PORT}:80" \
       --name auralogic \
       -v "$WORK_DIR/docker-build/config.json:/app/backend/config/config.json" \
+      -v "$WORK_DIR/docker-build/templates:/app/backend/templates" \
       -v auralogic_data:/app/backend/data \
       -v auralogic_logs:/app/backend/logs \
       -v auralogic_uploads:/app/backend/uploads \

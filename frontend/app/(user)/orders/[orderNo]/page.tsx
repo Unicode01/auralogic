@@ -20,12 +20,23 @@ function OrderDetailContent({ orderNo }: { orderNo: string }) {
   const { locale } = useLocale()
   const t = getTranslations(locale)
   usePageTitle(t.pageTitle.orderDetail)
-  const { data, isLoading, refetch } = useOrderDetail(orderNo)
+  const [paymentMethodSelected, setPaymentMethodSelected] = useState(false)
   const [formToken, setFormToken] = useState<string | null>(null)
   const [formData, setFormData] = useState<any>(null)
   const [formLoading, setFormLoading] = useState(false)
 
+  const { data, isLoading, refetch } = useOrderDetail(orderNo, {
+    refetchInterval: paymentMethodSelected ? 5000 : false,
+  })
+
   const order = data?.data
+
+  // 支付成功后（状态不再是 pending_payment），停止轮询
+  useEffect(() => {
+    if (order && order.status !== 'pending_payment' && paymentMethodSelected) {
+      setPaymentMethodSelected(false)
+    }
+  }, [order?.status, paymentMethodSelected])
 
   // 获取虚拟产品内容（只有已付款后才能查看）
   const { data: virtualStocksData } = useQuery({
@@ -121,7 +132,7 @@ function OrderDetailContent({ orderNo }: { orderNo: string }) {
         order={order}
         virtualStocks={virtualStocks}
         isVirtualOnly={isVirtualOnly}
-        paymentCard={isPendingPayment ? <PaymentMethodCard orderNo={orderNo} onPaymentSelected={() => refetch()} /> : undefined}
+        paymentCard={isPendingPayment ? <PaymentMethodCard orderNo={orderNo} onPaymentSelected={() => { setPaymentMethodSelected(true); refetch() }} /> : undefined}
         shippingForm={shippingFormNode}
       />
     </div>
