@@ -102,6 +102,7 @@ export default function RegisterPage() {
       await sendPhoneRegisterCode({ phone: phoneNumber, phone_code: phoneCountryCode, captcha_token: token || undefined })
       toast.success(t.auth.phoneCodeSent)
       setCountdown(60)
+      resetCaptcha()
     } catch {
       toast.error(t.auth.requestFailed)
       resetCaptcha()
@@ -196,6 +197,15 @@ export default function RegisterPage() {
       })
     }
   }, [needCaptcha, captchaConfig])
+
+  // Auto-send phone code when CF/Google captcha completes
+  useEffect(() => {
+    if (!captchaToken || !needCaptcha || captchaConfig?.provider === 'builtin') return
+    if (mode === 'phone' && phoneNumber && !sendingCode && countdown <= 0) {
+      handleSendPhoneCode()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [captchaToken])
 
   const schema = createRegisterSchema({
     invalidEmail: t.auth.invalidEmail,

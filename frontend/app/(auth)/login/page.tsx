@@ -194,6 +194,22 @@ export default function LoginPage() {
     }
   }, [needCaptcha, captchaConfig, loginMode])
 
+  // Auto-submit/send when CF/Google captcha completes
+  useEffect(() => {
+    if (!captchaToken || !needCaptcha || captchaConfig?.provider === 'builtin') return
+    if (loginMode === 'password') {
+      const values = form.getValues()
+      if (values.email && values.password) {
+        form.handleSubmit(onSubmit)()
+      }
+    } else if (loginMode === 'code' && codeEmail && !codeSent && !isSendingCode && countdown <= 0) {
+      handleSendCode()
+    } else if (loginMode === 'phone' && phoneNumber && !phoneCodeSent && !isSendingPhoneCode && phoneCountdown <= 0) {
+      handleSendPhoneCode()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [captchaToken])
+
   const schema = createLoginSchema({
     invalidEmail: t.auth.invalidEmail,
     passwordMin6: (t.auth.passwordMinLength as string).replace('{n}', '6'),
@@ -243,6 +259,7 @@ export default function LoginPage() {
       toast.success(t.auth.codeSent)
       setCountdown(60)
       setCodeSent(true)
+      resetCaptcha()
     } catch (e: any) {
       const msg = e?.code === 42902 ? t.auth.cooldownWait : (e?.message || t.auth.requestFailed)
       toast.error(msg)
@@ -271,6 +288,7 @@ export default function LoginPage() {
       toast.success(t.auth.phoneCodeSent)
       setPhoneCountdown(60)
       setPhoneCodeSent(true)
+      resetCaptcha()
     } catch (e: any) {
       const msg = e?.code === 42902 ? t.auth.cooldownWait : (e?.message || t.auth.requestFailed)
       toast.error(msg)
@@ -512,7 +530,7 @@ export default function LoginPage() {
                     type="button"
                     variant="outline"
                     className="h-11 shrink-0 text-sm"
-                    disabled={!codeEmail || countdown > 0 || isSendingCode}
+                    disabled={!codeEmail || countdown > 0 || isSendingCode || (needCaptcha && !captchaToken && !(captchaConfig?.provider === 'builtin' && builtinCode))}
                     onClick={handleSendCode}
                   >
                     {isSendingCode ? t.auth.sendingCode

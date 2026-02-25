@@ -172,7 +172,32 @@ export default function ForgotPasswordPage() {
         'expired-callback': () => setCaptchaToken(''),
       })
     }
-  }, [needCaptcha, captchaConfig])
+  }, [needCaptcha, captchaConfig, resetMode])
+
+  // Auto-submit/send when CF/Google captcha completes
+  useEffect(() => {
+    if (!captchaToken || !needCaptcha || captchaConfig?.provider === 'builtin') return
+    if (resetMode === 'email' && email && !sent && !isSubmitting && countdown <= 0) {
+      handleSubmit({ preventDefault: () => {} } as React.FormEvent)
+    } else if (resetMode === 'phone' && phoneNumber && !phoneCodeSent && !isSendingPhoneCode && phoneCountdown <= 0) {
+      handleSendPhoneCode()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [captchaToken])
+
+  function resetCaptcha() {
+    if (!needCaptcha) return
+    if (captchaConfig.provider === 'builtin') {
+      refetchCaptcha()
+      setBuiltinCode('')
+    } else if (captchaConfig.provider === 'cloudflare' && (window as any).turnstile) {
+      ;(window as any).turnstile.reset(widgetIdRef.current)
+      setCaptchaToken('')
+    } else if (captchaConfig.provider === 'google' && (window as any).grecaptcha) {
+      ;(window as any).grecaptcha.reset(widgetIdRef.current)
+      setCaptchaToken('')
+    }
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -189,9 +214,11 @@ export default function ForgotPasswordPage() {
       toast.success(t.auth.resetEmailSent)
       setSent(true)
       setCountdown(60)
+      resetCaptcha()
     } catch (e: any) {
       const msg = e?.code === 42902 ? t.auth.cooldownWait : (e?.message || t.auth.requestFailed)
       toast.error(msg)
+      resetCaptcha()
     } finally {
       setIsSubmitting(false)
     }
@@ -209,9 +236,11 @@ export default function ForgotPasswordPage() {
       toast.success(t.auth.phoneResetCodeSent)
       setPhoneCountdown(60)
       setPhoneCodeSent(true)
+      resetCaptcha()
     } catch (e: any) {
       const msg = e?.code === 42902 ? t.auth.cooldownWait : (e?.message || t.auth.requestFailed)
       toast.error(msg)
+      resetCaptcha()
     } finally {
       setIsSendingPhoneCode(false)
     }
@@ -262,7 +291,7 @@ export default function ForgotPasswordPage() {
               <button
                 type="button"
                 className={`flex-1 text-xs sm:text-sm py-2 rounded-md transition-colors whitespace-nowrap ${resetMode === 'email' ? 'bg-background text-foreground shadow-sm font-medium' : 'text-muted-foreground hover:text-foreground'}`}
-                onClick={() => setResetMode('email')}
+                onClick={() => { setResetMode('email'); widgetRendered.current = false }}
               >
                 <Mail className="inline h-3.5 w-3.5 mr-1 -mt-0.5" />
                 {t.auth.emailResetTab}
@@ -270,7 +299,7 @@ export default function ForgotPasswordPage() {
               <button
                 type="button"
                 className={`flex-1 text-xs sm:text-sm py-2 rounded-md transition-colors whitespace-nowrap ${resetMode === 'phone' ? 'bg-background text-foreground shadow-sm font-medium' : 'text-muted-foreground hover:text-foreground'}`}
-                onClick={() => setResetMode('phone')}
+                onClick={() => { setResetMode('phone'); widgetRendered.current = false }}
               >
                 <Phone className="inline h-3.5 w-3.5 mr-1 -mt-0.5" />
                 {t.auth.phoneResetTab}
@@ -326,7 +355,7 @@ export default function ForgotPasswordPage() {
             <Button
               type="submit"
               className="w-full h-11 text-sm font-medium"
-              disabled={isSubmitting || !email || countdown > 0}
+              disabled={isSubmitting || !email || countdown > 0 || (needCaptcha && !captchaToken && !(captchaConfig?.provider === 'builtin' && builtinCode))}
             >
               {isSubmitting ? (
                 <>
