@@ -412,15 +412,15 @@ export function OrderDetail({ order, serials, virtualStocks, isVirtualOnly = fal
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <ShieldCheck className="h-5 w-5" />
-              产品防伪序列号
+              {t.admin.antiCounterfeitSerial}
             </CardTitle>
           </CardHeader>
 
           <CardContent>
             <div className="space-y-3">
               <div className="bg-blue-50 dark:bg-blue-950 border border-blue-200 dark:border-blue-800 rounded-lg p-3 text-sm text-blue-800 dark:text-blue-200">
-                <p className="font-medium mb-1">💡 发货提示</p>
-                <p>请根据以下序列号为对应商品贴上防伪标签后再发货</p>
+                <p className="font-medium mb-1">💡 {t.admin.shippingTip}</p>
+                <p>{t.admin.shippingTipContent}</p>
               </div>
 
               {serials.map((serial, index) => (
@@ -428,28 +428,28 @@ export function OrderDetail({ order, serials, virtualStocks, isVirtualOnly = fal
                   <div className="flex items-center justify-between">
                     <div>
                       <div className="text-xs text-muted-foreground mb-1">
-                        {serial.product?.name || '商品'} (SKU: {serial.product?.sku})
+                        {serial.product?.name || t.admin.productFallback} (SKU: {serial.product?.sku})
                       </div>
                       <div className="font-mono font-bold text-xl">
                         {serial.serial_number}
                       </div>
                     </div>
                     <Badge variant="outline" className="text-xs">
-                      第 {serial.sequence_number} 件
+                      {t.admin.itemIndex.replace('{index}', String(serial.sequence_number))}
                     </Badge>
                   </div>
                   <div className="flex gap-2 text-xs text-muted-foreground">
-                    <span>产品码: <span className="font-mono font-semibold">{serial.product_code}</span></span>
+                    <span>{t.admin.productCodeLabel2}: <span className="font-mono font-semibold">{serial.product_code}</span></span>
                     <span>•</span>
-                    <span>防伪码: <span className="font-mono font-semibold">{serial.anti_counterfeit_code}</span></span>
+                    <span>{t.admin.antiCounterfeitCodeLabel}: <span className="font-mono font-semibold">{serial.anti_counterfeit_code}</span></span>
                     <span>•</span>
-                    <span>查看次数: {serial.view_count}</span>
+                    <span>{t.admin.viewCountLabel}: {serial.view_count}</span>
                   </div>
                 </div>
               ))}
 
               <div className="text-xs text-muted-foreground mt-2">
-                共 {serials.length} 个序列号 • 收货信息填写后自动生成
+                {t.admin.serialSummary.replace('{count}', String(serials.length))}
               </div>
             </div>
           </CardContent>

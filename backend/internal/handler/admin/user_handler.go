@@ -30,6 +30,31 @@ func NewUserHandler(userRepo *repository.UserRepository, db *gorm.DB, cfg *confi
 	}
 }
 
+// userToResponse converts a User model to a safe response map with explicit fields
+func userToResponse(user *models.User) gin.H {
+	resp := gin.H{
+		"id":             user.ID,
+		"uuid":           user.UUID,
+		"email":          user.Email,
+		"name":           user.Name,
+		"avatar":         user.Avatar,
+		"role":           user.Role,
+		"is_active":      user.IsActive,
+		"email_verified":  user.EmailVerified,
+		"locale":         user.Locale,
+		"last_login_ip":  user.LastLoginIP,
+		"register_ip":    user.RegisterIP,
+		"country":        user.Country,
+		"last_login_at":  user.LastLoginAt,
+		"created_at":     user.CreatedAt,
+		"updated_at":     user.UpdatedAt,
+	}
+	if user.Phone != nil {
+		resp["phone"] = user.Phone
+	}
+	return resp
+}
+
 // CreateUser CreateUser
 func (h *UserHandler) CreateUser(c *gin.Context) {
 	var req struct {
@@ -110,7 +135,7 @@ func (h *UserHandler) CreateUser(c *gin.Context) {
 		"role":  user.Role,
 	})
 
-	response.Success(c, user)
+	response.Success(c, userToResponse(user))
 }
 
 // ListUsers - Get user list
@@ -130,26 +155,21 @@ func (h *UserHandler) ListUsers(c *gin.Context) {
 	}
 
 	// 为管理员用户附加权限信息
-	type UserWithPermissions struct {
-		models.User
-		Permissions []string `json:"permissions"`
-	}
-
-	result := make([]UserWithPermissions, 0, len(users))
+	result := make([]gin.H, 0, len(users))
 	for _, user := range users {
-		uwp := UserWithPermissions{User: user}
+		item := userToResponse(&user)
 
 		// 如果是管理员，获取权限
 		if user.IsAdmin() {
 			var perm models.AdminPermission
 			if err := h.db.Where("user_id = ?", user.ID).First(&perm).Error; err == nil {
-				uwp.Permissions = perm.Permissions
+				item["permissions"] = perm.Permissions
 			} else {
-				uwp.Permissions = []string{}
+				item["permissions"] = []string{}
 			}
 		}
 
-		result = append(result, uwp)
+		result = append(result, item)
 	}
 
 	response.Paginated(c, result, page, limit, total)
@@ -173,7 +193,7 @@ func (h *UserHandler) GetUser(c *gin.Context) {
 		return
 	}
 
-	response.Success(c, user)
+	response.Success(c, userToResponse(user))
 }
 
 // UpdateUser UpdateUserInfo
@@ -269,7 +289,7 @@ func (h *UserHandler) UpdateUser(c *gin.Context) {
 	}
 	logger.LogUserOperation(h.db, c, "update", user.ID, details)
 
-	response.Success(c, user)
+	response.Success(c, userToResponse(user))
 }
 
 // DeleteUser DeleteUser

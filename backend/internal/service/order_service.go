@@ -29,10 +29,43 @@ type OrderService struct {
 	emailService      *EmailService
 }
 
+const (
+	maxOrderItems    = 100  // 单个订单最大商品项数
+	maxItemQuantity  = 9999 // 单个商品项最大数量
+	maxAttributeKeys = 20   // 单个商品项最大属性数
+)
+
 var (
 	// Public, user-facing errors (safe to show to clients).
 	ErrProductNotAvailable = errors.New("Product is not available")
 )
+
+// validateOrderItems 校验订单商品项的基本参数合理性
+func validateOrderItems(items []models.OrderItem) error {
+	if len(items) == 0 {
+		return errors.New("Order items cannot be empty")
+	}
+	if len(items) > maxOrderItems {
+		return fmt.Errorf("Order items cannot exceed %d", maxOrderItems)
+	}
+	for i := range items {
+		item := &items[i]
+		item.SKU = strings.TrimSpace(item.SKU)
+		if item.SKU == "" {
+			return errors.New("Product SKU cannot be empty")
+		}
+		if item.Quantity <= 0 {
+			return errors.New("Quantity must be greater than 0")
+		}
+		if item.Quantity > maxItemQuantity {
+			return fmt.Errorf("Quantity cannot exceed %d", maxItemQuantity)
+		}
+		if len(item.Attributes) > maxAttributeKeys {
+			return fmt.Errorf("Product attributes cannot exceed %d keys", maxAttributeKeys)
+		}
+	}
+	return nil
+}
 
 func NewOrderService(
 	orderRepo *repository.OrderRepository,
@@ -69,19 +102,17 @@ func (s *OrderService) CreateDraft(items []models.OrderItem, externalUserID, ext
 	formToken := uuid.New().String()
 	formExpiresAt := models.NowFunc().Add(time.Duration(s.cfg.Form.ExpireHours) * time.Hour)
 
+	// 校验订单商品项
+	if err := validateOrderItems(items); err != nil {
+		return nil, err
+	}
+
 	// 计算订单总金额
 	var totalAmount float64
 	for _, item := range items {
-		sku := strings.TrimSpace(item.SKU)
-		if sku == "" {
-			return nil, errors.New("Product SKU cannot be empty")
-		}
-		if item.Quantity <= 0 {
-			return nil, errors.New("Quantity must be greater than 0")
-		}
-		product, err := s.productRepo.FindBySKU(sku)
+		product, err := s.productRepo.FindBySKU(item.SKU)
 		if err != nil {
-			return nil, fmt.Errorf("Product %s does not exist", sku)
+			return nil, fmt.Errorf("Product %s does not exist", item.SKU)
 		}
 		if product.Status != models.ProductStatusActive {
 			return nil, ErrProductNotAvailable
@@ -158,6 +189,14 @@ func (s *OrderService) CreateAdminOrder(req AdminOrderRequest) (*models.Order, e
 	if len(req.Items) == 0 {
 		return nil, errors.New("Order items cannot be empty")
 	}
+	if len(req.Items) > maxOrderItems {
+		return nil, fmt.Errorf("Order items cannot exceed %d", maxOrderItems)
+	}
+
+	// 验证管理员覆盖金额
+	if req.TotalAmount != nil && *req.TotalAmount < 0 {
+		return nil, errors.New("Total amount cannot be negative")
+	}
 
 	// 验证用户
 	if req.UserID != nil {
@@ -182,6 +221,9 @@ func (s *OrderService) CreateAdminOrder(req AdminOrderRequest) (*models.Order, e
 		}
 		if item.Quantity <= 0 {
 			return nil, errors.New("Quantity must be greater than 0")
+		}
+		if item.Quantity > maxItemQuantity {
+			return nil, fmt.Errorf("Quantity cannot exceed %d", maxItemQuantity)
 		}
 
 		name := item.Name
@@ -450,6 +492,11 @@ func (s *OrderService) CreateUserOrder(userID uint, items []models.OrderItem, re
 		return nil, errors.New("User not found")
 	}
 
+	// 校验订单商品项
+	if err := validateOrderItems(items); err != nil {
+		return nil, err
+	}
+
 	// 盲盒属性跟踪：记录每个订单项中盲盒随机分配的属性名
 	// key: 订单项索引, value: 盲盒属性名列表
 	blindBoxAttrNames := make(map[int][]string)
@@ -457,13 +504,6 @@ func (s *OrderService) CreateUserOrder(userID uint, items []models.OrderItem, re
 	// 验证Product并处理Inventory（使用新的Inventory绑定机制）
 	for i := range items {
 		item := &items[i]
-		item.SKU = strings.TrimSpace(item.SKU)
-		if item.SKU == "" {
-			return nil, errors.New("Product SKU cannot be empty")
-		}
-		if item.Quantity <= 0 {
-			return nil, errors.New("Quantity must be greater than 0")
-		}
 
 		// 根据 SKU 查找Product
 		product, err := s.productRepo.FindBySKU(item.SKU)
@@ -861,6 +901,13 @@ func (s *OrderService) CreateUserOrder(userID uint, items []models.OrderItem, re
 			}
 		}
 		// 注意：待付款状态不自动发货，需要管理员标记付款后才发货
+	}
+
+	// 零金额订单自动完成支付（如100%优惠码或价格为0的商品）
+	if order.TotalAmount == 0 {
+		s.MarkAsPaid(order.ID)
+		order, _ = s.OrderRepo.FindByID(order.ID)
+		return order, nil
 	}
 
 	// 发送订单创建通知邮件

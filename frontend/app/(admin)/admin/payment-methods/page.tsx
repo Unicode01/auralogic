@@ -301,6 +301,8 @@ export default function PaymentMethodsPage() {
   const [deleteId, setDeleteId] = useState<number | null>(null)
   const [testResult, setTestResult] = useState<string | null>(null)
   const configFlushRef = useRef<(() => string | null) | null>(null)
+  const dragItemRef = useRef<number | null>(null)
+  const dragOverRef = useRef<number | null>(null)
 
   // 页面加载时清除缓存并重新获取
   useEffect(() => {
@@ -415,6 +417,14 @@ export default function PaymentMethodsPage() {
     },
   })
 
+  const reorderMutation = useMutation({
+    mutationFn: reorderPaymentMethods,
+    onError: (error: Error) => {
+      toast.error(error.message)
+      queryClient.invalidateQueries({ queryKey: ['paymentMethods'] })
+    },
+  })
+
   const testMutation = useMutation({
     mutationFn: ({ script, config }: { script: string; config: Record<string, any> }) =>
       testPaymentScript(script, config),
@@ -525,8 +535,30 @@ export default function PaymentMethodsPage() {
             </CardContent>
           </Card>
         ) : (
-          methods.map((method: PaymentMethod) => (
-            <Card key={method.id} className={!method.enabled ? 'opacity-60' : ''}>
+          methods.map((method: PaymentMethod, index: number) => (
+            <Card
+              key={method.id}
+              className={`${!method.enabled ? 'opacity-60' : ''} transition-shadow`}
+              draggable
+              onDragStart={() => { dragItemRef.current = index }}
+              onDragOver={(e) => { e.preventDefault(); dragOverRef.current = index }}
+              onDragEnd={() => {
+                const from = dragItemRef.current
+                const to = dragOverRef.current
+                dragItemRef.current = null
+                dragOverRef.current = null
+                if (from === null || to === null || from === to) return
+                const reordered = [...methods]
+                const [moved] = reordered.splice(from, 1)
+                reordered.splice(to, 0, moved)
+                // Optimistic update
+                queryClient.setQueryData(['paymentMethods'], (old: any) => {
+                  if (!old?.data?.items) return old
+                  return { ...old, data: { ...old.data, items: reordered } }
+                })
+                reorderMutation.mutate(reordered.map((m: PaymentMethod) => m.id))
+              }}
+            >
               <CardContent className="p-4">
                 <div className="flex items-center gap-4">
                   <div className="cursor-move text-muted-foreground">

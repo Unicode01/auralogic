@@ -93,10 +93,12 @@ export function CartProvider({ children }: { children: ReactNode }) {
   })
 
   const addItem = useCallback(async (productId: number, quantity: number, attributes?: Record<string, string>) => {
+    if (quantity < 1 || quantity > 9999) return
     await addItemMutation.mutateAsync({ product_id: productId, quantity, attributes })
   }, [addItemMutation])
 
   const updateQuantityHandler = useCallback(async (itemId: number, quantity: number) => {
+    if (quantity < 1 || quantity > 9999) return
     await updateQuantityMutation.mutateAsync({ itemId, quantity })
   }, [updateQuantityMutation])
 

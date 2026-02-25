@@ -55,8 +55,8 @@ func (s *ProductService) CreateProduct(product *models.Product) error {
 	}
 
 	// Price validation
-	if product.Price <= 0 {
-		return errors.New("Product price must be greater than 0")
+	if product.Price < 0 {
+		return errors.New("Product price must be greater than or equal to 0")
 	}
 
 	// 设置默认状态

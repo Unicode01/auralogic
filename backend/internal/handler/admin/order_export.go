@@ -141,6 +141,7 @@ func (h *OrderHandler) ExportOrders(c *gin.Context) {
 			"shipped":       "Shipped",
 			"completed":     "Completed",
 			"cancelled":     "Cancelled",
+			"refunded":      "Refunded",
 		}
 		statusText := statusMap[string(order.Status)]
 		if statusText == "" {
@@ -323,6 +324,7 @@ func (h *OrderHandler) ImportOrders(c *gin.Context) {
 				"shipped":       "Shipped",
 				"completed":     "Completed",
 				"cancelled":     "Cancelled",
+				"refunded":      "Refunded",
 			}[string(order.Status)]
 			if statusText == "" {
 				statusText = string(order.Status)

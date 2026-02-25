@@ -121,7 +121,7 @@ export default function CartPage() {
 
   // 处理数量变化
   const handleQuantityChange = async (itemId: number, newQuantity: number) => {
-    if (newQuantity < 1) return
+    if (newQuantity < 1 || newQuantity > 9999) return
     try {
       await updateQuantity(itemId, newQuantity)
     } catch (error) {
@@ -195,6 +195,11 @@ export default function CartPage() {
 
     if (selectedCartItems.length === 0) {
       toast.error(t.cart.selectItems)
+      return
+    }
+
+    if (selectedCartItems.length > 100) {
+      toast.error(t.cart.tooManyItems || 'Order items cannot exceed 100')
       return
     }
 
@@ -372,7 +377,7 @@ export default function CartPage() {
                       <Input
                         type="number"
                         value={item.quantity}
-                        onChange={(e) => { const val = parseInt(e.target.value); if (!isNaN(val) && val >= 1) handleQuantityChange(item.id, val) }}
+                        onChange={(e) => { const val = parseInt(e.target.value); if (!isNaN(val) && val >= 1 && val <= 9999) handleQuantityChange(item.id, val) }}
                         className="w-10 h-7 text-center px-0 text-sm"
                         min={1}
                         max={item.available_stock}
@@ -432,7 +437,7 @@ export default function CartPage() {
                         <Input
                           type="number"
                           value={item.quantity}
-                          onChange={(e) => { const val = parseInt(e.target.value); if (!isNaN(val) && val >= 1) handleQuantityChange(item.id, val) }}
+                          onChange={(e) => { const val = parseInt(e.target.value); if (!isNaN(val) && val >= 1 && val <= 9999) handleQuantityChange(item.id, val) }}
                           className="w-16 h-8 text-center"
                           min={1}
                           max={item.available_stock}
@@ -538,7 +543,7 @@ export default function CartPage() {
                     <Input
                       type="number"
                       value={item.quantity}
-                      onChange={(e) => { const val = parseInt(e.target.value); if (!isNaN(val) && val >= 1) handleQuantityChange(item.id, val) }}
+                      onChange={(e) => { const val = parseInt(e.target.value); if (!isNaN(val) && val >= 1 && val <= 9999) handleQuantityChange(item.id, val) }}
                       className="w-12 h-7 text-center px-1 text-sm"
                       min={1}
                       max={item.available_stock}
@@ -581,6 +586,7 @@ export default function CartPage() {
                     onChange={(e) => setPromoCodeInput(e.target.value)}
                     placeholder={t.promoCode.promoCodePlaceholder}
                     className="pr-20 h-8 text-sm"
+                    maxLength={50}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter') handleApplyPromoCode()
                     }}
@@ -647,6 +653,7 @@ export default function CartPage() {
                         onChange={(e) => setPromoCodeInput(e.target.value)}
                         placeholder={t.promoCode.promoCodePlaceholder}
                         className="pr-20 h-8 text-sm w-52"
+                        maxLength={50}
                         onKeyDown={(e) => {
                           if (e.key === 'Enter') handleApplyPromoCode()
                         }}

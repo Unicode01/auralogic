@@ -58,6 +58,13 @@ func (h *OrderHandler) CreateOrder(c *gin.Context) {
 		return
 	}
 
+	// 清理优惠码
+	req.PromoCode = validator.SanitizeInput(req.PromoCode)
+	if !validator.ValidateLength(req.PromoCode, 0, 50) {
+		response.BadRequest(c, "Promo code length cannot exceed 50 characters")
+		return
+	}
+
 	// Create order draft (internal user)
 	order, err := h.orderService.CreateUserOrder(userID, req.Items, req.Remark, req.PromoCode)
 	if err != nil {
@@ -208,10 +215,6 @@ func (h *OrderHandler) GetOrder(c *gin.Context) {
 		"total_amount":                order.TotalAmount,
 		"currency":                    order.Currency,
 		"remark":                      order.Remark,
-		"source":                      order.Source,
-		"source_platform":             order.SourcePlatform,
-		"external_user_id":            order.ExternalUserID,
-		"external_user_name":          order.ExternalUserName,
 		"created_at":                  order.CreatedAt,
 		"updated_at":                  order.UpdatedAt,
 		"shared_to_support":           sharedToSupport,

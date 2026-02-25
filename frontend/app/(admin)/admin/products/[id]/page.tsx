@@ -767,7 +767,7 @@ export default function ProductEditPage() {
     }
 
     // 验证价格
-    if (form.price <= 0) {
+    if (form.price < 0) {
       toast.error(t.admin.priceMustBePositive)
       return
     }
@@ -1147,7 +1147,7 @@ export default function ProductEditPage() {
                   id="price"
                   type="number"
                   step="0.01"
-                  min="0.01"
+                  min="0"
                   value={form.price}
                   onChange={(e) => setForm({ ...form, price: parseFloat(e.target.value) || 0 })}
                   required

@@ -1170,6 +1170,15 @@ export const zhTranslations = {
         serialDeleted: '序列号删除成功',
         serialDeleteFailed: '序列号删除失败',
         confirmDeleteSerial: '确定要删除序列号 {serial} 吗？\n\n此操作不可撤销！',
+        antiCounterfeitSerial: '产品防伪序列号',
+        shippingTip: '发货提示',
+        shippingTipContent: '请根据以下序列号为对应商品贴上防伪标签后再发货',
+        productFallback: '商品',
+        itemIndex: '第 {index} 件',
+        productCodeLabel2: '产品码',
+        antiCounterfeitCodeLabel: '防伪码',
+        viewCountLabel: '查看次数',
+        serialSummary: '共 {count} 个序列号 • 收货信息填写后自动生成',
 
         // API密钥管理
         apiKeyManagement: 'API密钥管理',

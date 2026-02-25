@@ -20,8 +20,8 @@ type User struct {
 	IsActive      bool           `gorm:"default:true" json:"is_active"`
 	EmailVerified bool           `gorm:"default:false" json:"email_verified"`                 // 邮箱是否已验证
 	Locale        string         `gorm:"type:varchar(10)" json:"locale,omitempty"`            // 用户语言偏好: zh, en
-	LastLoginIP   string         `gorm:"type:varchar(50)" json:"last_login_ip,omitempty"`     // 最后登录IP
-	RegisterIP    string         `gorm:"type:varchar(50)" json:"register_ip,omitempty"`       // 注册IP
+	LastLoginIP   string         `gorm:"type:varchar(50)" json:"-"`     // 最后登录IP
+	RegisterIP    string         `gorm:"type:varchar(50)" json:"-"`       // 注册IP
 	Country       string         `gorm:"type:varchar(100)" json:"country,omitempty"`          // 用户所在国家
 	LastLoginAt   *time.Time     `json:"last_login_at,omitempty"`
 	CreatedAt     time.Time      `json:"created_at"`
