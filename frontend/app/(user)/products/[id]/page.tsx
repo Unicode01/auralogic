@@ -326,7 +326,7 @@ export default function ProductDetailPage() {
   }
 
   const handleQuantityChange = (newQuantity: number) => {
-    if (newQuantity >= 1 && newQuantity <= availableStock) {
+    if (newQuantity >= 1 && newQuantity <= Math.min(availableStock, 9999)) {
       setQuantity(newQuantity)
     }
   }
@@ -762,14 +762,14 @@ export default function ProductDetailPage() {
                 }}
                 className="w-16 h-9 text-center rounded-none border-x-0 focus-visible:ring-0 focus-visible:ring-offset-0"
                 min={1}
-                max={availableStock}
+                max={Math.min(availableStock, 9999)}
               />
               <Button
                 variant="outline"
                 size="icon"
                 className="h-9 w-9 rounded-l-none"
                 onClick={() => handleQuantityChange(quantity + 1)}
-                disabled={quantity >= availableStock}
+                disabled={quantity >= Math.min(availableStock, 9999)}
               >
                 <Plus className="h-3.5 w-3.5" />
               </Button>
@@ -798,6 +798,7 @@ export default function ProductDetailPage() {
                   onChange={(e) => setPromoCodeInput(e.target.value)}
                   placeholder={t.promoCode.promoCodePlaceholder}
                   className="flex-1"
+                  maxLength={50}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') handleApplyPromoCode()
                   }}

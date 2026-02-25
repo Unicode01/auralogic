@@ -1170,6 +1170,15 @@ export const enTranslations = {
         serialDeleted: 'Serial deleted',
         serialDeleteFailed: 'Serial delete failed',
         confirmDeleteSerial: 'Are you sure you want to delete serial {serial}?\n\nThis cannot be undone!',
+        antiCounterfeitSerial: 'Anti-counterfeit Serial Numbers',
+        shippingTip: 'Shipping Tip',
+        shippingTipContent: 'Please attach anti-counterfeit labels with the following serial numbers before shipping',
+        productFallback: 'Product',
+        itemIndex: 'Item #{index}',
+        productCodeLabel2: 'Product Code',
+        antiCounterfeitCodeLabel: 'Anti-counterfeit Code',
+        viewCountLabel: 'View Count',
+        serialSummary: '{count} serial number(s) in total · Auto-generated after shipping info is filled',
 
         // API Key Management
         apiKeyManagement: 'API Key Management',

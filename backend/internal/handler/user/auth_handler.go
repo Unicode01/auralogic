@@ -294,17 +294,16 @@ func (h *AuthHandler) GetMe(c *gin.Context) {
 
 	// 构建响应数据
 	result := gin.H{
-		"user_id":       user.ID,
-		"uuid":          user.UUID,
-		"email":         user.Email,
-		"name":          user.Name,
-		"role":          user.Role,
-		"avatar":        user.Avatar,
-		"is_active":     user.IsActive,
-		"locale":        user.Locale,
-		"last_login_ip": user.LastLoginIP,
-		"country":       user.Country,
-		"created_at":    user.CreatedAt,
+		"user_id":    user.ID,
+		"uuid":       user.UUID,
+		"email":      user.Email,
+		"name":       user.Name,
+		"role":       user.Role,
+		"avatar":     user.Avatar,
+		"is_active":  user.IsActive,
+		"locale":     user.Locale,
+		"country":    user.Country,
+		"created_at": user.CreatedAt,
 	}
 	if user.Phone != nil && *user.Phone != "" {
 		result["phone"] = maskPhone(*user.Phone)

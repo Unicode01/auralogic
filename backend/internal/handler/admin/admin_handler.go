@@ -199,8 +199,13 @@ func (h *AdminHandler) CreateAdmin(c *gin.Context) {
 		if err := h.db.Create(perm).Error; err != nil {
 			// PermissionCreateFailed不影响AdminCreate
 			response.Success(c, gin.H{
-				"admin":       admin,
+				"user_id":     admin.ID,
+				"uuid":        admin.UUID,
+				"email":       admin.Email,
+				"name":        admin.Name,
+				"role":        admin.Role,
 				"permissions": []string{},
+				"created_at":  admin.CreatedAt,
 				"message":     "Admin created successfully, but permission creation failed. Please assign permissions manually",
 			})
 			return

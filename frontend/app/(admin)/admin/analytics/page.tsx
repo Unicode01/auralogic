@@ -113,6 +113,7 @@ export default function AnalyticsPage() {
     shipped: t.order.status.shipped,
     completed: t.order.status.completed,
     cancelled: t.order.status.cancelled,
+    refunded: t.order.status.refunded,
   }
 
   const tooltipStyle = {

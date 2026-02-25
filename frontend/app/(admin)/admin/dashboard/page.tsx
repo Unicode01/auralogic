@@ -65,6 +65,7 @@ export default function AdminDashboardPage() {
     shipped: t.order.status.shipped,
     completed: t.order.status.completed,
     cancelled: t.order.status.cancelled,
+    refunded: t.order.status.refunded,
   }
 
   return (
@@ -204,6 +205,7 @@ export default function AdminDashboardPage() {
                   shipped: 'bg-purple-500',
                   completed: 'bg-green-500',
                   cancelled: 'bg-gray-500',
+                  refunded: 'bg-red-400',
                 }
                 const total = statsData?.orders?.total || 1
                 const percentage = ((item.count / total) * 100).toFixed(1)
