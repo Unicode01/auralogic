@@ -1982,6 +1982,7 @@ export const enTranslations = {
     cartCleared: 'Cart cleared',
     clearFailed: 'Failed to clear',
     havePromoCode: 'Have a promo code?',
+    tooManyItems: 'Order items cannot exceed 100',
   },
 
   pageTitle: {

@@ -199,7 +199,7 @@ export default function CartPage() {
     }
 
     if (selectedCartItems.length > 100) {
-      toast.error(t.cart.tooManyItems || 'Order items cannot exceed 100')
+      toast.error(t.cart.tooManyItems)
       return
     }
 

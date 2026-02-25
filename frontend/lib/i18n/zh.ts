@@ -1981,6 +1981,7 @@ export const zhTranslations = {
         cartCleared: '购物车已清空',
         clearFailed: '清空失败',
         havePromoCode: '我有优惠码?',
+        tooManyItems: '订单商品不能超过100项',
     },
 
     pageTitle: {
