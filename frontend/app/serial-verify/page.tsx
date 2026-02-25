@@ -227,13 +227,13 @@ function SerialVerifyContent() {
       script.async = true
       ;(window as any).onTurnstileLoad = () => {
         if (captchaContainerRef.current && !widgetRendered.current) {
+          widgetRendered.current = true
           widgetIdRef.current = (window as any).turnstile.render(captchaContainerRef.current, {
             sitekey: captchaCfg?.site_key,
             theme: resolvedTheme === 'dark' ? 'dark' : 'light',
             callback: (token: string) => setCaptchaToken(token),
             'expired-callback': () => setCaptchaToken(''),
           })
-          widgetRendered.current = true
         }
       }
       document.body.appendChild(script)
@@ -244,13 +244,13 @@ function SerialVerifyContent() {
       script.async = true
       ;(window as any).onRecaptchaLoad = () => {
         if (captchaContainerRef.current && !widgetRendered.current) {
+          widgetRendered.current = true
           widgetIdRef.current = (window as any).grecaptcha.render(captchaContainerRef.current, {
             sitekey: captchaCfg?.site_key,
             theme: resolvedTheme === 'dark' ? 'dark' : 'light',
             callback: (token: string) => setCaptchaToken(token),
             'expired-callback': () => setCaptchaToken(''),
           })
-          widgetRendered.current = true
         }
       }
       document.body.appendChild(script)
@@ -260,23 +260,32 @@ function SerialVerifyContent() {
   useEffect(() => {
     if (!needCaptcha || widgetRendered.current || !captchaContainerRef.current) return
     if (captchaCfg?.provider === 'cloudflare' && (window as any).turnstile) {
+      widgetRendered.current = true
       widgetIdRef.current = (window as any).turnstile.render(captchaContainerRef.current, {
         sitekey: captchaCfg?.site_key,
         theme: resolvedTheme === 'dark' ? 'dark' : 'light',
         callback: (token: string) => setCaptchaToken(token),
         'expired-callback': () => setCaptchaToken(''),
       })
-      widgetRendered.current = true
     } else if (captchaCfg?.provider === 'google' && (window as any).grecaptcha?.render) {
+      widgetRendered.current = true
       widgetIdRef.current = (window as any).grecaptcha.render(captchaContainerRef.current, {
         sitekey: captchaCfg?.site_key,
         theme: resolvedTheme === 'dark' ? 'dark' : 'light',
         callback: (token: string) => setCaptchaToken(token),
         'expired-callback': () => setCaptchaToken(''),
       })
-      widgetRendered.current = true
     }
   }, [needCaptcha, captchaCfg])
+
+  // Auto-verify when CF/Google captcha completes
+  useEffect(() => {
+    if (!captchaToken || !needCaptcha || captchaCfg?.provider === 'builtin') return
+    if (serialNumber.trim() && !isLoading) {
+      handleVerify()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [captchaToken])
 
   async function refreshBuiltinCaptcha() {
     try {
@@ -384,6 +393,7 @@ function SerialVerifyContent() {
 
       if (response.ok && result.code === 0) {
         setSerialInfo(result.data)
+        resetCaptcha()
       } else {
         const msg = result?.message || ''
         if (msg === 'Captcha is required') {
@@ -450,7 +460,7 @@ function SerialVerifyContent() {
                 onKeyPress={handleKeyPress}
                 className="text-lg font-mono"
               />
-              <Button onClick={handleVerify} disabled={isLoading} size="lg">
+              <Button onClick={handleVerify} disabled={isLoading || (needCaptcha && !captchaToken && !(captchaCfg?.provider === 'builtin' && builtinCode))} size="lg">
                 {isLoading ? t.verifying : t.verify}
               </Button>
             </div>
@@ -469,11 +479,12 @@ function SerialVerifyContent() {
                         placeholder={t.captchaPlaceholder}
                         value={builtinCode}
                         onChange={(e) => setBuiltinCode(e.target.value)}
+                        maxLength={4}
                       />
                       <img
                         src={builtinCaptcha.image}
                         alt="captcha"
-                        className="h-9 w-28 rounded border cursor-pointer flex-shrink-0"
+                        className="h-9 w-28 rounded border cursor-pointer flex-shrink-0 dark:brightness-90"
                         onClick={() => refreshBuiltinCaptcha()}
                         title={t.captchaRefresh}
                       />

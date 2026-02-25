@@ -85,6 +85,11 @@ export default function SettingsPage() {
   const [phoneSending, setPhoneSending] = useState(false)
   const [phoneBinding, setPhoneBinding] = useState(false)
 
+  // Reset widget when bind sections change (e.g. after email bind, phone section appears)
+  useEffect(() => {
+    widgetRendered.current = false
+  }, [user?.email, user?.phone])
+
   // Load captcha scripts for cloudflare/google
   useEffect(() => {
     if (!needBindCaptcha) return
@@ -145,7 +150,20 @@ export default function SettingsPage() {
         'expired-callback': () => setCaptchaToken(''),
       })
     }
-  }, [needBindCaptcha, captchaConfig, resolvedTheme])
+  }, [needBindCaptcha, captchaConfig, resolvedTheme, user?.email, user?.phone])
+
+  // Auto-send bind code when CF/Google captcha completes
+  useEffect(() => {
+    if (!captchaToken || !needBindCaptcha || captchaConfig?.provider === 'builtin') return
+    const emailBindVisible = !user?.email && smtpEnabled
+    const phoneBindVisible = !user?.phone && smsEnabled
+    if (emailBindVisible && bindEmailAddr && !emailSending && emailCooldown <= 0) {
+      handleSendBindEmailCode()
+    } else if (phoneBindVisible && !emailBindVisible && bindPhoneNum && !phoneSending && phoneCooldown <= 0) {
+      handleSendBindPhoneCode()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [captchaToken])
 
   function getBindCaptchaToken(): string | undefined {
     if (!needBindCaptcha) return undefined
@@ -190,6 +208,7 @@ export default function SettingsPage() {
       await sendBindEmailCode(bindEmailAddr, getBindCaptchaToken())
       toast.success(t.profile.codeSentSuccess)
       setEmailCooldown(60)
+      resetBindCaptcha()
     } catch (e: any) {
       toast.error(e.message || t.profile.bindFailed)
       resetBindCaptcha()
@@ -219,6 +238,7 @@ export default function SettingsPage() {
       await sendBindPhoneCode(bindPhoneNum, undefined, getBindCaptchaToken())
       toast.success(t.profile.codeSentSuccess)
       setPhoneCooldown(60)
+      resetBindCaptcha()
     } catch (e: any) {
       toast.error(e.message || t.profile.bindFailed)
       resetBindCaptcha()
@@ -335,6 +355,7 @@ export default function SettingsPage() {
                         placeholder={t.auth.captchaPlaceholder}
                         value={builtinCode}
                         onChange={(e) => setBuiltinCode(e.target.value)}
+                        maxLength={4}
                         className="h-11"
                       />
                       <img
@@ -342,6 +363,7 @@ export default function SettingsPage() {
                         alt="captcha"
                         className="border border-border rounded-md h-11 shrink-0 cursor-pointer dark:brightness-90"
                         onClick={() => { refetchCaptcha(); setBuiltinCode('') }}
+                        title={t.auth.captchaRefresh}
                       />
                     </div>
                   </>
@@ -349,7 +371,7 @@ export default function SettingsPage() {
               </div>
             )}
             <div>
-              <label className="text-sm font-medium">{t.profile.verificationCode}</label>
+              <label className="text-sm font-medium">{t.auth.emailCode}</label>
               <div className="flex gap-2 mt-2">
                 <Input
                   placeholder={t.profile.codePlaceholder}
@@ -360,7 +382,7 @@ export default function SettingsPage() {
                 <Button
                   type="button"
                   variant="outline"
-                  disabled={!bindEmailAddr || emailCooldown > 0 || emailSending}
+                  disabled={!bindEmailAddr || emailCooldown > 0 || emailSending || (needBindCaptcha && !captchaToken && !(captchaConfig?.provider === 'builtin' && builtinCode))}
                   onClick={handleSendBindEmailCode}
                   className="shrink-0"
                 >
@@ -408,6 +430,7 @@ export default function SettingsPage() {
                         placeholder={t.auth.captchaPlaceholder}
                         value={builtinCode}
                         onChange={(e) => setBuiltinCode(e.target.value)}
+                        maxLength={4}
                         className="h-11"
                       />
                       <img
@@ -415,6 +438,7 @@ export default function SettingsPage() {
                         alt="captcha"
                         className="border border-border rounded-md h-11 shrink-0 cursor-pointer dark:brightness-90"
                         onClick={() => { refetchCaptcha(); setBuiltinCode('') }}
+                        title={t.auth.captchaRefresh}
                       />
                     </div>
                   </>
@@ -422,7 +446,7 @@ export default function SettingsPage() {
               </div>
             )}
             <div>
-              <label className="text-sm font-medium">{t.profile.verificationCode}</label>
+              <label className="text-sm font-medium">{t.auth.phoneCode}</label>
               <div className="flex gap-2 mt-2">
                 <Input
                   placeholder={t.profile.codePlaceholder}
@@ -433,7 +457,7 @@ export default function SettingsPage() {
                 <Button
                   type="button"
                   variant="outline"
-                  disabled={!bindPhoneNum || phoneCooldown > 0 || phoneSending}
+                  disabled={!bindPhoneNum || phoneCooldown > 0 || phoneSending || (needBindCaptcha && !captchaToken && !(captchaConfig?.provider === 'builtin' && builtinCode))}
                   onClick={handleSendBindPhoneCode}
                   className="shrink-0"
                 >
