@@ -1,4 +1,11 @@
 /** @type {import('next').NextConfig} */
+const { execSync } = require('child_process')
+
+let gitCommit = 'dev'
+try {
+    gitCommit = execSync('git rev-parse --short HEAD').toString().trim()
+} catch (e) {}
+
 const nextConfig = {
     // 输出模式（standalone用于Docker部署）
     output: 'standalone',
@@ -19,7 +26,7 @@ const nextConfig = {
 
     // 环境变量
     env: {
-        NEXT_PUBLIC_APP_VERSION: '1.0.0',
+        NEXT_PUBLIC_GIT_COMMIT: process.env.NEXT_PUBLIC_GIT_COMMIT || gitCommit,
         NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL || 'https://auralogic.un1c0de.com',
     },
 

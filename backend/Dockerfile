@@ -15,7 +15,8 @@ COPY . .
 
 # 编译
 ENV CGO_ENABLED=1
-RUN GOOS=linux go build -o /app/bin/api cmd/api/main.go
+ARG BUILD_VERSION=dev
+RUN GOOS=linux go build -ldflags "-X main.GitCommit=$BUILD_VERSION" -o /app/bin/api cmd/api/main.go
 
 # 运行阶段
 FROM alpine:latest

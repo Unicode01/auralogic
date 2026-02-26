@@ -728,6 +728,8 @@ export const zhTranslations = {
         inactive: '禁用',
 
         // 仪表板
+        frontendVersion: '前端',
+        backendVersion: '后端',
         lastUpdated: '最后更新：',
         totalOrders: '总订单',
         pendingShipment: '待发货',

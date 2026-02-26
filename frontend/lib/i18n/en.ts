@@ -728,6 +728,8 @@ export const enTranslations = {
         inactive: 'Inactive',
 
         // Dashboard
+        frontendVersion: 'Frontend',
+        backendVersion: 'Backend',
         lastUpdated: 'Last updated: ',
         totalOrders: 'Total Orders',
         pendingShipment: 'Pending',

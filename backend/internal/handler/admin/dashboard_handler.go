@@ -11,12 +11,13 @@ import (
 )
 
 type DashboardHandler struct {
-	db  *gorm.DB
-	cfg *config.Config
+	db        *gorm.DB
+	cfg       *config.Config
+	gitCommit string
 }
 
-func NewDashboardHandler(db *gorm.DB, cfg *config.Config) *DashboardHandler {
-	return &DashboardHandler{db: db, cfg: cfg}
+func NewDashboardHandler(db *gorm.DB, cfg *config.Config, gitCommit string) *DashboardHandler {
+	return &DashboardHandler{db: db, cfg: cfg, gitCommit: gitCommit}
 }
 
 // GetStatistics get仪表盘统计数据
@@ -27,6 +28,9 @@ func (h *DashboardHandler) GetStatistics(c *gin.Context) {
 	lastMonthStart := monthStart.AddDate(0, -1, 0)
 
 	var stats struct {
+		// 版本号（Git Commit）
+		GitCommit string `json:"git_commit"`
+
 		// Order统计
 		Orders struct {
 			Total          int64   `json:"total"`
@@ -80,6 +84,8 @@ func (h *DashboardHandler) GetStatistics(c *gin.Context) {
 			Count  int64  `json:"count"`
 		} `json:"order_status_distribution"`
 	}
+
+	stats.GitCommit = h.gitCommit
 
 	// Order统计
 	h.db.Model(&models.Order{}).Count(&stats.Orders.Total)

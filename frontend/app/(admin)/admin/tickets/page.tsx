@@ -1,7 +1,7 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
+import { useQuery, useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   getAdminTickets,
   getAdminTicket,
@@ -50,16 +50,74 @@ export default function AdminTicketsPage() {
   const [message, setMessage] = useState('')
   const [viewingOrderId, setViewingOrderId] = useState<number | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const ticketListRef = useRef<HTMLDivElement>(null)
+  const sentinelRef = useRef<HTMLDivElement>(null)
   const queryClient = useQueryClient()
   const toast = useToast()
   const { locale } = useLocale()
   const t = getTranslations(locale)
   usePageTitle(t.pageTitle.adminTickets)
 
-  // 获取工单列表
-  const { data: ticketsData, isLoading: ticketsLoading } = useQuery({
-    queryKey: ['adminTickets', status, search, assignedTo],
-    queryFn: () => getAdminTickets({ status: status || undefined, search: search || undefined, assigned_to: assignedTo || undefined }),
+  // 获取工单列表 - 无状态筛选时: 自动加载所有非关闭工单 + 分页加载关闭工单
+  const {
+    data: nonClosedInfiniteData,
+    fetchNextPage: fetchMoreNonClosed,
+    hasNextPage: hasMoreNonClosed,
+    isFetchingNextPage: loadingMoreNonClosed,
+    isLoading: nonClosedInitialLoading,
+  } = useInfiniteQuery({
+    queryKey: ['adminTickets', 'nonClosed', search, assignedTo],
+    queryFn: ({ pageParam }) => getAdminTickets({ exclude_status: 'closed', page: pageParam, limit: 100, search: search || undefined, assigned_to: assignedTo || undefined }),
+    getNextPageParam: (lastPage: any) => {
+      const pagination = lastPage?.data?.pagination
+      return pagination?.has_next ? pagination.page + 1 : undefined
+    },
+    initialPageParam: 1,
+    enabled: !status,
+  })
+
+  // 自动加载所有非关闭工单页
+  useEffect(() => {
+    if (!status && hasMoreNonClosed && !loadingMoreNonClosed) {
+      fetchMoreNonClosed()
+    }
+  }, [status, hasMoreNonClosed, loadingMoreNonClosed, fetchMoreNonClosed])
+
+  const nonClosedFullyLoaded = !nonClosedInitialLoading && !loadingMoreNonClosed && hasMoreNonClosed === false
+
+  const {
+    data: closedInfiniteData,
+    fetchNextPage: fetchMoreClosed,
+    hasNextPage: hasMoreClosed,
+    isFetchingNextPage: loadingMoreClosed,
+    isLoading: closedInitialLoading,
+  } = useInfiniteQuery({
+    queryKey: ['adminTickets', 'closed', search, assignedTo],
+    queryFn: ({ pageParam }) => getAdminTickets({ status: 'closed', page: pageParam, limit: 20, search: search || undefined, assigned_to: assignedTo || undefined }),
+    getNextPageParam: (lastPage: any) => {
+      const pagination = lastPage?.data?.pagination
+      return pagination?.has_next ? pagination.page + 1 : undefined
+    },
+    initialPageParam: 1,
+    enabled: !status && nonClosedFullyLoaded,
+  })
+
+  // 有状态筛选时: 分页加载该状态工单
+  const {
+    data: filteredInfiniteData,
+    fetchNextPage: fetchMoreFiltered,
+    hasNextPage: hasMoreFiltered,
+    isFetchingNextPage: loadingMoreFiltered,
+    isLoading: filteredInitialLoading,
+  } = useInfiniteQuery({
+    queryKey: ['adminTickets', 'filtered', status, search, assignedTo],
+    queryFn: ({ pageParam }) => getAdminTickets({ status: status || undefined, page: pageParam, limit: 20, search: search || undefined, assigned_to: assignedTo || undefined }),
+    getNextPageParam: (lastPage: any) => {
+      const pagination = lastPage?.data?.pagination
+      return pagination?.has_next ? pagination.page + 1 : undefined
+    },
+    initialPageParam: 1,
+    enabled: !!status,
   })
 
   // 获取统计
@@ -133,7 +191,25 @@ export default function AdminTicketsPage() {
     },
   })
 
-  const tickets: Ticket[] = ticketsData?.data?.items || []
+  const tickets: Ticket[] = useMemo(() => {
+    if (status) {
+      return filteredInfiniteData?.pages.flatMap((p: any) => p?.data?.items || []) || []
+    }
+    const nonClosed = nonClosedInfiniteData?.pages.flatMap((p: any) => p?.data?.items || []) || []
+    const closed = closedInfiniteData?.pages.flatMap((p: any) => p?.data?.items || []) || []
+    return [...nonClosed, ...closed]
+  }, [status, nonClosedInfiniteData, closedInfiniteData, filteredInfiniteData])
+
+  const ticketsLoading = status ? filteredInitialLoading : nonClosedInitialLoading
+  const hasMore = status ? (hasMoreFiltered ?? false) : (hasMoreClosed ?? false)
+  const loadingMore = status ? loadingMoreFiltered : (loadingMoreNonClosed || loadingMoreClosed)
+  const loadMore = useCallback(() => {
+    if (status) {
+      fetchMoreFiltered()
+    } else {
+      fetchMoreClosed()
+    }
+  }, [status, fetchMoreFiltered, fetchMoreClosed])
   const stats = statsData?.data
   const selectedTicket = ticketData?.data
   const messages: TicketMessage[] = messagesData?.data || []
@@ -157,6 +233,25 @@ export default function AdminTicketsPage() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages.length])
+
+  // 工单列表无限滚动
+  useEffect(() => {
+    const sentinel = sentinelRef.current
+    const container = ticketListRef.current
+    if (!sentinel || !container) return
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && hasMore && !loadingMore) {
+          loadMore()
+        }
+      },
+      { root: container, threshold: 0.1 }
+    )
+
+    observer.observe(sentinel)
+    return () => observer.disconnect()
+  }, [hasMore, loadingMore, loadMore])
 
   const handleSend = () => {
     if (!message.trim()) return
@@ -270,12 +365,13 @@ export default function AdminTicketsPage() {
           </div>
 
           {/* 工单列表 */}
-          <div className="flex-1 overflow-y-auto scrollbar-hide">
+          <div ref={ticketListRef} className="flex-1 overflow-y-auto scrollbar-hide">
             {ticketsLoading ? (
               <div className="text-center py-8 text-muted-foreground">{t.ticket.loading}</div>
             ) : tickets.length === 0 ? (
               <div className="text-center py-8 text-muted-foreground">{t.ticket.noTickets}</div>
             ) : (
+              <>
               <div className="divide-y">
                 {tickets.map((ticket) => (
                   <div
@@ -322,6 +418,10 @@ export default function AdminTicketsPage() {
                   </div>
                 ))}
               </div>
+              <div ref={sentinelRef} className="py-1 text-center">
+                {loadingMore && <span className="text-xs text-muted-foreground">{t.ticket.loading}</span>}
+              </div>
+              </>
             )}
           </div>
         </div>
