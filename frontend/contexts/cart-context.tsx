@@ -2,10 +2,10 @@
 
 import { createContext, useContext, useState, useCallback, useEffect, ReactNode } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { getCart, getCartCount, addToCart, updateCartItemQuantity, removeFromCart, clearCart, CartItem } from '@/lib/api'
+import { getCart, getCartCount, addToCart, updateCartItemQuantity, removeFromCart, clearCart, CartItem, getPublicConfig } from '@/lib/api'
 import { useAuth } from '@/hooks/use-auth'
 import { useLocale } from '@/hooks/use-locale'
-import { getTranslations } from '@/lib/i18n'
+import { getTranslations, translateBizError } from '@/lib/i18n'
 import toast from 'react-hot-toast'
 
 interface CartContextType {
@@ -40,6 +40,13 @@ export function CartProvider({ children }: { children: ReactNode }) {
 
   const items = cartData?.data?.items || []
   const totalPrice = cartData?.data?.total_price || 0
+
+  const { data: publicConfig } = useQuery({
+    queryKey: ['publicConfig'],
+    queryFn: getPublicConfig,
+    staleTime: 1000 * 60 * 5,
+  })
+  const maxItemQuantity = publicConfig?.data?.max_item_quantity || 9999
   const totalQuantity = cartData?.data?.total_quantity || 0
   const itemCount = cartData?.data?.item_count || 0
 
@@ -51,8 +58,12 @@ export function CartProvider({ children }: { children: ReactNode }) {
       queryClient.invalidateQueries({ queryKey: ['cart'] })
       toast.success(t.cart.addedToCart)
     },
-    onError: (error: Error) => {
-      toast.error(error.message || t.cart.addFailed)
+    onError: (error: any) => {
+      if (error.code === 40010 && error.data?.error_key) {
+        toast.error(translateBizError(t, error.data.error_key, error.data.params, error.message))
+      } else {
+        toast.error(error.message || t.cart.addFailed)
+      }
     },
   })
 
@@ -63,8 +74,12 @@ export function CartProvider({ children }: { children: ReactNode }) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['cart'] })
     },
-    onError: (error: Error) => {
-      toast.error(error.message || t.cart.updateFailed)
+    onError: (error: any) => {
+      if (error.code === 40010 && error.data?.error_key) {
+        toast.error(translateBizError(t, error.data.error_key, error.data.params, error.message))
+      } else {
+        toast.error(error.message || t.cart.updateFailed)
+      }
     },
   })
 
@@ -75,8 +90,12 @@ export function CartProvider({ children }: { children: ReactNode }) {
       queryClient.invalidateQueries({ queryKey: ['cart'] })
       toast.success(t.cart.removedFromCart)
     },
-    onError: (error: Error) => {
-      toast.error(error.message || t.cart.removeFailed)
+    onError: (error: any) => {
+      if (error.code === 40010 && error.data?.error_key) {
+        toast.error(translateBizError(t, error.data.error_key, error.data.params, error.message))
+      } else {
+        toast.error(error.message || t.cart.removeFailed)
+      }
     },
   })
 
@@ -87,20 +106,20 @@ export function CartProvider({ children }: { children: ReactNode }) {
       queryClient.invalidateQueries({ queryKey: ['cart'] })
       toast.success(t.cart.cartCleared)
     },
-    onError: (error: Error) => {
+    onError: (error: any) => {
       toast.error(error.message || t.cart.clearFailed)
     },
   })
 
   const addItem = useCallback(async (productId: number, quantity: number, attributes?: Record<string, string>) => {
-    if (quantity < 1 || quantity > 9999) return
+    if (quantity < 1 || quantity > maxItemQuantity) return
     await addItemMutation.mutateAsync({ product_id: productId, quantity, attributes })
-  }, [addItemMutation])
+  }, [addItemMutation, maxItemQuantity])
 
   const updateQuantityHandler = useCallback(async (itemId: number, quantity: number) => {
-    if (quantity < 1 || quantity > 9999) return
+    if (quantity < 1 || quantity > maxItemQuantity) return
     await updateQuantityMutation.mutateAsync({ itemId, quantity })
-  }, [updateQuantityMutation])
+  }, [updateQuantityMutation, maxItemQuantity])
 
   const removeItem = useCallback(async (itemId: number) => {
     await removeItemMutation.mutateAsync(itemId)

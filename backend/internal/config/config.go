@@ -206,6 +206,8 @@ type OrderConfig struct {
 	NoPrefix             string             `json:"no_prefix"`
 	AutoCancelHours      int                `json:"auto_cancel_hours"`
 	Currency             string             `json:"currency"` // 货币单位: CNY, USD, EUR, JPY, etc.
+	MaxOrderItems        int                `json:"max_order_items"`    // 单个订单最大商品项数，0表示使用默认值100
+	MaxItemQuantity      int                `json:"max_item_quantity"`  // 单个商品项最大数量，0表示使用默认值9999
 	StockDisplay         StockDisplayConfig `json:"stock_display"`
 	VirtualDeliveryOrder string             `json:"virtual_delivery_order"` // 虚拟库存发货顺序: random(随机), newest(先发新库存), oldest(先发老库存)
 }
@@ -471,6 +473,12 @@ func (c *Config) Validate() error {
 	}
 	if c.Order.VirtualDeliveryOrder == "" {
 		c.Order.VirtualDeliveryOrder = "random"
+	}
+	if c.Order.MaxOrderItems == 0 {
+		c.Order.MaxOrderItems = 100
+	}
+	if c.Order.MaxItemQuantity == 0 {
+		c.Order.MaxItemQuantity = 9999
 	}
 	if c.MagicLink.ExpireMinutes == 0 {
 		c.MagicLink.ExpireMinutes = 15

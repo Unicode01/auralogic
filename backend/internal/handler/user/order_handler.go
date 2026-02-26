@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"auralogic/internal/middleware"
 	"auralogic/internal/models"
+	"auralogic/internal/pkg/bizerr"
 	"auralogic/internal/pkg/response"
 	"auralogic/internal/pkg/validator"
 	"auralogic/internal/service"
@@ -68,8 +69,9 @@ func (h *OrderHandler) CreateOrder(c *gin.Context) {
 	// Create order draft (internal user)
 	order, err := h.orderService.CreateUserOrder(userID, req.Items, req.Remark, req.PromoCode)
 	if err != nil {
-		if errors.Is(err, service.ErrProductNotAvailable) {
-			response.BadRequest(c, err.Error())
+		var bizErr *bizerr.Error
+		if errors.As(err, &bizErr) {
+			response.BizError(c, bizErr.Message, bizErr.Key, bizErr.Params)
 			return
 		}
 		response.InternalError(c, "Failed to create order")

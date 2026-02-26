@@ -50,6 +50,7 @@ const (
 	CodeOrderDuplicate     = 40902
 	CodeTooManyRequests    = 42901
 	CodeCooldown          = 42902
+	CodeBusinessError      = 40010 // 业务逻辑错误（限购、库存不足等）
 	CodeInternalError      = 50001
 	CodeDatabaseError      = 50002
 	CodeCacheError         = 50003
@@ -151,6 +152,18 @@ func InternalServerError(c *gin.Context, userMessage string, err error) {
 		userMessage = "Internal server error"
 	}
 	Error(c, http.StatusInternalServerError, CodeInternalError, userMessage)
+}
+
+// BizError 业务逻辑错误响应（限购、库存不足等），携带 i18n key 和参数
+func BizError(c *gin.Context, message string, key string, params map[string]interface{}) {
+	c.JSON(http.StatusBadRequest, Response{
+		Code:    CodeBusinessError,
+		Message: message,
+		Data: gin.H{
+			"error_key": key,
+			"params":    params,
+		},
+	})
 }
 
 // BadRequest Error请求

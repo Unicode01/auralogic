@@ -7,12 +7,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"auralogic/internal/config"
 	"auralogic/internal/models"
+	"auralogic/internal/pkg/bizerr"
 	"auralogic/internal/pkg/password"
 	"auralogic/internal/pkg/utils"
 	"auralogic/internal/repository"
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
@@ -30,35 +31,37 @@ type OrderService struct {
 }
 
 const (
-	maxOrderItems    = 100  // 单个订单最大商品项数
-	maxItemQuantity  = 9999 // 单个商品项最大数量
-	maxAttributeKeys = 20   // 单个商品项最大属性数
+	maxAttributeKeys = 20 // 单个商品项最大属性数
 )
 
 var (
 	// Public, user-facing errors (safe to show to clients).
-	ErrProductNotAvailable = errors.New("Product is not available")
+	ErrProductNotAvailable = bizerr.New("order.productNotAvailable", "Product is not available")
 )
 
 // validateOrderItems 校验订单商品项的基本参数合理性
-func validateOrderItems(items []models.OrderItem) error {
+func (s *OrderService) validateOrderItems(items []models.OrderItem) error {
+	maxItems := s.cfg.Order.MaxOrderItems
+	maxQty := s.cfg.Order.MaxItemQuantity
 	if len(items) == 0 {
-		return errors.New("Order items cannot be empty")
+		return bizerr.New("order.itemsEmpty", "Order items cannot be empty")
 	}
-	if len(items) > maxOrderItems {
-		return fmt.Errorf("Order items cannot exceed %d", maxOrderItems)
+	if len(items) > maxItems {
+		return bizerr.Newf("order.tooManyItems", "Order items cannot exceed %d", maxItems).
+			WithParams(map[string]interface{}{"max": maxItems})
 	}
 	for i := range items {
 		item := &items[i]
 		item.SKU = strings.TrimSpace(item.SKU)
 		if item.SKU == "" {
-			return errors.New("Product SKU cannot be empty")
+			return bizerr.New("order.skuEmpty", "Product SKU cannot be empty")
 		}
 		if item.Quantity <= 0 {
-			return errors.New("Quantity must be greater than 0")
+			return bizerr.New("order.quantityInvalid", "Quantity must be greater than 0")
 		}
-		if item.Quantity > maxItemQuantity {
-			return fmt.Errorf("Quantity cannot exceed %d", maxItemQuantity)
+		if item.Quantity > maxQty {
+			return bizerr.Newf("order.quantityExceeded", "Quantity cannot exceed %d", maxQty).
+				WithParams(map[string]interface{}{"max": maxQty})
 		}
 		if len(item.Attributes) > maxAttributeKeys {
 			return fmt.Errorf("Product attributes cannot exceed %d keys", maxAttributeKeys)
@@ -103,7 +106,7 @@ func (s *OrderService) CreateDraft(items []models.OrderItem, externalUserID, ext
 	formExpiresAt := models.NowFunc().Add(time.Duration(s.cfg.Form.ExpireHours) * time.Hour)
 
 	// 校验订单商品项
-	if err := validateOrderItems(items); err != nil {
+	if err := s.validateOrderItems(items); err != nil {
 		return nil, err
 	}
 
@@ -112,7 +115,8 @@ func (s *OrderService) CreateDraft(items []models.OrderItem, externalUserID, ext
 	for _, item := range items {
 		product, err := s.productRepo.FindBySKU(item.SKU)
 		if err != nil {
-			return nil, fmt.Errorf("Product %s does not exist", item.SKU)
+			return nil, bizerr.Newf("order.productNotFound", "Product %s does not exist", item.SKU).
+				WithParams(map[string]interface{}{"sku": item.SKU})
 		}
 		if product.Status != models.ProductStatusActive {
 			return nil, ErrProductNotAvailable
@@ -187,10 +191,11 @@ type AdminOrderItem struct {
 // CreateAdminOrder 管理员直接创建订单
 func (s *OrderService) CreateAdminOrder(req AdminOrderRequest) (*models.Order, error) {
 	if len(req.Items) == 0 {
-		return nil, errors.New("Order items cannot be empty")
+		return nil, bizerr.New("order.itemsEmpty", "Order items cannot be empty")
 	}
-	if len(req.Items) > maxOrderItems {
-		return nil, fmt.Errorf("Order items cannot exceed %d", maxOrderItems)
+	if len(req.Items) > s.cfg.Order.MaxOrderItems {
+		return nil, bizerr.Newf("order.tooManyItems", "Order items cannot exceed %d", s.cfg.Order.MaxOrderItems).
+			WithParams(map[string]interface{}{"max": s.cfg.Order.MaxOrderItems})
 	}
 
 	// 验证管理员覆盖金额
@@ -217,13 +222,14 @@ func (s *OrderService) CreateAdminOrder(req AdminOrderRequest) (*models.Order, e
 	for idx, item := range req.Items {
 		sku := strings.TrimSpace(item.SKU)
 		if sku == "" {
-			return nil, errors.New("Product SKU cannot be empty")
+			return nil, bizerr.New("order.skuEmpty", "Product SKU cannot be empty")
 		}
 		if item.Quantity <= 0 {
-			return nil, errors.New("Quantity must be greater than 0")
+			return nil, bizerr.New("order.quantityInvalid", "Quantity must be greater than 0")
 		}
-		if item.Quantity > maxItemQuantity {
-			return nil, fmt.Errorf("Quantity cannot exceed %d", maxItemQuantity)
+		if item.Quantity > s.cfg.Order.MaxItemQuantity {
+			return nil, bizerr.Newf("order.quantityExceeded", "Quantity cannot exceed %d", s.cfg.Order.MaxItemQuantity).
+				WithParams(map[string]interface{}{"max": s.cfg.Order.MaxItemQuantity})
 		}
 
 		name := item.Name
@@ -493,13 +499,18 @@ func (s *OrderService) CreateUserOrder(userID uint, items []models.OrderItem, re
 	}
 
 	// 校验订单商品项
-	if err := validateOrderItems(items); err != nil {
+	if err := s.validateOrderItems(items); err != nil {
 		return nil, err
 	}
 
 	// 盲盒属性跟踪：记录每个订单项中盲盒随机分配的属性名
 	// key: 订单项索引, value: 盲盒属性名列表
 	blindBoxAttrNames := make(map[int][]string)
+
+	// 购买限制：同一SKU可能以多条订单项出现（不同属性/规格）
+	// 需要累计本次订单中该SKU的总数量，避免“拆成多行”绕过限购。
+	purchasedQtyBySKU := make(map[string]int)
+	requestedQtyBySKU := make(map[string]int)
 
 	// 验证Product并处理Inventory（使用新的Inventory绑定机制）
 	for i := range items {
@@ -508,7 +519,8 @@ func (s *OrderService) CreateUserOrder(userID uint, items []models.OrderItem, re
 		// 根据 SKU 查找Product
 		product, err := s.productRepo.FindBySKU(item.SKU)
 		if err != nil {
-			return nil, fmt.Errorf("Product %s does not exist", item.SKU)
+			return nil, bizerr.Newf("order.productNotFound", "Product %s does not exist", item.SKU).
+				WithParams(map[string]interface{}{"sku": item.SKU})
 		}
 		if product.Status != models.ProductStatusActive {
 			return nil, ErrProductNotAvailable
@@ -530,20 +542,31 @@ func (s *OrderService) CreateUserOrder(userID uint, items []models.OrderItem, re
 
 		// 检查购买限制
 		if product.MaxPurchaseLimit > 0 {
-			// QueryUser已购买的数量
-			purchasedQty, err := s.OrderRepo.GetUserPurchaseQuantityBySKU(userID, item.SKU)
-			if err != nil {
-				return nil, fmt.Errorf("Failed to query purchase records: %v", err)
+			requestedQtyBySKU[item.SKU] += item.Quantity
+
+			// QueryUser已购买的数量（缓存同一SKU避免重复查询）
+			purchasedQty, ok := purchasedQtyBySKU[item.SKU]
+			if !ok {
+				qty, err := s.OrderRepo.GetUserPurchaseQuantityBySKU(userID, item.SKU)
+				if err != nil {
+					return nil, fmt.Errorf("Failed to query purchase records: %v", err)
+				}
+				purchasedQty = qty
+				purchasedQtyBySKU[item.SKU] = qty
 			}
 
 			// 检查是否超过限制
-			if purchasedQty+item.Quantity > product.MaxPurchaseLimit {
+			if purchasedQty+requestedQtyBySKU[item.SKU] > product.MaxPurchaseLimit {
 				remaining := product.MaxPurchaseLimit - purchasedQty
 				if remaining <= 0 {
-					return nil, fmt.Errorf("Product %s has reached purchase limit (maximum %d per account)", product.Name, product.MaxPurchaseLimit)
+					return nil, bizerr.Newf("order.purchaseLimitReached",
+						"Product %s has reached purchase limit (maximum %d per account)", product.Name, product.MaxPurchaseLimit).
+						WithParams(map[string]interface{}{"product": product.Name, "limit": product.MaxPurchaseLimit})
 				}
-				return nil, fmt.Errorf("Product %s purchase quantity exceeds limit, you can still purchase %d (maximum %d per account)",
-					product.Name, remaining, product.MaxPurchaseLimit)
+				return nil, bizerr.Newf("order.purchaseLimitExceeded",
+					"Product %s purchase quantity exceeds limit, you can still purchase %d (maximum %d per account)",
+					product.Name, remaining, product.MaxPurchaseLimit).
+					WithParams(map[string]interface{}{"product": product.Name, "remaining": remaining, "limit": product.MaxPurchaseLimit})
 			}
 		}
 
@@ -615,7 +638,9 @@ func (s *OrderService) CreateUserOrder(userID uint, items []models.OrderItem, re
 						return nil, fmt.Errorf("Failed to check virtual product stock: %v", err)
 					}
 					if availableCount < int64(item.Quantity) {
-						return nil, fmt.Errorf("Virtual product %s stock insufficient, only %d available", product.Name, availableCount)
+						return nil, bizerr.Newf("order.stockInsufficient",
+							"Virtual product %s stock insufficient, only %d available", product.Name, availableCount).
+							WithParams(map[string]interface{}{"product": product.Name, "available": availableCount})
 					}
 				}
 			}

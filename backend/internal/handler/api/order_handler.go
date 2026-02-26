@@ -9,6 +9,7 @@ import (
 	"auralogic/internal/config"
 	"auralogic/internal/database"
 	"auralogic/internal/models"
+	"auralogic/internal/pkg/bizerr"
 	"auralogic/internal/pkg/logger"
 	"auralogic/internal/pkg/response"
 	"auralogic/internal/pkg/validator"
@@ -94,6 +95,12 @@ func (h *OrderHandler) CreateDraft(c *gin.Context) {
 		req.Remark,
 	)
 	if err != nil {
+		// bizerr: structured business errors with i18n key
+		var bizErr *bizerr.Error
+		if errors.As(err, &bizErr) {
+			response.BizError(c, bizErr.Message, bizErr.Key, bizErr.Params)
+			return
+		}
 		// Validation / expected failures should be 400, not 500.
 		if errors.Is(err, service.ErrProductNotAvailable) ||
 			strings.Contains(err.Error(), "does not exist") ||

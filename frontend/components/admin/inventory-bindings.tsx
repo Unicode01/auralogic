@@ -54,6 +54,8 @@ import {
 import { Plus, Trash2, Link as LinkIcon, Package, Sparkles } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { useToast } from '@/hooks/use-toast'
+import { useLocale } from '@/hooks/use-locale'
+import { getTranslations, translateBizError } from '@/lib/i18n'
 
 interface InventoryBindingsProps {
   productId: number
@@ -61,6 +63,8 @@ interface InventoryBindingsProps {
 }
 
 export function InventoryBindings({ productId, currentMode }: InventoryBindingsProps) {
+  const { locale } = useLocale()
+  const t = getTranslations(locale)
   const queryClient = useQueryClient()
 
   // 所有状态声明
@@ -98,11 +102,15 @@ export function InventoryBindings({ productId, currentMode }: InventoryBindingsP
   const updateModeMutation = useMutation({
     mutationFn: (mode: 'fixed' | 'random') => updateProductInventoryMode(productId, mode),
     onSuccess: () => {
-      toast.success('库存模式已更新')
+      toast.success(t.admin.updateSuccess)
       queryClient.invalidateQueries({ queryKey: ['adminProduct', productId] })
     },
-    onError: (error: Error) => {
-      toast.error(error.message || '更新失败')
+    onError: (error: any) => {
+      if (error.code === 40010 && error.data?.error_key) {
+        toast.error(translateBizError(t, error.data.error_key, error.data.params, error.message))
+      } else {
+        toast.error(error.message || t.admin.updateFailed)
+      }
     },
   })
 
@@ -111,13 +119,17 @@ export function InventoryBindings({ productId, currentMode }: InventoryBindingsP
     mutationFn: ({ productId, data }: { productId: number; data: any }) =>
       createProductBinding(productId, data),
     onSuccess: () => {
-      toast.success('库存绑定已添加')
+      toast.success(t.admin.bindingSuccess)
       queryClient.invalidateQueries({ queryKey: ['productBindings', productId] })
       setShowAddDialog(false)
       resetAddForm()
     },
-    onError: (error: Error) => {
-      toast.error(error.message || '添加失败')
+    onError: (error: any) => {
+      if (error.code === 40010 && error.data?.error_key) {
+        toast.error(translateBizError(t, error.data.error_key, error.data.params, error.message))
+      } else {
+        toast.error(error.message || t.admin.bindingFailed)
+      }
     },
   })
 
@@ -126,12 +138,16 @@ export function InventoryBindings({ productId, currentMode }: InventoryBindingsP
     mutationFn: ({ bindingId }: { bindingId: number }) =>
       deleteProductBinding(productId, bindingId),
     onSuccess: () => {
-      toast.success('绑定已删除')
+      toast.success(t.admin.unbindSuccess)
       queryClient.invalidateQueries({ queryKey: ['productBindings', productId] })
       setDeleteBindingId(null)
     },
-    onError: (error: Error) => {
-      toast.error(error.message || '删除失败')
+    onError: (error: any) => {
+      if (error.code === 40010 && error.data?.error_key) {
+        toast.error(translateBizError(t, error.data.error_key, error.data.params, error.message))
+      } else {
+        toast.error(error.message || t.admin.deleteFailed)
+      }
     },
   })
 
@@ -145,11 +161,15 @@ export function InventoryBindings({ productId, currentMode }: InventoryBindingsP
       data: { is_random: boolean; priority: number; notes?: string }
     }) => updateProductBinding(productId, bindingId, data),
     onSuccess: () => {
-      toast.success('绑定已更新')
+      toast.success(t.admin.updateSuccess)
       queryClient.invalidateQueries({ queryKey: ['productBindings', productId] })
     },
-    onError: (error: Error) => {
-      toast.error(error.message || '更新失败')
+    onError: (error: any) => {
+      if (error.code === 40010 && error.data?.error_key) {
+        toast.error(translateBizError(t, error.data.error_key, error.data.params, error.message))
+      } else {
+        toast.error(error.message || t.admin.updateFailed)
+      }
     },
   })
 
@@ -162,7 +182,7 @@ export function InventoryBindings({ productId, currentMode }: InventoryBindingsP
 
   const handleAddBinding = () => {
     if (!selectedInventory) {
-      toast.error('请选择库存配置')
+      toast.error(t.admin.selectInventory)
       return
     }
 

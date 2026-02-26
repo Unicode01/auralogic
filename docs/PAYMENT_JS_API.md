@@ -358,6 +358,101 @@ const obj = AuraLogic.utils.jsonDecode('{"name":"test"}');
 // { name: "test" }
 ```
 
+#### utils.qrcode(text, options?)
+
+生成 QR 码，返回 PNG 格式的 Data URI（`data:image/png;base64,...`），可直接用于 `<img>` 标签的 `src` 属性。
+
+**参数：**
+- `text` - 要编码的文本内容（如钱包地址、URL 等）
+- `options` - 可选，支持以下两种形式：
+  - **数字** — 直接指定图片尺寸（像素），等价于 `{ size: n }`
+  - **对象** — 完整配置选项：
+
+| 属性 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `size` | number | 256 | 图片尺寸（像素），最大 1024 |
+| `level` | string | `"M"` | 纠错等级：`"L"`(7%), `"M"`(15%), `"Q"`(25%), `"H"`(30%) |
+| `fg` | string | `"#000000"` | 前景色（码点颜色），支持 `#RGB`, `#RRGGBB`, `#RRGGBBAA` |
+| `bg` | string | `"#ffffff"` | 背景色，格式同上 |
+| `disableBorder` | boolean | `false` | 是否移除二维码四周的静默区（白边） |
+
+**返回值：** Data URI 字符串，失败或 text 为空时返回空字符串。
+
+**纠错等级说明：**
+- `L` (Low) — 约 7% 纠错能力，二维码最小
+- `M` (Medium) — 约 15% 纠错能力，默认值，推荐大多数场景
+- `Q` (Quartile) — 约 25% 纠错能力，适合可能部分遮挡的场景
+- `H` (High) — 约 30% 纠错能力，最强纠错，二维码最大，适合添加 logo 覆盖
+
+```javascript
+// 基本用法 — 默认配置 (256px, Medium)
+var qr = AuraLogic.utils.qrcode('TRc1234567890abcdef');
+
+// 向后兼容 — 直接传尺寸
+var qr = AuraLogic.utils.qrcode('TRc1234567890abcdef', 200);
+
+// 自定义尺寸和纠错等级
+var qr = AuraLogic.utils.qrcode('TRc1234567890abcdef', {
+    size: 300,
+    level: 'H'
+});
+
+// 自定义颜色 — 品牌色二维码
+var qr = AuraLogic.utils.qrcode('https://example.com', {
+    size: 256,
+    fg: '#1a56db',    // 蓝色码点
+    bg: '#f0f7ff'     // 浅蓝背景
+});
+
+// 暗色主题友好 — 浅色码点深色背景
+var qr = AuraLogic.utils.qrcode(walletAddress, {
+    size: 200,
+    fg: '#e2e8f0',    // 浅灰码点
+    bg: '#1e293b'     // 深色背景
+});
+
+// 无边框紧凑模式
+var qr = AuraLogic.utils.qrcode(walletAddress, {
+    size: 200,
+    disableBorder: true
+});
+
+// 半透明背景
+var qr = AuraLogic.utils.qrcode(walletAddress, {
+    size: 200,
+    bg: '#ffffff00'    // 透明背景 (RRGGBBAA)
+});
+
+// 在 HTML 中使用
+var html = '<img src="' + qr + '" alt="QR Code" class="w-40 h-40" />';
+```
+
+**典型用法 — 钱包地址二维码：**
+
+```javascript
+function onGeneratePaymentCard(order, config) {
+  var walletAddress = config.wallet_address || '';
+
+  // 生成钱包地址二维码
+  var qrcodeDataUri = walletAddress ? AuraLogic.utils.qrcode(walletAddress, 200) : '';
+  var qrcodeHtml = qrcodeDataUri
+      ? '<div class="flex justify-center py-2">' +
+            '<img src="' + qrcodeDataUri + '" alt="QR Code" ' +
+            'class="w-40 h-40 rounded-lg border border-border dark:brightness-90" />' +
+        '</div>' +
+        '<p class="text-xs text-center text-muted-foreground">' +
+            '<span class="lang-zh">扫码自动填入地址</span>' +
+            '<span class="lang-en">Scan to auto-fill address</span>' +
+        '</p>'
+      : '';
+
+  return {
+    html: '<div>' + qrcodeHtml + '<code>' + walletAddress + '</code></div>',
+    title: '付款'
+  };
+}
+```
+
 ---
 
 ### AuraLogic.system - 系统信息

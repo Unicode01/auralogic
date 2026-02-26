@@ -70,7 +70,7 @@ import {
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { useLocale } from '@/hooks/use-locale'
-import { getTranslations } from '@/lib/i18n'
+import { getTranslations, translateBizError } from '@/lib/i18n'
 import { usePageTitle } from '@/hooks/use-page-title'
 
 const iconMap: Record<string, any> = {
@@ -337,8 +337,12 @@ export default function PaymentMethodsPage() {
       setIsCreateOpen(false)
       resetForm()
     },
-    onError: (error: Error) => {
-      toast.error(error.message)
+    onError: (error: any) => {
+      if (error.code === 40010 && error.data?.error_key) {
+        toast.error(translateBizError(t, error.data.error_key, error.data.params, error.message))
+      } else {
+        toast.error(error.message || t.admin.operationFailed)
+      }
     },
   })
 
@@ -351,8 +355,12 @@ export default function PaymentMethodsPage() {
       setEditingMethod(null)
       resetForm()
     },
-    onError: (error: Error) => {
-      toast.error(error.message)
+    onError: (error: any) => {
+      if (error.code === 40010 && error.data?.error_key) {
+        toast.error(translateBizError(t, error.data.error_key, error.data.params, error.message))
+      } else {
+        toast.error(error.message || t.admin.operationFailed)
+      }
     },
   })
 
@@ -363,8 +371,12 @@ export default function PaymentMethodsPage() {
       queryClient.invalidateQueries({ queryKey: ['paymentMethods'] })
       setDeleteId(null)
     },
-    onError: (error: Error) => {
-      toast.error(error.message)
+    onError: (error: any) => {
+      if (error.code === 40010 && error.data?.error_key) {
+        toast.error(translateBizError(t, error.data.error_key, error.data.params, error.message))
+      } else {
+        toast.error(error.message || t.admin.operationFailed)
+      }
     },
   })
 
@@ -393,12 +405,16 @@ export default function PaymentMethodsPage() {
 
       return { previousData }
     },
-    onError: (error: Error, id, context) => {
+    onError: (error: any, id, context) => {
       // Rollback on error
       if (context?.previousData) {
         queryClient.setQueryData(['paymentMethods'], context.previousData)
       }
-      toast.error(error.message)
+      if (error.code === 40010 && error.data?.error_key) {
+        toast.error(translateBizError(t, error.data.error_key, error.data.params, error.message))
+      } else {
+        toast.error(error.message || t.admin.operationFailed)
+      }
     },
     onSettled: () => {
       // Always refetch to ensure data is in sync
@@ -412,15 +428,23 @@ export default function PaymentMethodsPage() {
       toast.success(t.admin.pmBuiltinInitialized)
       queryClient.invalidateQueries({ queryKey: ['paymentMethods'] })
     },
-    onError: (error: Error) => {
-      toast.error(error.message)
+    onError: (error: any) => {
+      if (error.code === 40010 && error.data?.error_key) {
+        toast.error(translateBizError(t, error.data.error_key, error.data.params, error.message))
+      } else {
+        toast.error(error.message || t.admin.operationFailed)
+      }
     },
   })
 
   const reorderMutation = useMutation({
     mutationFn: reorderPaymentMethods,
-    onError: (error: Error) => {
-      toast.error(error.message)
+    onError: (error: any) => {
+      if (error.code === 40010 && error.data?.error_key) {
+        toast.error(translateBizError(t, error.data.error_key, error.data.params, error.message))
+      } else {
+        toast.error(error.message || t.admin.operationFailed)
+      }
       queryClient.invalidateQueries({ queryKey: ['paymentMethods'] })
     },
   })

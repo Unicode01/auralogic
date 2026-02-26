@@ -1,10 +1,12 @@
 package user
 
 import (
+	"errors"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
 	"auralogic/internal/middleware"
+	"auralogic/internal/pkg/bizerr"
 	"auralogic/internal/pkg/response"
 	"auralogic/internal/service"
 )
@@ -70,6 +72,11 @@ func (h *CartHandler) AddToCart(c *gin.Context) {
 		Attributes: req.Attributes,
 	})
 	if err != nil {
+		var bizErr *bizerr.Error
+		if errors.As(err, &bizErr) {
+			response.BizError(c, bizErr.Message, bizErr.Key, bizErr.Params)
+			return
+		}
 		response.BadRequest(c, err.Error())
 		return
 	}
@@ -103,6 +110,11 @@ func (h *CartHandler) UpdateQuantity(c *gin.Context) {
 
 	item, err := h.cartService.UpdateQuantity(userID, uint(itemID), req.Quantity)
 	if err != nil {
+		var bizErr *bizerr.Error
+		if errors.As(err, &bizErr) {
+			response.BizError(c, bizErr.Message, bizErr.Key, bizErr.Params)
+			return
+		}
 		response.BadRequest(c, err.Error())
 		return
 	}
@@ -124,6 +136,11 @@ func (h *CartHandler) RemoveFromCart(c *gin.Context) {
 	}
 
 	if err := h.cartService.RemoveFromCart(userID, uint(itemID)); err != nil {
+		var bizErr *bizerr.Error
+		if errors.As(err, &bizErr) {
+			response.BizError(c, bizErr.Message, bizErr.Key, bizErr.Params)
+			return
+		}
 		response.BadRequest(c, err.Error())
 		return
 	}

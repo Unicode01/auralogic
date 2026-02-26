@@ -21,7 +21,7 @@ import Link from 'next/link'
 import { getToken } from '@/lib/auth'
 import toast from 'react-hot-toast'
 import { useLocale } from '@/hooks/use-locale'
-import { getTranslations } from '@/lib/i18n'
+import { getTranslations, translateBizError } from '@/lib/i18n'
 import { usePageTitle } from '@/hooks/use-page-title'
 
 function AdminOrdersContent() {
@@ -219,7 +219,11 @@ function AdminOrdersContent() {
       queryClient.invalidateQueries({ queryKey: ['adminOrders'] })
     },
     onError: (error: any) => {
-      toast.error(error.message || t.order.operationFailed)
+      if (error.code === 40010 && error.data?.error_key) {
+        toast.error(translateBizError(t, error.data.error_key, error.data.params, error.message))
+      } else {
+        toast.error(error.message || t.order.operationFailed)
+      }
     }
   })
 

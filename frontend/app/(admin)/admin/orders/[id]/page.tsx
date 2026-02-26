@@ -4,7 +4,7 @@ import { use, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useRouter } from 'next/navigation'
 import { useLocale } from '@/hooks/use-locale'
-import { getTranslations } from '@/lib/i18n'
+import { getTranslations, translateBizError } from '@/lib/i18n'
 import { usePageTitle } from '@/hooks/use-page-title'
 import { getAdminOrderDetail, assignTracking, adminCompleteOrder, adminCancelOrder, adminDeleteOrder, updateOrderShippingInfo, requestOrderResubmit, getCountries, adminMarkOrderAsPaid, updateOrderPrice, adminDeliverVirtualStock, adminRefundOrder } from '@/lib/api'
 import { OrderDetail } from '@/components/orders/order-detail'
@@ -96,7 +96,11 @@ export default function AdminOrderDetailPage({ params }: { params: Promise<{ id:
       setTrackingNo('')
     },
     onError: (error: any) => {
-      toast.error(error.message || t.order.assignFailed)
+      if (error.code === 40010 && error.data?.error_key) {
+        toast.error(translateBizError(t, error.data.error_key, error.data.params, error.message))
+      } else {
+        toast.error(error.message || t.order.assignFailed)
+      }
     },
   })
 
@@ -109,7 +113,11 @@ export default function AdminOrderDetailPage({ params }: { params: Promise<{ id:
       setAdminRemark('')
     },
     onError: (error: any) => {
-      toast.error(error.message || t.order.operationFailed)
+      if (error.code === 40010 && error.data?.error_key) {
+        toast.error(translateBizError(t, error.data.error_key, error.data.params, error.message))
+      } else {
+        toast.error(error.message || t.order.operationFailed)
+      }
     },
   })
 
@@ -122,7 +130,11 @@ export default function AdminOrderDetailPage({ params }: { params: Promise<{ id:
       setCancelReason('')
     },
     onError: (error: any) => {
-      toast.error(error.message || t.order.cancelFailed)
+      if (error.code === 40010 && error.data?.error_key) {
+        toast.error(translateBizError(t, error.data.error_key, error.data.params, error.message))
+      } else {
+        toast.error(error.message || t.order.cancelFailed)
+      }
     },
   })
 
@@ -135,7 +147,11 @@ export default function AdminOrderDetailPage({ params }: { params: Promise<{ id:
       setRefundReason('')
     },
     onError: (error: any) => {
-      toast.error(error.message || t.order.refundFailed)
+      if (error.code === 40010 && error.data?.error_key) {
+        toast.error(translateBizError(t, error.data.error_key, error.data.params, error.message))
+      } else {
+        toast.error(error.message || t.order.refundFailed)
+      }
     },
   })
 
@@ -146,7 +162,11 @@ export default function AdminOrderDetailPage({ params }: { params: Promise<{ id:
       router.push('/admin/orders')
     },
     onError: (error: any) => {
-      toast.error(error.message || t.order.deleteFailed)
+      if (error.code === 40010 && error.data?.error_key) {
+        toast.error(translateBizError(t, error.data.error_key, error.data.params, error.message))
+      } else {
+        toast.error(error.message || t.order.deleteFailed)
+      }
     },
   })
 
@@ -158,7 +178,11 @@ export default function AdminOrderDetailPage({ params }: { params: Promise<{ id:
       setOpenEdit(false)
     },
     onError: (error: any) => {
-      toast.error(error.message || t.order.updateFailed)
+      if (error.code === 40010 && error.data?.error_key) {
+        toast.error(translateBizError(t, error.data.error_key, error.data.params, error.message))
+      } else {
+        toast.error(error.message || t.order.updateFailed)
+      }
     },
   })
 
@@ -171,7 +195,11 @@ export default function AdminOrderDetailPage({ params }: { params: Promise<{ id:
       setResubmitReason('')
     },
     onError: (error: any) => {
-      toast.error(error.message || t.order.operationFailed)
+      if (error.code === 40010 && error.data?.error_key) {
+        toast.error(translateBizError(t, error.data.error_key, error.data.params, error.message))
+      } else {
+        toast.error(error.message || t.order.operationFailed)
+      }
     },
   })
 
@@ -182,7 +210,11 @@ export default function AdminOrderDetailPage({ params }: { params: Promise<{ id:
       queryClient.invalidateQueries({ queryKey: ['adminOrderDetail', orderId] })
     },
     onError: (error: any) => {
-      toast.error(error.message || t.order.operationFailed)
+      if (error.code === 40010 && error.data?.error_key) {
+        toast.error(translateBizError(t, error.data.error_key, error.data.params, error.message))
+      } else {
+        toast.error(error.message || t.order.operationFailed)
+      }
     },
   })
 
@@ -195,7 +227,11 @@ export default function AdminOrderDetailPage({ params }: { params: Promise<{ id:
       setNewPrice('')
     },
     onError: (error: any) => {
-      toast.error(error.message || t.order.updateFailed)
+      if (error.code === 40010 && error.data?.error_key) {
+        toast.error(translateBizError(t, error.data.error_key, error.data.params, error.message))
+      } else {
+        toast.error(error.message || t.order.updateFailed)
+      }
     },
   })
 
@@ -206,7 +242,11 @@ export default function AdminOrderDetailPage({ params }: { params: Promise<{ id:
       queryClient.invalidateQueries({ queryKey: ['adminOrderDetail', orderId] })
     },
     onError: (error: any) => {
-      toast.error(error.message || t.order.deliverFailed)
+      if (error.code === 40010 && error.data?.error_key) {
+        toast.error(translateBizError(t, error.data.error_key, error.data.params, error.message))
+      } else {
+        toast.error(error.message || t.order.deliverFailed)
+      }
     },
   })
 

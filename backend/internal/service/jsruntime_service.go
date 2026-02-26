@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"image/color"
 	"io"
 	"log"
 	"net"
@@ -22,6 +23,7 @@ import (
 
 	"github.com/dop251/goja"
 	"github.com/google/uuid"
+	qrcode "github.com/skip2/go-qrcode"
 	"auralogic/internal/models"
 	"gorm.io/gorm"
 )
@@ -325,6 +327,7 @@ func (s *JSRuntimeService) registerAPIs(vm *goja.Runtime, ctx *JSContext, pm *mo
 	utils.Set("base64Decode", s.createBase64Decode(vm))
 	utils.Set("jsonEncode", s.createJSONEncode(vm))
 	utils.Set("jsonDecode", s.createJSONDecode(vm))
+	utils.Set("qrcode", s.createQRCode(vm))
 
 	// HTTP API
 	httpObj := vm.NewObject()
@@ -1173,6 +1176,138 @@ func (s *JSRuntimeService) createJSONDecode(vm *goja.Runtime) func(call goja.Fun
 		}
 		return vm.ToValue(result)
 	}
+}
+
+// createQRCode 生成QR码（返回data URI）
+// 支持两种调用方式：
+//   - qrcode(text, size)          — 向后兼容
+//   - qrcode(text, { size, level, fg, bg, disableBorder })
+func (s *JSRuntimeService) createQRCode(vm *goja.Runtime) func(call goja.FunctionCall) goja.Value {
+	return func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			return vm.ToValue("")
+		}
+		text := call.Arguments[0].String()
+		if text == "" {
+			return vm.ToValue("")
+		}
+
+		size := 256
+		level := qrcode.Medium
+		var fgColor color.Color = color.Black
+		var bgColor color.Color = color.White
+		disableBorder := false
+
+		if len(call.Arguments) >= 2 {
+			arg := call.Arguments[1].Export()
+			switch v := arg.(type) {
+			case int64:
+				if v > 0 && v <= 1024 {
+					size = int(v)
+				}
+			case float64:
+				if v > 0 && v <= 1024 {
+					size = int(v)
+				}
+			case map[string]interface{}:
+				if s, ok := toInt(v["size"]); ok && s > 0 && s <= 1024 {
+					size = s
+				}
+				if l, ok := v["level"].(string); ok {
+					switch strings.ToUpper(l) {
+					case "L", "LOW":
+						level = qrcode.Low
+					case "M", "MEDIUM":
+						level = qrcode.Medium
+					case "Q", "HIGH":
+						level = qrcode.High
+					case "H", "HIGHEST":
+						level = qrcode.Highest
+					}
+				}
+				if fg, ok := v["fg"].(string); ok {
+					if c, err := parseHexColor(fg); err == nil {
+						fgColor = c
+					}
+				}
+				if bg, ok := v["bg"].(string); ok {
+					if c, err := parseHexColor(bg); err == nil {
+						bgColor = c
+					}
+				}
+				if db, ok := v["disableBorder"].(bool); ok {
+					disableBorder = db
+				}
+			}
+		}
+
+		qrc, err := qrcode.New(text, level)
+		if err != nil {
+			return vm.ToValue("")
+		}
+		qrc.ForegroundColor = fgColor
+		qrc.BackgroundColor = bgColor
+		qrc.DisableBorder = disableBorder
+
+		png, err := qrc.PNG(size)
+		if err != nil {
+			return vm.ToValue("")
+		}
+		dataURI := "data:image/png;base64," + base64.StdEncoding.EncodeToString(png)
+		return vm.ToValue(dataURI)
+	}
+}
+
+// toInt 尝试将 interface{} 转为 int
+func toInt(v interface{}) (int, bool) {
+	switch n := v.(type) {
+	case int64:
+		return int(n), true
+	case float64:
+		return int(n), true
+	case int:
+		return n, true
+	}
+	return 0, false
+}
+
+// parseHexColor 解析十六进制颜色字符串（支持 #RGB, #RGBA, #RRGGBB, #RRGGBBAA）
+func parseHexColor(s string) (color.Color, error) {
+	s = strings.TrimPrefix(s, "#")
+	var r, g, b, a uint8
+	a = 255
+	switch len(s) {
+	case 3: // RGB
+		_, err := fmt.Sscanf(s, "%1x%1x%1x", &r, &g, &b)
+		if err != nil {
+			return nil, err
+		}
+		r *= 17
+		g *= 17
+		b *= 17
+	case 4: // RGBA
+		_, err := fmt.Sscanf(s, "%1x%1x%1x%1x", &r, &g, &b, &a)
+		if err != nil {
+			return nil, err
+		}
+		r *= 17
+		g *= 17
+		b *= 17
+		a *= 17
+	case 6: // RRGGBB
+		_, err := fmt.Sscanf(s, "%02x%02x%02x", &r, &g, &b)
+		if err != nil {
+			return nil, err
+		}
+	case 8: // RRGGBBAA
+		_, err := fmt.Sscanf(s, "%02x%02x%02x%02x", &r, &g, &b, &a)
+		if err != nil {
+			return nil, err
+		}
+	default:
+		return nil, fmt.Errorf("invalid hex color: %s", s)
+	}
+	return color.RGBA{R: r, G: g, B: b, A: a}, nil
 }
 
 // createGetTimestamp 获取当前时间戳

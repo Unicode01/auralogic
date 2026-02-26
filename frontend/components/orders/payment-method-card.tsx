@@ -21,7 +21,7 @@ import {
   Coins,
 } from 'lucide-react'
 import { useLocale } from '@/hooks/use-locale'
-import { getTranslations } from '@/lib/i18n'
+import { getTranslations, translateBizError } from '@/lib/i18n'
 import toast from 'react-hot-toast'
 
 const iconMap: Record<string, any> = {
@@ -82,8 +82,12 @@ export function PaymentMethodCard({ orderNo, onPaymentSelected }: PaymentMethodC
       toast.success(t.order.paymentMethodSelected)
       onPaymentSelected?.()
     },
-    onError: (error: Error) => {
-      toast.error(error.message)
+    onError: (error: any) => {
+      if (error.code === 40010 && error.data?.error_key) {
+        toast.error(translateBizError(t, error.data.error_key, error.data.params, error.message))
+      } else {
+        toast.error(error.message || t.order.operationFailed)
+      }
     },
   })
 

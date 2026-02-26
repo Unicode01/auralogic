@@ -10,6 +10,7 @@ import (
 	"auralogic/internal/database"
 	"auralogic/internal/middleware"
 	"auralogic/internal/models"
+	"auralogic/internal/pkg/bizerr"
 	"auralogic/internal/pkg/logger"
 	"auralogic/internal/pkg/response"
 	"auralogic/internal/pkg/validator"
@@ -1016,6 +1017,11 @@ func (h *OrderHandler) CreateDraft(c *gin.Context) {
 		req.Remark,
 	)
 	if err != nil {
+		var bizErr *bizerr.Error
+		if errors.As(err, &bizErr) {
+			response.BizError(c, bizErr.Message, bizErr.Key, bizErr.Params)
+			return
+		}
 		if errors.Is(err, service.ErrProductNotAvailable) ||
 			strings.Contains(err.Error(), "does not exist") ||
 			strings.Contains(err.Error(), "cannot be empty") ||
@@ -1126,6 +1132,11 @@ func (h *OrderHandler) CreateOrderForUser(c *gin.Context) {
 		UserEmail:        req.UserEmail,
 	})
 	if err != nil {
+		var bizErr *bizerr.Error
+		if errors.As(err, &bizErr) {
+			response.BizError(c, bizErr.Message, bizErr.Key, bizErr.Params)
+			return
+		}
 		if strings.Contains(err.Error(), "not found") ||
 			strings.Contains(err.Error(), "cannot be empty") ||
 			strings.Contains(err.Error(), "must be greater than 0") ||

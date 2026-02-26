@@ -41,7 +41,7 @@ import { PERMISSIONS, PERMISSIONS_BY_CATEGORY, CATEGORY_LABEL_KEYS } from '@/lib
 import Link from 'next/link'
 import * as z from 'zod'
 import { useLocale } from '@/hooks/use-locale'
-import { getTranslations } from '@/lib/i18n'
+import { getTranslations, translateBizError } from '@/lib/i18n'
 import { usePageTitle } from '@/hooks/use-page-title'
 
 type ViewMode = 'all' | 'users' | 'admins'
@@ -110,7 +110,11 @@ export default function AdminUsersPage() {
       userForm.reset()
     },
     onError: (error: any) => {
-      toast.error(error.message || t.admin.createFailed)
+      if (error.code === 40010 && error.data?.error_key) {
+        toast.error(translateBizError(t, error.data.error_key, error.data.params, error.message))
+      } else {
+        toast.error(error.message || t.admin.createFailed)
+      }
     },
   })
 
@@ -121,7 +125,11 @@ export default function AdminUsersPage() {
       queryClient.invalidateQueries({ queryKey: ['adminUsers'] })
     },
     onError: (error: any) => {
-      toast.error(error.message || t.admin.deleteFailed)
+      if (error.code === 40010 && error.data?.error_key) {
+        toast.error(translateBizError(t, error.data.error_key, error.data.params, error.message))
+      } else {
+        toast.error(error.message || t.admin.deleteFailed)
+      }
     },
   })
 
@@ -135,7 +143,11 @@ export default function AdminUsersPage() {
       adminForm.reset()
     },
     onError: (error: any) => {
-      toast.error(error.message || t.admin.createFailed)
+      if (error.code === 40010 && error.data?.error_key) {
+        toast.error(translateBizError(t, error.data.error_key, error.data.params, error.message))
+      } else {
+        toast.error(error.message || t.admin.createFailed)
+      }
     },
   })
 
@@ -150,7 +162,11 @@ export default function AdminUsersPage() {
       setEditingUser(null)
     },
     onError: (error: any) => {
-      toast.error(error.message || t.admin.updateFailed)
+      if (error.code === 40010 && error.data?.error_key) {
+        toast.error(translateBizError(t, error.data.error_key, error.data.params, error.message))
+      } else {
+        toast.error(error.message || t.admin.updateFailed)
+      }
     },
   })
 
@@ -162,7 +178,11 @@ export default function AdminUsersPage() {
       queryClient.invalidateQueries({ queryKey: ['adminUsers'] })
     },
     onError: (error: any) => {
-      toast.error(error.message || t.admin.deleteFailed)
+      if (error.code === 40010 && error.data?.error_key) {
+        toast.error(translateBizError(t, error.data.error_key, error.data.params, error.message))
+      } else {
+        toast.error(error.message || t.admin.deleteFailed)
+      }
     },
   })
 
@@ -175,7 +195,11 @@ export default function AdminUsersPage() {
       setOrderItems([{ sku: '', name: '', quantity: 1, unit_price: 0, product_type: 'physical' }])
     },
     onError: (error: any) => {
-      toast.error(error.message || t.admin.orderCreateFailed)
+      if (error.code === 40010 && error.data?.error_key) {
+        toast.error(translateBizError(t, error.data.error_key, error.data.params, error.message))
+      } else {
+        toast.error(error.message || t.admin.orderCreateFailed)
+      }
     },
   })
 

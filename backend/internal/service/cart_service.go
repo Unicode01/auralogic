@@ -2,9 +2,9 @@ package service
 
 import (
 	"errors"
-	"fmt"
 
 	"auralogic/internal/models"
+	"auralogic/internal/pkg/bizerr"
 	"auralogic/internal/repository"
 	"gorm.io/gorm"
 )
@@ -105,11 +105,11 @@ func (s *CartService) AddToCart(userID uint, req AddToCartRequest) (*models.Cart
 	// 验证商品是否存在且上架
 	product, err := s.productRepo.FindByID(req.ProductID)
 	if err != nil {
-		return nil, errors.New("Product not found")
+		return nil, bizerr.New("cart.productNotFound", "Product not found")
 	}
 
 	if product.Status != models.ProductStatusActive {
-		return nil, errors.New("Product is no longer available")
+		return nil, bizerr.New("cart.productUnavailable", "Product is no longer available")
 	}
 
 	// 验证属性是否有效（对于需要选择属性的商品）
@@ -119,7 +119,8 @@ func (s *CartService) AddToCart(userID uint, req AddToCartRequest) (*models.Cart
 			if attr.Mode == models.AttributeModeUserSelect {
 				val, exists := req.Attributes[attr.Name]
 				if !exists || val == "" {
-					return nil, fmt.Errorf("Please select %s", attr.Name)
+					return nil, bizerr.Newf("cart.attributeRequired", "Please select %s", attr.Name).
+						WithParams(map[string]interface{}{"attribute": attr.Name})
 				}
 				// 验证属性值是否有效
 				valid := false
@@ -130,7 +131,8 @@ func (s *CartService) AddToCart(userID uint, req AddToCartRequest) (*models.Cart
 					}
 				}
 				if !valid {
-					return nil, fmt.Errorf("Invalid %s option", attr.Name)
+					return nil, bizerr.Newf("cart.attributeInvalid", "Invalid %s option", attr.Name).
+						WithParams(map[string]interface{}{"attribute": attr.Name})
 				}
 			}
 		}
@@ -151,15 +153,17 @@ func (s *CartService) AddToCart(userID uint, req AddToCartRequest) (*models.Cart
 		// 检查库存
 		stock, err := s.getAvailableStock(req.ProductID, attributes)
 		if err != nil {
-			return nil, errors.New("Failed to get inventory")
+			return nil, bizerr.New("cart.stockCheckFailed", "Failed to get inventory")
 		}
 		if newQuantity > stock {
-			return nil, fmt.Errorf("Insufficient stock, available: %d", stock)
+			return nil, bizerr.Newf("cart.stockInsufficient", "Insufficient stock, available: %d", stock).
+				WithParams(map[string]interface{}{"available": stock})
 		}
 
 		// 检查购买限制
 		if product.MaxPurchaseLimit > 0 && newQuantity > product.MaxPurchaseLimit {
-			return nil, fmt.Errorf("Exceeds purchase limit, maximum allowed: %d", product.MaxPurchaseLimit)
+			return nil, bizerr.Newf("cart.purchaseLimitExceeded", "Exceeds purchase limit, maximum allowed: %d", product.MaxPurchaseLimit).
+				WithParams(map[string]interface{}{"limit": product.MaxPurchaseLimit})
 		}
 
 		existingItem.Quantity = newQuantity
@@ -174,15 +178,17 @@ func (s *CartService) AddToCart(userID uint, req AddToCartRequest) (*models.Cart
 	// 检查库存
 	stock, err := s.getAvailableStock(req.ProductID, attributes)
 	if err != nil {
-		return nil, errors.New("Failed to get inventory")
+		return nil, bizerr.New("cart.stockCheckFailed", "Failed to get inventory")
 	}
 	if req.Quantity > stock {
-		return nil, fmt.Errorf("Insufficient stock, available: %d", stock)
+		return nil, bizerr.Newf("cart.stockInsufficient", "Insufficient stock, available: %d", stock).
+			WithParams(map[string]interface{}{"available": stock})
 	}
 
 	// 检查购买限制
 	if product.MaxPurchaseLimit > 0 && req.Quantity > product.MaxPurchaseLimit {
-		return nil, fmt.Errorf("Exceeds purchase limit, maximum allowed: %d", product.MaxPurchaseLimit)
+		return nil, bizerr.Newf("cart.purchaseLimitExceeded", "Exceeds purchase limit, maximum allowed: %d", product.MaxPurchaseLimit).
+			WithParams(map[string]interface{}{"limit": product.MaxPurchaseLimit})
 	}
 
 	// 获取商品主图
@@ -221,13 +227,13 @@ func (s *CartService) AddToCart(userID uint, req AddToCartRequest) (*models.Cart
 // UpdateQuantity 更新购物车项数量
 func (s *CartService) UpdateQuantity(userID, itemID uint, quantity int) (*models.CartItem, error) {
 	if quantity < 1 {
-		return nil, errors.New("Quantity must be greater than 0")
+		return nil, bizerr.New("cart.quantityInvalid", "Quantity must be greater than 0")
 	}
 
 	item, err := s.cartRepo.GetCartItem(itemID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errors.New("Cart item not found")
+			return nil, bizerr.New("cart.itemNotFound", "Cart item not found")
 		}
 		return nil, err
 	}
@@ -240,16 +246,18 @@ func (s *CartService) UpdateQuantity(userID, itemID uint, quantity int) (*models
 	// 检查库存
 	stock, err := s.getAvailableStock(item.ProductID, item.Attributes)
 	if err != nil {
-		return nil, errors.New("Failed to get inventory")
+		return nil, bizerr.New("cart.stockCheckFailed", "Failed to get inventory")
 	}
 	if quantity > stock {
-		return nil, fmt.Errorf("Insufficient stock, available: %d", stock)
+		return nil, bizerr.Newf("cart.stockInsufficient", "Insufficient stock, available: %d", stock).
+			WithParams(map[string]interface{}{"available": stock})
 	}
 
 	// 检查购买限制
 	product, _ := s.productRepo.FindByID(item.ProductID)
 	if product != nil && product.MaxPurchaseLimit > 0 && quantity > product.MaxPurchaseLimit {
-		return nil, fmt.Errorf("Exceeds purchase limit, maximum allowed: %d", product.MaxPurchaseLimit)
+		return nil, bizerr.Newf("cart.purchaseLimitExceeded", "Exceeds purchase limit, maximum allowed: %d", product.MaxPurchaseLimit).
+			WithParams(map[string]interface{}{"limit": product.MaxPurchaseLimit})
 	}
 
 	item.Quantity = quantity

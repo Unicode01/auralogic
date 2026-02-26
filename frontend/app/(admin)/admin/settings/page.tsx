@@ -2587,6 +2587,8 @@ export default function SettingsPage() {
                   handleSubmit('order', {
                     no_prefix: formData.get('no_prefix'),
                     auto_cancel_hours: parseInt(formData.get('auto_cancel_hours') as string),
+                    max_order_items: parseInt(formData.get('max_order_items') as string) || 100,
+                    max_item_quantity: parseInt(formData.get('max_item_quantity') as string) || 9999,
                     currency: formData.get('currency'),
                     virtual_delivery_order: formData.get('virtual_delivery_order'),
                     stock_display: {
@@ -2649,6 +2651,37 @@ export default function SettingsPage() {
                   <p className="text-xs text-muted-foreground mt-1">
                     {t.admin.autoCancelHoursHint}
                   </p>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label htmlFor="max_order_items">{t.admin.maxOrderItems}</Label>
+                    <Input
+                      id="max_order_items"
+                      name="max_order_items"
+                      type="number"
+                      min="1"
+                      defaultValue={settingsData?.order?.max_order_items || 100}
+                      className="mt-1.5"
+                    />
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {t.admin.maxOrderItemsHint}
+                    </p>
+                  </div>
+                  <div>
+                    <Label htmlFor="max_item_quantity">{t.admin.maxItemQuantity}</Label>
+                    <Input
+                      id="max_item_quantity"
+                      name="max_item_quantity"
+                      type="number"
+                      min="1"
+                      defaultValue={settingsData?.order?.max_item_quantity || 9999}
+                      className="mt-1.5"
+                    />
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {t.admin.maxItemQuantityHint}
+                    </p>
+                  </div>
                 </div>
 
                 <div className="border-t border-border pt-4 mt-4">

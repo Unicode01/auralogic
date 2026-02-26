@@ -2,9 +2,9 @@
 
 import { useState, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCart } from '@/contexts/cart-context'
-import { createOrder, validatePromoCode } from '@/lib/api'
+import { createOrder, validatePromoCode, getPublicConfig } from '@/lib/api'
 import { Card, CardContent, CardHeader, CardFooter } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -12,7 +12,7 @@ import { Trash2, Minus, Plus, ShoppingCart, Package, AlertCircle, RefreshCw, Lay
 import Link from 'next/link'
 import { useLocale } from '@/hooks/use-locale'
 import { usePageTitle } from '@/hooks/use-page-title'
-import { getTranslations } from '@/lib/i18n'
+import { getTranslations, translateBizError } from '@/lib/i18n'
 import toast from 'react-hot-toast'
 import { Checkbox } from '@/components/ui/checkbox'
 import { useCurrency, formatPrice } from '@/contexts/currency-context'
@@ -25,6 +25,13 @@ export default function CartPage() {
   usePageTitle(t.pageTitle.cart)
   const { currency } = useCurrency()
   const { items, totalPrice, totalQuantity, isLoading, updateQuantity, removeItem, removeItems, refetch } = useCart()
+  const { data: publicConfig } = useQuery({
+    queryKey: ['publicConfig'],
+    queryFn: getPublicConfig,
+    staleTime: 1000 * 60 * 5,
+  })
+  const maxItemQuantity = publicConfig?.data?.max_item_quantity || 9999
+  const maxOrderItems = publicConfig?.data?.max_order_items || 100
   const [selectedItems, setSelectedItems] = useState<Set<number>>(new Set())
   const [viewMode, setViewMode] = useState<'list' | 'card'>(() => {
     if (typeof window !== 'undefined') {
@@ -114,14 +121,29 @@ export default function CartPage() {
       queryClient.invalidateQueries({ queryKey: ['orders'] })
       router.push(`/orders/${orderNo}`)
     },
-    onError: (error: Error) => {
-      toast.error(error.message || t.cart.orderFailed)
+    onError: (error: any) => {
+      if (error.code === 40010 && error.data?.error_key) {
+        toast.error(translateBizError(t, error.data.error_key, error.data.params, error.message))
+      } else {
+        toast.error(error.message || t.cart.orderFailed)
+      }
     },
   })
 
+  const getItemMaxQuantity = (item: any) => {
+    const productMaxPurchaseLimit = item?.product?.max_purchase_limit ?? item?.product?.maxPurchaseLimit ?? 0
+    return Math.min(
+      item?.available_stock ?? 0,
+      maxItemQuantity,
+      productMaxPurchaseLimit > 0 ? productMaxPurchaseLimit : Number.MAX_SAFE_INTEGER
+    )
+  }
+
   // 处理数量变化
   const handleQuantityChange = async (itemId: number, newQuantity: number) => {
-    if (newQuantity < 1 || newQuantity > 9999) return
+    const item = items.find(i => i.id === itemId)
+    const itemMaxQuantity = item ? getItemMaxQuantity(item) : maxItemQuantity
+    if (newQuantity < 1 || newQuantity > itemMaxQuantity) return
     try {
       await updateQuantity(itemId, newQuantity)
     } catch (error) {
@@ -198,7 +220,7 @@ export default function CartPage() {
       return
     }
 
-    if (selectedCartItems.length > 100) {
+    if (selectedCartItems.length > maxOrderItems) {
       toast.error(t.cart.tooManyItems)
       return
     }
@@ -377,12 +399,12 @@ export default function CartPage() {
                       <Input
                         type="number"
                         value={item.quantity}
-                        onChange={(e) => { const val = parseInt(e.target.value); if (!isNaN(val) && val >= 1 && val <= 9999) handleQuantityChange(item.id, val) }}
+                        onChange={(e) => { const val = parseInt(e.target.value); if (!isNaN(val) && val >= 1 && val <= getItemMaxQuantity(item)) handleQuantityChange(item.id, val) }}
                         className="w-10 h-7 text-center px-0 text-sm"
                         min={1}
-                        max={item.available_stock}
+                        max={getItemMaxQuantity(item)}
                       />
-                      <Button variant="outline" size="icon" className="h-7 w-7" onClick={() => handleQuantityChange(item.id, item.quantity + 1)} disabled={item.quantity >= item.available_stock}>
+                      <Button variant="outline" size="icon" className="h-7 w-7" onClick={() => handleQuantityChange(item.id, item.quantity + 1)} disabled={item.quantity >= getItemMaxQuantity(item)}>
                         <Plus className="h-3 w-3" />
                       </Button>
                     </div>
@@ -437,12 +459,12 @@ export default function CartPage() {
                         <Input
                           type="number"
                           value={item.quantity}
-                          onChange={(e) => { const val = parseInt(e.target.value); if (!isNaN(val) && val >= 1 && val <= 9999) handleQuantityChange(item.id, val) }}
+                          onChange={(e) => { const val = parseInt(e.target.value); if (!isNaN(val) && val >= 1 && val <= getItemMaxQuantity(item)) handleQuantityChange(item.id, val) }}
                           className="w-16 h-8 text-center"
                           min={1}
-                          max={item.available_stock}
+                          max={getItemMaxQuantity(item)}
                         />
-                        <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => handleQuantityChange(item.id, item.quantity + 1)} disabled={item.quantity >= item.available_stock}>
+                        <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => handleQuantityChange(item.id, item.quantity + 1)} disabled={item.quantity >= getItemMaxQuantity(item)}>
                           <Plus className="h-4 w-4" />
                         </Button>
                       </div>
@@ -543,12 +565,12 @@ export default function CartPage() {
                     <Input
                       type="number"
                       value={item.quantity}
-                      onChange={(e) => { const val = parseInt(e.target.value); if (!isNaN(val) && val >= 1 && val <= 9999) handleQuantityChange(item.id, val) }}
+                      onChange={(e) => { const val = parseInt(e.target.value); if (!isNaN(val) && val >= 1 && val <= getItemMaxQuantity(item)) handleQuantityChange(item.id, val) }}
                       className="w-12 h-7 text-center px-1 text-sm"
                       min={1}
-                      max={item.available_stock}
+                      max={getItemMaxQuantity(item)}
                     />
-                    <Button variant="outline" size="icon" className="h-7 w-7" onClick={() => handleQuantityChange(item.id, item.quantity + 1)} disabled={item.quantity >= item.available_stock}>
+                    <Button variant="outline" size="icon" className="h-7 w-7" onClick={() => handleQuantityChange(item.id, item.quantity + 1)} disabled={item.quantity >= getItemMaxQuantity(item)}>
                       <Plus className="h-3 w-3" />
                     </Button>
                   </div>

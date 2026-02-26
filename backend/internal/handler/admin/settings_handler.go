@@ -70,6 +70,8 @@ func (h *SettingsHandler) GetPublicConfig(c *gin.Context) {
 	}
 	publicConfig := gin.H{
 		"currency":           h.cfg.Order.Currency,
+		"max_order_items":    h.cfg.Order.MaxOrderItems,
+		"max_item_quantity":  h.cfg.Order.MaxItemQuantity,
 		"app_name":           h.cfg.App.Name,
 		"default_theme":      defaultTheme,
 		"allow_registration":     h.cfg.Security.Login.AllowRegistration,
@@ -171,6 +173,8 @@ func (h *SettingsHandler) GetSettings(c *gin.Context) {
 			"no_prefix":              h.cfg.Order.NoPrefix,
 			"auto_cancel_hours":      h.cfg.Order.AutoCancelHours,
 			"currency":               h.cfg.Order.Currency,
+			"max_order_items":        h.cfg.Order.MaxOrderItems,
+			"max_item_quantity":      h.cfg.Order.MaxItemQuantity,
 			"virtual_delivery_order": h.cfg.Order.VirtualDeliveryOrder,
 			"stock_display": gin.H{
 				"mode":                 h.cfg.Order.StockDisplay.Mode,
@@ -305,6 +309,8 @@ type UpdateSettingsRequest struct {
 		NoPrefix             string                    `json:"no_prefix"`
 		AutoCancelHours      int                       `json:"auto_cancel_hours"`
 		Currency             string                    `json:"currency"`
+		MaxOrderItems        int                       `json:"max_order_items"`
+		MaxItemQuantity      int                       `json:"max_item_quantity"`
 		VirtualDeliveryOrder string                    `json:"virtual_delivery_order"`
 		StockDisplay         config.StockDisplayConfig `json:"stock_display"`
 	} `json:"order,omitempty"`
@@ -545,6 +551,8 @@ func (h *SettingsHandler) UpdateSettings(c *gin.Context) {
 			"no_prefix":              req.Order.NoPrefix,
 			"auto_cancel_hours":      req.Order.AutoCancelHours,
 			"currency":               req.Order.Currency,
+			"max_order_items":        req.Order.MaxOrderItems,
+			"max_item_quantity":      req.Order.MaxItemQuantity,
 			"virtual_delivery_order": req.Order.VirtualDeliveryOrder,
 			"stock_display": map[string]interface{}{
 				"mode":                 req.Order.StockDisplay.Mode,

@@ -14,7 +14,7 @@ import { useToast } from '@/hooks/use-toast'
 import { useAuth } from '@/hooks/use-auth'
 import { useLocale } from '@/hooks/use-locale'
 import { usePageTitle } from '@/hooks/use-page-title'
-import { getTranslations } from '@/lib/i18n'
+import { getTranslations, translateBizError } from '@/lib/i18n'
 import { useCurrency, formatPrice, getCurrencySymbol } from '@/contexts/currency-context'
 import { MarkdownMessage } from '@/components/ui/markdown-message'
 
@@ -72,6 +72,7 @@ export default function ProductDetailPage() {
     queryFn: getPublicConfig,
     staleTime: 1000 * 60 * 5,
   })
+  const maxItemQuantity = publicConfig?.data?.max_item_quantity || 9999
 
   const createOrderMutation = useMutation({
     mutationFn: createOrder,
@@ -83,8 +84,12 @@ export default function ProductDetailPage() {
       queryClient.invalidateQueries({ queryKey: ['orders'] })
       setTimeout(() => router.push('/orders'), 1000)
     },
-    onError: (error: Error) => {
-      toast.error(error.message || t.product.orderCreateFailed)
+    onError: (error: any) => {
+      if (error.code === 40010 && error.data?.error_key) {
+        toast.error(translateBizError(t, error.data.error_key, error.data.params, error.message))
+      } else {
+        toast.error(error.message || t.product.orderCreateFailed)
+      }
     },
   })
 
@@ -219,6 +224,12 @@ export default function ProductDetailPage() {
 
   const availableStock = stockData?.data?.available_stock ?? 0
   const isAvailable = availableStock > 0
+  const productMaxPurchaseLimit = product.max_purchase_limit ?? product.maxPurchaseLimit ?? 0
+  const maxSelectableQuantity = Math.min(
+    availableStock,
+    maxItemQuantity,
+    productMaxPurchaseLimit > 0 ? productMaxPurchaseLimit : Number.MAX_SAFE_INTEGER
+  )
 
   // Stock display settings
   const stockDisplayMode = publicConfig?.data?.stock_display?.mode || 'exact'
@@ -319,14 +330,18 @@ export default function ProductDetailPage() {
       queryClient.invalidateQueries({ queryKey: ['cart'] })
       toast.success(t.cart.addedToCart)
     } catch (error: any) {
-      toast.error(error.message || t.cart.addFailed)
+      if (error.code === 40010 && error.data?.error_key) {
+        toast.error(translateBizError(t, error.data.error_key, error.data.params, error.message))
+      } else {
+        toast.error(error.message || t.cart.addFailed)
+      }
     } finally {
       setIsAddingToCart(false)
     }
   }
 
   const handleQuantityChange = (newQuantity: number) => {
-    if (newQuantity >= 1 && newQuantity <= Math.min(availableStock, 9999)) {
+    if (newQuantity >= 1 && newQuantity <= maxSelectableQuantity) {
       setQuantity(newQuantity)
     }
   }
@@ -658,11 +673,11 @@ export default function ProductDetailPage() {
                 </div>
               </div>
             )}
-            {product.max_purchase_limit && product.max_purchase_limit > 0 && (
+            {productMaxPurchaseLimit > 0 && (
               <div className="flex items-center justify-between py-2 border-b border-border">
                 <span className="text-sm text-muted-foreground">{t.product.purchaseLimitLabel}:</span>
                 <Badge variant="outline" className="text-xs text-orange-600 dark:text-orange-400 border-orange-300 dark:border-orange-700">
-                  {t.product.maxPurchaseLimit} {product.max_purchase_limit} {t.product.piecesUnit}
+                  {t.product.maxPurchaseLimit} {productMaxPurchaseLimit} {t.product.piecesUnit}
                 </Badge>
               </div>
             )}
@@ -762,14 +777,14 @@ export default function ProductDetailPage() {
                 }}
                 className="w-16 h-9 text-center rounded-none border-x-0 focus-visible:ring-0 focus-visible:ring-offset-0"
                 min={1}
-                max={Math.min(availableStock, 9999)}
+                max={maxSelectableQuantity}
               />
               <Button
                 variant="outline"
                 size="icon"
                 className="h-9 w-9 rounded-l-none"
                 onClick={() => handleQuantityChange(quantity + 1)}
-                disabled={quantity >= Math.min(availableStock, 9999)}
+                disabled={quantity >= maxSelectableQuantity}
               >
                 <Plus className="h-3.5 w-3.5" />
               </Button>

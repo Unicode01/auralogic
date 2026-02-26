@@ -110,6 +110,22 @@ function onGeneratePaymentCard(order, config) {
     var walletAddress = config.wallet_address || '';
     var cnyRate = parseFloat(config.cny_rate) || 7.2;
 
+    if (!walletAddress) {
+        return {
+            html: '<div class="p-6 text-center space-y-2">' +
+                '<p class="text-sm text-destructive font-medium">' +
+                    '<span class="lang-zh">\u26a0 \u6536\u6b3e\u94b1\u5305\u5730\u5740\u672a\u914d\u7f6e</span>' +
+                    '<span class="lang-en">\u26a0 Wallet address not configured</span>' +
+                '</p>' +
+                '<p class="text-xs text-muted-foreground">' +
+                    '<span class="lang-zh">\u8bf7\u8054\u7cfb\u7ba1\u7406\u5458\u8bbe\u7f6e\u6536\u6b3e\u5730\u5740</span>' +
+                    '<span class="lang-en">Please contact admin to configure wallet address</span>' +
+                '</p>' +
+            '</div>',
+            title: 'Error'
+        };
+    }
+
     // 计算USDT金额
     var usdtAmount = order.total_amount;
     if (order.currency === 'CNY') {
@@ -126,9 +142,11 @@ function onGeneratePaymentCard(order, config) {
 
     // 保存订单信息到storage
     var orderKey = 'order_' + order.id;
-    AuraLogic.storage.set(orderKey + '_amount', usdtAmount);
-    AuraLogic.storage.set(orderKey + '_time', AuraLogic.system.getTimestamp().toString());
-    AuraLogic.storage.set(orderKey + '_address', walletAddress);
+    if (!AuraLogic.storage.get(orderKey + '_amount')) {
+        AuraLogic.storage.set(orderKey + '_amount', usdtAmount);
+        AuraLogic.storage.set(orderKey + '_time', AuraLogic.system.getTimestamp().toString());
+        AuraLogic.storage.set(orderKey + '_address', walletAddress);
+    }
 
     // 更新订单付款数据
     AuraLogic.order.updatePaymentData({
@@ -140,6 +158,15 @@ function onGeneratePaymentCard(order, config) {
     var autoConfirmTip = config.auto_confirm !== false
         ? '<p class="text-xs text-green-600 dark:text-green-400 mt-2">✓ <span class="lang-zh">系统将自动确认您的付款（约1-5分钟）</span><span class="lang-en">Payment will be auto-confirmed (1-5 min)</span></p>'
         : '<p class="text-xs text-amber-600 dark:text-amber-400 mt-2"><span class="lang-zh">付款完成后请联系客服确认</span><span class="lang-en">Please contact support after payment</span></p>';
+
+    // 生成钱包地址二维码
+    var qrcodeDataUri = walletAddress ? AuraLogic.utils.qrcode(walletAddress, 200) : '';
+    var qrcodeHtml = qrcodeDataUri
+        ? '<div class="flex justify-center py-2">' +
+              '<img src="' + qrcodeDataUri + '" alt="QR Code" class="w-40 h-40 rounded-lg border border-border dark:brightness-90" />' +
+          '</div>' +
+          '<p class="text-xs text-center text-muted-foreground -mt-1 mb-1"><span class="lang-zh">扫码自动填入地址</span><span class="lang-en">Scan to auto-fill address</span></p>'
+        : '';
 
     var html = '<div class="space-y-4">' +
         '<div class="bg-gradient-to-r from-green-50 to-emerald-50 dark:from-green-950 dark:to-emerald-950 border border-green-200 dark:border-green-800 rounded-lg p-4">' +
@@ -157,6 +184,7 @@ function onGeneratePaymentCard(order, config) {
                 '<span class="text-sm font-medium"><span class="lang-zh">收款地址</span><span class="lang-en">Wallet Address</span></span>' +
                 '<button type="button" class="text-xs text-primary hover:underline" onclick="navigator.clipboard.writeText(document.getElementById(\'wallet-addr\').innerText).then(function(){alert(\'Copied!\')})"><span class="lang-zh">点击复制</span><span class="lang-en">Copy</span></button>' +
             '</div>' +
+            qrcodeHtml +
             '<div id="wallet-addr" class="bg-muted p-3 rounded-lg font-mono text-xs break-all select-all cursor-pointer border-2 border-dashed border-muted-foreground/20 hover:border-primary/50 transition-colors" onclick="navigator.clipboard.writeText(this.innerText).then(function(){alert(\'Copied!\')})">' + walletAddress + '</div>' +
         '</div>' +
         '<div class="bg-amber-50 dark:bg-amber-950 border border-amber-200 dark:border-amber-800 rounded-lg p-3">' +
@@ -200,6 +228,21 @@ function onGeneratePaymentCard(order, config) {
  * 通过 TronGrid API 查询 TRC20 转账记录
  */
 function onCheckPaymentStatus(order, config) {
+    // Cleanup old tx_ entries (once per day, removes entries older than 30 days)
+    var _now = AuraLogic.system.getTimestamp();
+    var _lastCleanup = parseInt(AuraLogic.storage.get('_last_cleanup') || '0');
+    if (_now - _lastCleanup > 86400) {
+        AuraLogic.storage.set('_last_cleanup', _now.toString());
+        var _keys = AuraLogic.storage.list();
+        for (var _i = 0; _i < _keys.length; _i++) {
+            if (_keys[_i].indexOf('tx_') === 0) {
+                var _parts = (AuraLogic.storage.get(_keys[_i]) || '').split(':');
+                if (_parts.length >= 2 && _now - parseInt(_parts[1]) > 2592000) {
+                    AuraLogic.storage.delete(_keys[_i]);
+                }
+            }
+        }
+    }
     // 检查是否启用自动确认
     if (config.auto_confirm === false) {
         return { paid: false, message: '需要人工确认付款' };
@@ -280,8 +323,9 @@ function onCheckPaymentStatus(order, config) {
 
         // 检查是否已处理过这笔交易
         var txKey = 'tx_' + tx.transaction_id;
-        var processedOrderId = AuraLogic.storage.get(txKey);
-        if (processedOrderId) {
+        var processedData = AuraLogic.storage.get(txKey);
+        if (processedData) {
+            var processedOrderId = processedData.split(':')[0];
             // 已处理过，检查是否是当前订单
             if (processedOrderId === order.id.toString()) {
                 return {
@@ -294,7 +338,7 @@ function onCheckPaymentStatus(order, config) {
         }
 
         // 标记交易为已处理
-        AuraLogic.storage.set(txKey, order.id.toString());
+        AuraLogic.storage.set(txKey, order.id.toString() + ':' + AuraLogic.system.getTimestamp());
 
         // 清理订单临时数据
         AuraLogic.storage.delete(orderKey + '_amount');
@@ -325,6 +369,18 @@ function onCheckPaymentStatus(order, config) {
 function onRefund(order, config) {
     var orderKey = 'order_' + order.id;
     var savedAmount = AuraLogic.storage.get(orderKey + '_amount') || '';
+
+    // If storage was cleaned up after payment confirmation, recalculate USDT amount
+    if (!savedAmount) {
+        var cnyRate = parseFloat(config.cny_rate) || 7.2;
+        var usdtAmount = order.total_amount;
+        if (order.currency === 'CNY') {
+            usdtAmount = order.total_amount / cnyRate;
+        }
+        var randomCents = (parseInt(order.id) % 10000) / 1000000;
+        usdtAmount = (Math.floor(usdtAmount * 100) / 100) + randomCents;
+        savedAmount = usdtAmount.toFixed(6);
+    }
 
     return {
         success: true,
@@ -367,6 +423,22 @@ function onGeneratePaymentCard(order, config) {
     var walletAddress = config.wallet_address || '';
     var cnyRate = parseFloat(config.cny_rate) || 7.2;
 
+    if (!walletAddress) {
+        return {
+            html: '<div class="p-6 text-center space-y-2">' +
+                '<p class="text-sm text-destructive font-medium">' +
+                    '<span class="lang-zh">\u26a0 \u6536\u6b3e\u94b1\u5305\u5730\u5740\u672a\u914d\u7f6e</span>' +
+                    '<span class="lang-en">\u26a0 Wallet address not configured</span>' +
+                '</p>' +
+                '<p class="text-xs text-muted-foreground">' +
+                    '<span class="lang-zh">\u8bf7\u8054\u7cfb\u7ba1\u7406\u5458\u8bbe\u7f6e\u6536\u6b3e\u5730\u5740</span>' +
+                    '<span class="lang-en">Please contact admin to configure wallet address</span>' +
+                '</p>' +
+            '</div>',
+            title: 'Error'
+        };
+    }
+
     // 计算USDT金额
     var usdtAmount = order.total_amount;
     if (order.currency === 'CNY') {
@@ -381,9 +453,11 @@ function onGeneratePaymentCard(order, config) {
 
     // 保存订单信息到storage
     var orderKey = 'order_' + order.id;
-    AuraLogic.storage.set(orderKey + '_amount', usdtAmount);
-    AuraLogic.storage.set(orderKey + '_time', AuraLogic.system.getTimestamp().toString());
-    AuraLogic.storage.set(orderKey + '_address', walletAddress);
+    if (!AuraLogic.storage.get(orderKey + '_amount')) {
+        AuraLogic.storage.set(orderKey + '_amount', usdtAmount);
+        AuraLogic.storage.set(orderKey + '_time', AuraLogic.system.getTimestamp().toString());
+        AuraLogic.storage.set(orderKey + '_address', walletAddress);
+    }
 
     // 更新订单付款数据
     AuraLogic.order.updatePaymentData({
@@ -395,6 +469,15 @@ function onGeneratePaymentCard(order, config) {
     var autoConfirmTip = config.auto_confirm !== false
         ? '<p class="text-xs text-green-600 dark:text-green-400 mt-2">✓ <span class="lang-zh">系统将自动确认您的付款（约1-5分钟）</span><span class="lang-en">Payment will be auto-confirmed (1-5 min)</span></p>'
         : '<p class="text-xs text-amber-600 dark:text-amber-400 mt-2"><span class="lang-zh">付款完成后请联系客服确认</span><span class="lang-en">Please contact support after payment</span></p>';
+
+    // 生成钱包地址二维码
+    var qrcodeDataUri = walletAddress ? AuraLogic.utils.qrcode(walletAddress, 200) : '';
+    var qrcodeHtml = qrcodeDataUri
+        ? '<div class="flex justify-center py-2">' +
+              '<img src="' + qrcodeDataUri + '" alt="QR Code" class="w-40 h-40 rounded-lg border border-border dark:brightness-90" />' +
+          '</div>' +
+          '<p class="text-xs text-center text-muted-foreground -mt-1 mb-1"><span class="lang-zh">扫码自动填入地址</span><span class="lang-en">Scan to auto-fill address</span></p>'
+        : '';
 
     var html = '<div class="space-y-4">' +
         '<div class="bg-gradient-to-r from-yellow-50 to-amber-50 dark:from-yellow-950 dark:to-amber-950 border border-yellow-200 dark:border-yellow-800 rounded-lg p-4">' +
@@ -412,6 +495,7 @@ function onGeneratePaymentCard(order, config) {
                 '<span class="text-sm font-medium"><span class="lang-zh">收款地址</span><span class="lang-en">Wallet Address</span></span>' +
                 '<button type="button" class="text-xs text-primary hover:underline" onclick="navigator.clipboard.writeText(document.getElementById(\'wallet-addr-bep20\').innerText).then(function(){alert(\'Copied!\')})"><span class="lang-zh">点击复制</span><span class="lang-en">Copy</span></button>' +
             '</div>' +
+            qrcodeHtml +
             '<div id="wallet-addr-bep20" class="bg-muted p-3 rounded-lg font-mono text-xs break-all select-all cursor-pointer border-2 border-dashed border-muted-foreground/20 hover:border-primary/50 transition-colors" onclick="navigator.clipboard.writeText(this.innerText).then(function(){alert(\'Copied!\')})">' + walletAddress + '</div>' +
         '</div>' +
         '<div class="bg-amber-50 dark:bg-amber-950 border border-amber-200 dark:border-amber-800 rounded-lg p-3">' +
@@ -455,6 +539,21 @@ function onGeneratePaymentCard(order, config) {
  * 通过 BSCScan API 查询 BEP20 转账记录
  */
 function onCheckPaymentStatus(order, config) {
+    // Cleanup old tx_ entries (once per day, removes entries older than 30 days)
+    var _now = AuraLogic.system.getTimestamp();
+    var _lastCleanup = parseInt(AuraLogic.storage.get('_last_cleanup') || '0');
+    if (_now - _lastCleanup > 86400) {
+        AuraLogic.storage.set('_last_cleanup', _now.toString());
+        var _keys = AuraLogic.storage.list();
+        for (var _i = 0; _i < _keys.length; _i++) {
+            if (_keys[_i].indexOf('tx_') === 0) {
+                var _parts = (AuraLogic.storage.get(_keys[_i]) || '').split(':');
+                if (_parts.length >= 2 && _now - parseInt(_parts[1]) > 2592000) {
+                    AuraLogic.storage.delete(_keys[_i]);
+                }
+            }
+        }
+    }
     // 检查是否启用自动确认
     if (config.auto_confirm === false) {
         return { paid: false, message: '需要人工确认付款' };
@@ -559,8 +658,9 @@ function onCheckPaymentStatus(order, config) {
 
         // 检查是否已处理过这笔交易
         var txKey = 'tx_' + tx.hash;
-        var processedOrderId = AuraLogic.storage.get(txKey);
-        if (processedOrderId) {
+        var processedData = AuraLogic.storage.get(txKey);
+        if (processedData) {
+            var processedOrderId = processedData.split(':')[0];
             if (processedOrderId === order.id.toString()) {
                 return {
                     paid: true,
@@ -572,7 +672,7 @@ function onCheckPaymentStatus(order, config) {
         }
 
         // 标记交易为已处理
-        AuraLogic.storage.set(txKey, order.id.toString());
+        AuraLogic.storage.set(txKey, order.id.toString() + ':' + AuraLogic.system.getTimestamp());
 
         // 清理订单临时数据
         AuraLogic.storage.delete(orderKey + '_amount');
@@ -603,6 +703,18 @@ function onCheckPaymentStatus(order, config) {
 function onRefund(order, config) {
     var orderKey = 'order_' + order.id;
     var savedAmount = AuraLogic.storage.get(orderKey + '_amount') || '';
+
+    // If storage was cleaned up after payment confirmation, recalculate USDT amount
+    if (!savedAmount) {
+        var cnyRate = parseFloat(config.cny_rate) || 7.2;
+        var usdtAmount = order.total_amount;
+        if (order.currency === 'CNY') {
+            usdtAmount = order.total_amount / cnyRate;
+        }
+        var randomCents = (parseInt(order.id) % 10000) / 1000000;
+        usdtAmount = (Math.floor(usdtAmount * 100) / 100) + randomCents;
+        savedAmount = usdtAmount.toFixed(6);
+    }
 
     return {
         success: true,
