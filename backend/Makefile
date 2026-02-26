@@ -5,7 +5,7 @@ help: ## 显示帮助信息
 
 build: ## 编译项目
 	@echo "Building..."
-	@go build -o bin/api cmd/api/main.go
+	@go build -ldflags "-X main.GitCommit=$$(git rev-parse --short HEAD 2>/dev/null || echo dev)" -o bin/api cmd/api/main.go
 	@echo "Build complete: bin/api"
 
 run: ## 运行开发服务器

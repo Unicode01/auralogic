@@ -33,6 +33,7 @@ func (h *TicketHandler) ListTickets(c *gin.Context) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
 	status := c.Query("status")
+	excludeStatus := c.Query("exclude_status")
 	search := c.Query("search")
 	assignedTo := c.Query("assigned_to")
 
@@ -47,6 +48,8 @@ func (h *TicketHandler) ListTickets(c *gin.Context) {
 
 	if status != "" {
 		query = query.Where("status = ?", status)
+	} else if excludeStatus != "" {
+		query = query.Where("status != ?", excludeStatus)
 	}
 	if search != "" {
 		query = query.Where("ticket_no LIKE ? OR subject LIKE ?", "%"+search+"%", "%"+search+"%")

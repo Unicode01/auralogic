@@ -967,7 +967,7 @@ EOF
   # ---------------------------
   cat > "$WORK_DIR/docker-build/frontend.env.production" <<EOF
 NEXT_PUBLIC_API_URL=$APP_URL
-NEXT_PUBLIC_APP_VERSION=1.0.0
+NEXT_PUBLIC_GIT_COMMIT=$(cd "$WORK_DIR" && git rev-parse --short HEAD 2>/dev/null || echo "dev")
 EOF
 
   # ---------------------------
@@ -986,7 +986,7 @@ const nextConfig = {
     },
     reactStrictMode: true,
     env: {
-        NEXT_PUBLIC_APP_VERSION: '1.0.0',
+        NEXT_PUBLIC_GIT_COMMIT: process.env.NEXT_PUBLIC_GIT_COMMIT || 'dev',
         NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL || '$APP_URL',
     },
     async redirects() {
@@ -1059,8 +1059,10 @@ build_docker_image() {
   cd "$WORK_DIR"
 
   # 构建镜像
+  GIT_COMMIT=$(cd "$WORK_DIR" && git rev-parse --short HEAD 2>/dev/null || echo "dev")
   docker build \
     --build-arg NEXT_PUBLIC_API_URL="$APP_URL" \
+    --build-arg BUILD_VERSION="$GIT_COMMIT" \
     -f docker-build/Dockerfile \
     -t "${IMAGE_NAME}:${IMAGE_TAG}" \
     -t "${IMAGE_NAME}:latest" \
@@ -1253,11 +1255,78 @@ update_container() {
     fi
   fi
 
+  # 更新构建文件（Dockerfile + 前端配置）
+  step "更新构建文件"
+  cp "$(dirname "$0")/docker/Dockerfile.all-in-one" "$WORK_DIR/docker-build/Dockerfile"
+  cp "$(dirname "$0")/docker/nginx.conf" "$WORK_DIR/docker-build/nginx.conf"
+  cp "$(dirname "$0")/docker/supervisord.conf" "$WORK_DIR/docker-build/supervisord.conf"
+  cp "$(dirname "$0")/docker/entrypoint.sh" "$WORK_DIR/docker-build/entrypoint.sh"
+
+  cat > "$WORK_DIR/docker-build/frontend.env.production" <<EOF
+NEXT_PUBLIC_API_URL=$APP_URL
+NEXT_PUBLIC_GIT_COMMIT=$(cd "$WORK_DIR" && git rev-parse --short HEAD 2>/dev/null || echo "dev")
+EOF
+
+  cat > "$WORK_DIR/docker-build/next.config.js" <<NEXTEOF
+/** @type {import('next').NextConfig} */
+const nextConfig = {
+    output: 'standalone',
+    images: {
+        domains: [
+            'localhost',
+            '$(extract_domain "$APP_URL")',
+        ],
+        formats: ['image/avif', 'image/webp'],
+    },
+    reactStrictMode: true,
+    env: {
+        NEXT_PUBLIC_GIT_COMMIT: process.env.NEXT_PUBLIC_GIT_COMMIT || 'dev',
+        NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL || '$APP_URL',
+    },
+    async redirects() {
+        return [
+            {
+                source: '/admin',
+                destination: '/admin/dashboard',
+                permanent: true,
+            },
+        ]
+    },
+    async headers() {
+        return [
+            {
+                source: '/:path*',
+                headers: [
+                    { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
+                    { key: 'X-Content-Type-Options', value: 'nosniff' },
+                    { key: 'X-XSS-Protection', value: '1; mode=block' },
+                    { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+                    { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=()' },
+                    { key: 'Strict-Transport-Security', value: 'max-age=31536000; includeSubDomains' },
+                ],
+            },
+        ]
+    },
+    webpack: (config, { isServer }) => {
+        if (!isServer) {
+            config.resolve.fallback = { ...config.resolve.fallback, fs: false }
+        }
+        return config
+    },
+}
+
+module.exports = nextConfig
+NEXTEOF
+
+  ok "构建文件已更新"
+
   # 重新构建镜像
   step "重新构建 Docker 镜像"
   cd "$WORK_DIR"
+  GIT_COMMIT=$(cd "$WORK_DIR" && git rev-parse --short HEAD 2>/dev/null || echo "dev")
   docker build \
     --build-arg NEXT_PUBLIC_API_URL="$APP_URL" \
+    --build-arg BUILD_VERSION="$GIT_COMMIT" \
     -f docker-build/Dockerfile \
     -t "${IMAGE_NAME}:${IMAGE_TAG}" \
     -t "${IMAGE_NAME}:latest" \

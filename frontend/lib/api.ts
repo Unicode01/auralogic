@@ -1304,6 +1304,7 @@ export async function getAdminTickets(params?: {
   page?: number
   limit?: number
   status?: string
+  exclude_status?: string
   search?: string
   assigned_to?: string
 }) {
@@ -1311,6 +1312,7 @@ export async function getAdminTickets(params?: {
   if (params?.page) query.append('page', params.page.toString())
   if (params?.limit) query.append('limit', params.limit.toString())
   if (params?.status) query.append('status', params.status)
+  if (params?.exclude_status) query.append('exclude_status', params.exclude_status)
   if (params?.search) query.append('search', params.search)
   if (params?.assigned_to) query.append('assigned_to', params.assigned_to)
 

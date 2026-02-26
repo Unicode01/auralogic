@@ -23,6 +23,7 @@ func SetupRouter(
 	userRepo *repository.UserRepository,
 	db *gorm.DB,
 	paymentPollingService *service.PaymentPollingService,
+	version string,
 ) *gin.Engine {
 	// 设置Gin模式
 	if cfg.App.Env == "production" {
@@ -70,7 +71,7 @@ func SetupRouter(
 	adminAPIKeyHandler := adminHandler.NewAPIKeyHandler(db)
 	adminAdminHandler := adminHandler.NewAdminHandler(userRepo, db, cfg)
 	adminLogHandler := adminHandler.NewLogHandler(db)
-	adminDashboardHandler := adminHandler.NewDashboardHandler(db, cfg)
+	adminDashboardHandler := adminHandler.NewDashboardHandler(db, cfg, version)
 	adminAnalyticsHandler := adminHandler.NewAnalyticsHandler(db, cfg)
 	adminSettingsHandler := adminHandler.NewSettingsHandler(db, cfg, smsService)
 	adminUploadHandler := adminHandler.NewUploadHandler(cfg.Upload.Dir, cfg.App.URL)

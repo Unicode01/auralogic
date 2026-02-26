@@ -14,8 +14,16 @@ import (
 	"auralogic/internal/service"
 )
 
+// GitCommit is set at compile time via:
+//
+//	go build -ldflags "-X main.GitCommit=$(git rev-parse --short HEAD)" ./cmd/api
+var GitCommit = ""
+
 func main() {
-	log.Println("Starting AuraLogic API Server...")
+	if GitCommit == "" {
+		GitCommit = "dev"
+	}
+	log.Printf("Starting AuraLogic API Server (version: %s)...", GitCommit)
 
 	// 加载配置
 	cfg, err := config.LoadConfig(config.GetConfigPath())
@@ -104,7 +112,7 @@ func main() {
 	log.Println("Ticket auto-close service started")
 
 	// 设置路由
-	r := router.SetupRouter(cfg, authService, orderService, productService, emailService, userRepo, db, paymentPollingService)
+	r := router.SetupRouter(cfg, authService, orderService, productService, emailService, userRepo, db, paymentPollingService, GitCommit)
 
 	// 启动服务器
 	addr := fmt.Sprintf(":%d", cfg.App.Port)

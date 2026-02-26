@@ -71,7 +71,19 @@ export default function AdminDashboardPage() {
   return (
     <div className="space-y-8">
       <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold">{t.admin.dashboard}</h1>
+        <div className="flex items-center gap-3">
+          <h1 className="text-3xl font-bold">{t.admin.dashboard}</h1>
+          <div className="flex items-center gap-1.5">
+            <Badge variant="outline" className="text-xs font-mono">
+              {t.admin.frontendVersion} {process.env.NEXT_PUBLIC_GIT_COMMIT || '-'}
+            </Badge>
+            {statsData?.git_commit && (
+              <Badge variant="outline" className="text-xs font-mono">
+                {t.admin.backendVersion} {statsData.git_commit}
+              </Badge>
+            )}
+          </div>
+        </div>
         <div className="text-sm text-muted-foreground">
           {t.admin.lastUpdated}{new Date().toLocaleString(locale === 'zh' ? 'zh-CN' : 'en-US')}
         </div>

@@ -16,7 +16,8 @@ COPY backend/ ./
 # 使用 CGO 编译，添加 musl libc 兼容标志
 ENV CGO_ENABLED=1
 ENV CGO_CFLAGS="-D_LARGEFILE64_SOURCE"
-RUN go build -o /build/bin/api cmd/api/main.go
+ARG BUILD_VERSION=dev
+RUN go build -ldflags "-X main.GitCommit=$BUILD_VERSION" -o /build/bin/api cmd/api/main.go
 RUN go build -o /build/bin/init_admin scripts/init_admin.go
 
 # ----------------
