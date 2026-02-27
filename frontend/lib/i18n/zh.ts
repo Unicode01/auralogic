@@ -383,6 +383,8 @@ export const zhTranslations = {
         // 管理员订单操作
         backToListShort: '返回列表',
         markPaid: '标记已付款',
+        confirmMarkPaidTitle: '确认标记为已付款',
+        confirmMarkPaidDesc: '确定要将此订单标记为已付款吗？此操作将变更订单状态，请确认付款已实际到账。',
         updatePrice: '修改价格',
         updatePriceTitle: '修改订单价格',
         updatePriceDesc: '修改未付款订单的总金额。修改后用户需要支付新的金额。',
@@ -861,6 +863,7 @@ export const zhTranslations = {
         confirmBatchComplete: '确定要将选中的 {count} 个订单标记为已完成吗？',
         confirmBatchCancel: '确定要取消选中的 {count} 个订单吗？',
         confirmBatchDelete: '确定要删除选中的 {count} 个订单吗？此操作不可撤销。',
+        batchConfirmTitle: '确认批量操作',
         batchSuccess: '批量操作完成：{success} 成功，{failed} 失败',
         selectAll: '全选当前页',
         deselectAll: '取消选择',
