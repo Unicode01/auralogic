@@ -412,13 +412,33 @@ export default function AdminOrderDetailPage({ params }: { params: Promise<{ id:
         <div className="flex gap-2">
           {/* 标记已付款 */}
           {order.status === 'pending_payment' && (
-            <Button
-              onClick={() => markPaidMutation.mutate()}
-              disabled={markPaidMutation.isPending}
-            >
-              <CreditCard className="mr-2 h-4 w-4" />
-              {markPaidMutation.isPending ? t.admin.processing : t.order.markPaid}
-            </Button>
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button
+                  disabled={markPaidMutation.isPending}
+                >
+                  <CreditCard className="mr-2 h-4 w-4" />
+                  {markPaidMutation.isPending ? t.admin.processing : t.order.markPaid}
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>{t.order.confirmMarkPaidTitle}</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    {t.order.confirmMarkPaidDesc}
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>{t.common.cancel}</AlertDialogCancel>
+                  <AlertDialogAction
+                    onClick={() => markPaidMutation.mutate()}
+                    disabled={markPaidMutation.isPending}
+                  >
+                    {markPaidMutation.isPending ? t.admin.processing : t.order.markPaid}
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
           )}
 
           {/* 修改订单价格 */}

@@ -383,6 +383,8 @@ export const enTranslations = {
     // Admin order actions
     backToListShort: 'Back',
     markPaid: 'Mark as Paid',
+    confirmMarkPaidTitle: 'Confirm Mark as Paid',
+    confirmMarkPaidDesc: 'Are you sure you want to mark this order as paid? This will change the order status. Please confirm that payment has been received.',
     updatePrice: 'Update Price',
     updatePriceTitle: 'Update Order Price',
     updatePriceDesc: 'Update the total amount of an unpaid order. The user will need to pay the new amount.',
@@ -861,6 +863,7 @@ export const enTranslations = {
         confirmBatchComplete: 'Mark {count} selected orders as completed?',
         confirmBatchCancel: 'Cancel {count} selected orders?',
         confirmBatchDelete: 'Delete {count} selected orders? This cannot be undone.',
+        batchConfirmTitle: 'Confirm Batch Operation',
         batchSuccess: 'Batch operation completed: {success} succeeded, {failed} failed',
         selectAll: 'Select All',
         deselectAll: 'Deselect All',

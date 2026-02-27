@@ -16,6 +16,16 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Shield, RefreshCw, Download, Upload, FileDown, Package, CheckCircle2, XCircle, Trash2, ChevronDown, X } from 'lucide-react'
 import Link from 'next/link'
 import { getToken } from '@/lib/auth'
@@ -39,6 +49,8 @@ function AdminOrdersContent() {
   const [userId, setUserId] = useState<number | undefined>()
   const [country, setCountry] = useState<string | undefined>()
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
+  const [batchDialogOpen, setBatchDialogOpen] = useState(false)
+  const [batchAction, setBatchAction] = useState('')
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -228,22 +240,27 @@ function AdminOrdersContent() {
   })
 
   const handleBatchAction = (action: string) => {
+    setBatchAction(action)
+    setBatchDialogOpen(true)
+  }
+
+  const confirmBatchAction = () => {
     const ids = Array.from(selectedIds)
-    const count = ids.length
-    let confirmMsg = ''
-    switch (action) {
+    batchMutation.mutate({ orderIds: ids, action: batchAction })
+    setBatchDialogOpen(false)
+  }
+
+  const getBatchConfirmMsg = () => {
+    const count = selectedIds.size
+    switch (batchAction) {
       case 'complete':
-        confirmMsg = t.admin.confirmBatchComplete.replace('{count}', String(count))
-        break
+        return t.admin.confirmBatchComplete.replace('{count}', String(count))
       case 'cancel':
-        confirmMsg = t.admin.confirmBatchCancel.replace('{count}', String(count))
-        break
+        return t.admin.confirmBatchCancel.replace('{count}', String(count))
       case 'delete':
-        confirmMsg = t.admin.confirmBatchDelete.replace('{count}', String(count))
-        break
-    }
-    if (confirm(confirmMsg)) {
-      batchMutation.mutate({ orderIds: ids, action })
+        return t.admin.confirmBatchDelete.replace('{count}', String(count))
+      default:
+        return ''
     }
   }
 
@@ -525,6 +542,27 @@ function AdminOrdersContent() {
           onPageChange: handlePageChange,
         }}
       />
+
+      {/* 批量操作二次确认对话框 */}
+      <AlertDialog open={batchDialogOpen} onOpenChange={setBatchDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t.admin.batchConfirmTitle}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {getBatchConfirmMsg()}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t.common.cancel}</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmBatchAction}
+              className={batchAction === 'delete' ? 'bg-destructive text-destructive-foreground hover:bg-destructive/90' : ''}
+            >
+              {batchMutation.isPending ? t.admin.processing : t.common.confirm}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }
