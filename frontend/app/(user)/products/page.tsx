@@ -181,10 +181,11 @@ export default function ProductsPage() {
               const isFeatured = product.is_featured || product.isFeatured
               const hasDiscount = product.original_price && product.original_price > product.price
               const isVirtual = (product.product_type || product.productType) === 'virtual'
+              const isSoldOut = product.status === 'out_of_stock'
 
               return (
                 <Link key={product.id} href={`/products/${product.id}`}>
-                  <Card className="h-full hover:shadow-lg transition-shadow cursor-pointer">
+                  <Card className={`h-full hover:shadow-lg transition-shadow cursor-pointer ${isSoldOut ? 'opacity-70' : ''}`}>
                     <div className="relative aspect-square overflow-hidden rounded-t-lg">
                       {primaryImage ? (
                         <img
@@ -201,6 +202,14 @@ export default function ProductsPage() {
                       <div className={`img-fallback w-full h-full bg-muted flex items-center justify-center ${primaryImage ? 'hidden' : ''}`}>
                         <Package className="w-16 h-16 text-muted-foreground" />
                       </div>
+                      {/* 售罄遮罩 */}
+                      {isSoldOut && (
+                        <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
+                          <span className="text-white font-bold text-sm md:text-base px-3 py-1 bg-black/60 rounded">
+                            {t.product.soldOut}
+                          </span>
+                        </div>
+                      )}
                       {/* 商品标签 - 精简版 */}
                       <div className="absolute top-1.5 left-1.5 flex flex-wrap gap-1">
                         {isVirtual && (

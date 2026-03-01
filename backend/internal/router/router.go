@@ -60,7 +60,7 @@ func SetupRouter(
 
 	// CreateHandler
 	userAuthHandler := userHandler.NewAuthHandler(authService, emailService, smsService)
-	userOrderHandler := userHandler.NewOrderHandler(orderService, bindingService, virtualInventoryService)
+	userOrderHandler := userHandler.NewOrderHandler(orderService, bindingService, virtualInventoryService, cfg)
 	userProductHandler := userHandler.NewProductHandler(productService, orderService, bindingService, virtualInventoryService)
 	formShippingHandler := formHandler.NewShippingHandler(orderService, cfg)
 	jsRuntimeService := service.NewJSRuntimeService(db)
@@ -106,6 +106,7 @@ func SetupRouter(
 	// ========== 序列号查询API（公开，无需登录） ==========
 	serialAPI := r.Group("/api/serial")
 	serialAPI.Use(middleware.RequireSerialEnabled())
+	serialAPI.Use(middleware.RateLimitMiddleware(10, time.Minute)) // 每分钟最多10次，防止暴力枚举
 	{
 		serialAPI.POST("/verify", userSerialHandler.VerifySerial)
 		serialAPI.GET("/:serial_number", userSerialHandler.GetSerialByNumber)
@@ -165,7 +166,12 @@ func SetupRouter(
 			orders.GET("/:order_no/form-token", userOrderHandler.GetOrRefreshFormToken)
 			orders.GET("/:order_no/virtual-products", userOrderHandler.GetVirtualProducts)
 			orders.POST("/:order_no/complete", userOrderHandler.CompleteOrder)
+			orders.GET("/:order_no/invoice", userOrderHandler.DownloadInvoice)
+			orders.GET("/:order_no/invoice-token", userOrderHandler.GetInvoiceToken)
 		}
+
+		// 账单公开访问（通过一次性令牌认证）
+		userAPI.GET("/invoice/:token", userOrderHandler.ViewInvoiceByToken)
 
 		// Product（推荐商品公开访问，其余需要登录）
 		productsPublic := userAPI.Group("/products")
@@ -468,6 +474,9 @@ func SetupRouter(
 			virtualInventories.GET("/:id", middleware.RequirePermission("product.view"), adminVirtualInventoryHandler.GetVirtualInventory)
 			virtualInventories.PUT("/:id", middleware.RequirePermission("product.edit"), adminVirtualInventoryHandler.UpdateVirtualInventory)
 			virtualInventories.DELETE("/:id", middleware.RequirePermission("product.delete"), adminVirtualInventoryHandler.DeleteVirtualInventory)
+
+			// 脚本测试
+			virtualInventories.POST("/test-script", middleware.RequirePermission("product.edit"), adminVirtualInventoryHandler.TestDeliveryScript)
 
 			// 库存项管理
 			virtualInventories.POST("/:id/import", middleware.RequirePermission("product.edit"), adminVirtualInventoryHandler.ImportStock)

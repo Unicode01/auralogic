@@ -60,8 +60,7 @@ func (h *OrderHandler) hasPrivacyPermission(c *gin.Context) bool {
 
 // ListOrders Order List
 func (h *OrderHandler) ListOrders(c *gin.Context) {
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
+	page, limit := response.GetPagination(c)
 	status := c.Query("status")
 	search := c.Query("search")
 	country := c.Query("country")
@@ -69,13 +68,6 @@ func (h *OrderHandler) ListOrders(c *gin.Context) {
 	promoCode := strings.ToUpper(strings.TrimSpace(c.Query("promo_code")))
 	promoCodeIDStr := c.Query("promo_code_id")
 	userIDStr := c.Query("user_id")
-
-	if page < 1 {
-		page = 1
-	}
-	if limit > 100 {
-		limit = 100
-	}
 
 	// 解析 user_id 参数
 	var userID *uint
@@ -152,7 +144,7 @@ func (h *OrderHandler) GetOrder(c *gin.Context) {
 	// 获取该订单的虚拟产品库存（只有已付款后才返回）
 	var virtualStocks interface{}
 	if h.virtualInventoryService != nil && order.Status != models.OrderStatusPendingPayment && order.Status != models.OrderStatusDraft && order.Status != models.OrderStatusNeedResubmit {
-		stockList, err := h.virtualInventoryService.GetStockByOrderID(uint(orderID))
+		stockList, err := h.virtualInventoryService.GetStockByOrderNo(order.OrderNo)
 		if err == nil && len(stockList) > 0 {
 			virtualStocks = stockList
 		}
@@ -238,7 +230,7 @@ func (h *OrderHandler) AssignTracking(c *gin.Context) {
 
 // CompleteOrderRequest - Complete order request
 type CompleteOrderRequest struct {
-	AdminRemark string `json:"admin_remark"`
+	AdminRemark string `json:"remark"`
 }
 
 // CompleteOrder Admin标记Order完成
@@ -735,6 +727,13 @@ func (h *OrderHandler) RequestResubmit(c *gin.Context) {
 		return
 	}
 
+	// 记录操作日志
+	db := database.GetDB()
+	logger.LogOrderOperation(db, c, "request_resubmit", order.ID, map[string]interface{}{
+		"order_no": order.OrderNo,
+		"reason":   req.Reason,
+	})
+
 	response.Success(c, gin.H{
 		"order_no":       order.OrderNo,
 		"status":         models.OrderStatusNeedResubmit,
@@ -896,7 +895,7 @@ func (h *OrderHandler) BatchUpdateOrders(c *gin.Context) {
 
 // UpdateOrderPriceRequest 修改订单价格请求
 type UpdateOrderPriceRequest struct {
-	TotalAmount float64 `json:"total_amount" binding:"required,min=0"`
+	TotalAmount *float64 `json:"total_amount" binding:"required,min=0"`
 }
 
 // UpdateOrderPrice 修改未付款订单价格
@@ -930,7 +929,7 @@ func (h *OrderHandler) UpdateOrderPrice(c *gin.Context) {
 	oldAmount := order.TotalAmount
 
 	// 更新订单价格
-	order.TotalAmount = req.TotalAmount
+	order.TotalAmount = *req.TotalAmount
 
 	db := database.GetDB()
 	if err := db.Save(order).Error; err != nil {
@@ -942,7 +941,7 @@ func (h *OrderHandler) UpdateOrderPrice(c *gin.Context) {
 	logger.LogOrderOperation(db, c, "update_price", order.ID, map[string]interface{}{
 		"order_no":         order.OrderNo,
 		"old_total_amount": oldAmount,
-		"new_total_amount": req.TotalAmount,
+		"new_total_amount": *req.TotalAmount,
 	})
 
 	response.Success(c, gin.H{

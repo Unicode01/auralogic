@@ -199,6 +199,220 @@ body:has(.sidebar-layout) {
     scrollbar-color: hsl(215 20.2% 40%) hsl(217.2 32.6% 12%);
 }
 
+/* ====== Markdown 正文排版样式 ====== */
+.markdown-body {
+    font-size: 1rem;
+    line-height: 1.75;
+    color: hsl(var(--foreground));
+    word-wrap: break-word;
+}
+
+.markdown-body > :first-child {
+    margin-top: 0 !important;
+}
+
+.markdown-body > :last-child {
+    margin-bottom: 0 !important;
+}
+
+/* 标题 */
+.markdown-body h1 {
+    font-size: 1.875em;
+    font-weight: 700;
+    margin-top: 1.5em;
+    margin-bottom: 0.625em;
+    line-height: 1.25;
+    border-bottom: 1px solid hsl(var(--border));
+    padding-bottom: 0.3em;
+}
+
+.markdown-body h2 {
+    font-size: 1.5em;
+    font-weight: 700;
+    margin-top: 1.25em;
+    margin-bottom: 0.5em;
+    line-height: 1.3;
+    border-bottom: 1px solid hsl(var(--border));
+    padding-bottom: 0.25em;
+}
+
+.markdown-body h3 {
+    font-size: 1.25em;
+    font-weight: 600;
+    margin-top: 1em;
+    margin-bottom: 0.5em;
+    line-height: 1.4;
+}
+
+.markdown-body h4 {
+    font-size: 1.1em;
+    font-weight: 600;
+    margin-top: 0.875em;
+    margin-bottom: 0.375em;
+}
+
+.markdown-body h5 {
+    font-size: 1em;
+    font-weight: 600;
+    margin-top: 0.75em;
+    margin-bottom: 0.25em;
+}
+
+.markdown-body h6 {
+    font-size: 0.875em;
+    font-weight: 600;
+    margin-top: 0.75em;
+    margin-bottom: 0.25em;
+    color: hsl(var(--muted-foreground));
+}
+
+/* 段落 */
+.markdown-body p {
+    margin-top: 0;
+    margin-bottom: 1em;
+}
+
+/* 列表 */
+.markdown-body ul,
+.markdown-body ol {
+    margin-top: 0.5em;
+    margin-bottom: 1em;
+    padding-left: 1.75em;
+}
+
+.markdown-body ul {
+    list-style-type: disc;
+}
+
+.markdown-body ol {
+    list-style-type: decimal;
+}
+
+.markdown-body li {
+    margin-bottom: 0.25em;
+}
+
+.markdown-body li > ul,
+.markdown-body li > ol {
+    margin-top: 0.25em;
+    margin-bottom: 0;
+}
+
+/* 引用 */
+.markdown-body blockquote {
+    margin: 1em 0;
+    padding: 0.5em 1em;
+    border-left: 4px solid hsl(var(--primary));
+    background: hsl(var(--muted) / 0.5);
+    border-radius: 0 0.375rem 0.375rem 0;
+    color: hsl(var(--muted-foreground));
+}
+
+.markdown-body blockquote p {
+    margin-bottom: 0;
+}
+
+/* 代码 */
+.markdown-body pre {
+    margin: 1em 0;
+    padding: 1em;
+    border-radius: 0.5rem;
+    background: hsl(var(--muted));
+    overflow-x: auto;
+    font-size: 0.875em;
+    line-height: 1.6;
+}
+
+.markdown-body code {
+    font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+    font-size: 0.875em;
+    padding: 0.2em 0.4em;
+    border-radius: 0.25rem;
+    background: hsl(var(--muted));
+}
+
+.markdown-body pre code {
+    padding: 0;
+    background: transparent;
+    font-size: inherit;
+}
+
+/* 表格 */
+.markdown-body table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 1em 0;
+    font-size: 0.9em;
+}
+
+.markdown-body th,
+.markdown-body td {
+    border: 1px solid hsl(var(--border));
+    padding: 0.5em 0.75em;
+    text-align: left;
+}
+
+.markdown-body th {
+    background: hsl(var(--muted));
+    font-weight: 600;
+}
+
+/* 分割线 */
+.markdown-body hr {
+    margin: 1.5em 0;
+    border: none;
+    border-top: 1px solid hsl(var(--border));
+}
+
+/* 链接 */
+.markdown-body a {
+    color: hsl(var(--primary));
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
+
+.markdown-body a:hover {
+    opacity: 0.8;
+}
+
+/* 图片 */
+.markdown-body img {
+    max-width: 100%;
+    border-radius: 0.5rem;
+    margin: 0.5em 0;
+}
+
+/* 强调 */
+.markdown-body strong {
+    font-weight: 600;
+}
+
+/* 定义列表 */
+.markdown-body dl {
+    margin: 1em 0;
+}
+
+.markdown-body dt {
+    font-weight: 600;
+    margin-top: 0.5em;
+}
+
+.markdown-body dd {
+    margin-left: 1.5em;
+    margin-bottom: 0.5em;
+}
+
+/* 标记 */
+.markdown-body mark {
+    background: hsl(45 100% 70% / 0.4);
+    padding: 0.1em 0.2em;
+    border-radius: 0.125rem;
+}
+
+.dark .markdown-body mark {
+    background: hsl(45 100% 40% / 0.3);
+}
+
 /* 修复 CodeMirror 编辑器长代码行撑开容器宽度的问题 */
 /* contain:inline-size 阻止编辑器内容宽度向上传播影响 grid/flex 布局，
    让编辑器宽度由父容器决定而非内容决定，从而在内部产生横向滚动。 */

@@ -30,16 +30,11 @@ func NewTicketHandler(db *gorm.DB, emailService *service.EmailService) *TicketHa
 
 // ListTickets 获取工单列表
 func (h *TicketHandler) ListTickets(c *gin.Context) {
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
+	page, limit := response.GetPagination(c)
 	status := c.Query("status")
 	excludeStatus := c.Query("exclude_status")
 	search := c.Query("search")
 	assignedTo := c.Query("assigned_to")
-
-	if limit > 100 {
-		limit = 100
-	}
 
 	var tickets []models.Ticket
 	var total int64

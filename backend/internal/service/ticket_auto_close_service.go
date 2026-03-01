@@ -2,6 +2,7 @@ package service
 
 import (
 	"fmt"
+	"log"
 	"sync"
 	"time"
 
@@ -79,22 +80,22 @@ func (s *TicketAutoCloseService) closeInactiveTickets() {
 	cutoff := time.Now().Add(-time.Duration(autoCloseHours) * time.Hour)
 	now := time.Now()
 
-	// 查找超时未回复的工单：
-	// - 状态为 open 或 processing 或 resolved
-	// - 最后消息时间早于截止时间
+	activeStatuses := []string{
+		string(models.TicketStatusOpen),
+		string(models.TicketStatusProcessing),
+		string(models.TicketStatusResolved),
+	}
+
+	// 分批查询超时未回复的工单，每次最多处理100条，关联用户以获取语言偏好
 	var tickets []models.Ticket
-	err := s.db.Where(
+	err := s.db.Preload("User").Where(
 		"status IN ? AND last_message_at IS NOT NULL AND last_message_at < ?",
-		[]string{
-			string(models.TicketStatusOpen),
-			string(models.TicketStatusProcessing),
-			string(models.TicketStatusResolved),
-		},
+		activeStatuses,
 		cutoff,
-	).Find(&tickets).Error
+	).Limit(100).Find(&tickets).Error
 
 	if err != nil {
-		fmt.Printf("Error querying inactive tickets: %v\n", err)
+		log.Printf("[TicketAutoClose] Error querying inactive tickets: %v", err)
 		return
 	}
 
@@ -104,31 +105,10 @@ func (s *TicketAutoCloseService) closeInactiveTickets() {
 
 	closedCount := 0
 	for _, ticket := range tickets {
-		err := s.db.Model(&ticket).Updates(map[string]interface{}{
-			"status":    models.TicketStatusClosed,
-			"closed_at": now,
-		}).Error
-		if err != nil {
-			fmt.Printf("Error auto-closing ticket %s: %v\n", ticket.TicketNo, err)
+		if err := s.closeTicket(&ticket, autoCloseHours, now, activeStatuses); err != nil {
+			log.Printf("[TicketAutoClose] Error closing ticket %s: %v", ticket.TicketNo, err)
 			continue
 		}
-
-		// 添加系统消息
-		sysMsg := &models.TicketMessage{
-			TicketID:      ticket.ID,
-			SenderType:    "admin",
-			SenderID:      0,
-			SenderName:    "System",
-			Content:       fmt.Sprintf("Ticket automatically closed after %d hours with no reply.", autoCloseHours),
-			ContentType:   "text",
-			IsReadByUser:  false,
-			IsReadByAdmin: true,
-		}
-		s.db.Create(sysMsg)
-
-		// 更新未读计数
-		s.db.Model(&ticket).Update("unread_count_user", gorm.Expr("unread_count_user + 1"))
-
 		closedCount++
 	}
 
@@ -138,5 +118,71 @@ func (s *TicketAutoCloseService) closeInactiveTickets() {
 			"auto_close_hours": autoCloseHours,
 			"cutoff_time":      cutoff.Format(time.RFC3339),
 		})
+	}
+}
+
+// closeTicket 关闭单个工单（事务内完成状态更新、系统消息、未读计数）
+func (s *TicketAutoCloseService) closeTicket(ticket *models.Ticket, autoCloseHours int, now time.Time, activeStatuses []string) error {
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		// 原子更新状态，WHERE status 条件防止并发重复处理
+		result := tx.Model(ticket).
+			Where("status IN ?", activeStatuses).
+			Updates(map[string]interface{}{
+				"status":    models.TicketStatusClosed,
+				"closed_at": now,
+			})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			// 工单状态已被其他流程修改，跳过
+			return nil
+		}
+
+		// 根据用户语言偏好生成系统消息
+		msgContent := ticketAutoCloseMessage(ticket.User, autoCloseHours)
+		sysMsg := &models.TicketMessage{
+			TicketID:      ticket.ID,
+			SenderType:    "admin",
+			SenderID:      0,
+			SenderName:    "System",
+			Content:       msgContent,
+			ContentType:   "text",
+			IsReadByUser:  false,
+			IsReadByAdmin: true,
+		}
+		if err := tx.Create(sysMsg).Error; err != nil {
+			return err
+		}
+
+		// 更新未读计数和最后消息信息
+		preview := msgContent
+		if len(preview) > 200 {
+			preview = preview[:200]
+		}
+		if err := tx.Model(ticket).Updates(map[string]interface{}{
+			"unread_count_user":    gorm.Expr("unread_count_user + 1"),
+			"last_message_at":      now,
+			"last_message_preview": preview,
+			"last_message_by":      "admin",
+		}).Error; err != nil {
+			return err
+		}
+
+		return nil
+	})
+}
+
+// ticketAutoCloseMessage 根据用户语言偏好生成自动关闭消息
+func ticketAutoCloseMessage(user *models.User, hours int) string {
+	locale := ""
+	if user != nil {
+		locale = user.Locale
+	}
+	switch locale {
+	case "zh":
+		return fmt.Sprintf("工单已超过 %d 小时无回复，系统自动关闭。", hours)
+	default:
+		return fmt.Sprintf("Ticket automatically closed after %d hours with no reply.", hours)
 	}
 }

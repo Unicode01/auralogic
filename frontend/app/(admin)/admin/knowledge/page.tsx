@@ -886,7 +886,7 @@ export default function AdminKnowledgePage() {
                                 <MarkdownMessage
                                   content={articleForm.content}
                                   allowHtml
-                                  className="prose dark:prose-invert max-w-none text-base [&_*]:text-foreground"
+                                  className="markdown-body"
                                 />
                               ) : (
                                 <p className="text-muted-foreground">

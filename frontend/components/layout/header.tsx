@@ -6,9 +6,13 @@ import { useAuth } from '@/hooks/use-auth'
 import { Button } from '@/components/ui/button'
 import { UserNav } from './user-nav'
 import { Package } from 'lucide-react'
+import { useLocale } from '@/hooks/use-locale'
+import { getTranslations } from '@/lib/i18n'
 
 export function Header() {
   const { user, isAuthenticated, isLoading } = useAuth()
+  const { locale } = useLocale()
+  const t = getTranslations(locale)
   const [mounted, setMounted] = useState(false)
 
   useEffect(() => {
@@ -32,7 +36,7 @@ export function Header() {
             <UserNav user={user} />
           ) : (
             <Button asChild>
-              <Link href="/login">登录</Link>
+              <Link href="/login">{t.auth.login}</Link>
             </Button>
           )}
         </div>

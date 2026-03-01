@@ -236,7 +236,7 @@ export default function EditPromoCodePage() {
       <div className="flex items-center gap-4">
         <Button variant="outline" size="sm" asChild>
           <Link href="/admin/promo-codes">
-            <ArrowLeft className="mr-1.5 h-4 w-4" />
+            <ArrowLeft className="h-4 w-4 md:mr-1.5" />
             <span className="hidden md:inline">{t.common.back}</span>
           </Link>
         </Button>

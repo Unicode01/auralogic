@@ -106,7 +106,7 @@ function VirtualInventoryBindingCard({ productId, isNew }: { productId: number |
   })
 
   const bindings = bindingsData?.data?.bindings || []
-  const virtualInventories = virtualInventoriesData?.data?.list || []
+  const virtualInventories = virtualInventoriesData?.data?.items || []
 
   // 过滤掉已绑定的库存
   const availableInventories = virtualInventories.filter(
@@ -438,7 +438,7 @@ export default function ProductEditPage() {
           return {
             name: String(attr.name || ''),
             values: values,
-            mode: attr.mode || 'user_select', // 兼容旧��据，默认为用户自选
+            mode: attr.mode || 'user_select', // 兼容旧数据，默认为用户自选
             valuesInput: values.join(','), // 初始化原始输入字符串
           }
         }),
@@ -796,7 +796,7 @@ export default function ProductEditPage() {
     delete (submitData as any).virtual_variant_inventory_bindings
     delete (submitData as any).variant_mode
 
-    // 清理 attributes 中的 valuesInput 字���（仅用于前端输入，不发送到后端）
+    // 清理 attributes 中的 valuesInput 字段（仅用于前端输入，不发送到后端）
     submitData.attributes = submitData.attributes.map(attr => ({
       name: attr.name,
       values: attr.values,
@@ -940,7 +940,7 @@ export default function ProductEditPage() {
       <div className="flex items-center gap-4">
         <Button variant="outline" size="sm" asChild>
           <Link href="/admin/products">
-            <ArrowLeft className="mr-1.5 h-4 w-4" />
+            <ArrowLeft className="h-4 w-4 md:mr-1.5" />
             <span className="hidden md:inline">{t.common.back}</span>
           </Link>
         </Button>
@@ -1042,7 +1042,7 @@ export default function ProductEditPage() {
               {descPreview ? (
                 <div className="min-h-[156px] rounded-md border border-border p-3">
                   {form.description ? (
-                    <MarkdownMessage content={form.description} className="text-sm" allowHtml />
+                    <MarkdownMessage content={form.description} className="markdown-body text-sm" allowHtml />
                   ) : (
                     <p className="text-sm text-muted-foreground">{t.admin.descPreviewEmpty}</p>
                   )}
@@ -1470,7 +1470,7 @@ export default function ProductEditPage() {
             }))}
             variantMode={form.variant_mode}
             bindings={form.virtual_variant_inventory_bindings}
-            virtualInventories={virtualInventoriesData?.data?.list || []}
+            virtualInventories={virtualInventoriesData?.data?.items || []}
             onBindingsChange={(bindings) => setForm({ ...form, virtual_variant_inventory_bindings: bindings })}
           />
         )}

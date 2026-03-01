@@ -15,7 +15,7 @@ import {
   Eye,
   ShoppingBag,
   Package,
-  Database
+  Database,
 } from 'lucide-react'
 import Link from 'next/link'
 import toast from 'react-hot-toast'
@@ -173,10 +173,18 @@ export default function AdminProductsPage() {
     {
       header: t.admin.status,
       cell: ({ row }: { row: { original: Product } }) => {
-        const status = row.original.status
+        const product = row.original
+        const status = product.status
         const config = statusConfig[status]
         return (
-          <Badge className={config.color}>
+          <Badge
+            className={`${config.color} cursor-pointer hover:opacity-80 transition-opacity`}
+            onClick={() => updateStatusMutation.mutate({
+              id: product.id,
+              status: status === 'active' ? 'inactive' : 'active',
+            })}
+            title={status === 'active' ? t.admin.takeOffSale : t.admin.putOnSale}
+          >
             {config.label}
           </Badge>
         )

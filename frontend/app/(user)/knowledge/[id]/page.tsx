@@ -68,7 +68,7 @@ export default function KnowledgeArticlePage() {
       <div className="flex items-center gap-3">
         <Button asChild variant="outline" size="sm">
           <Link href="/knowledge">
-            <ArrowLeft className="mr-1.5 h-4 w-4" />
+            <ArrowLeft className="h-4 w-4 md:mr-1.5" />
             <span className="hidden md:inline">{t.knowledge.backToList}</span>
           </Link>
         </Button>
@@ -97,7 +97,7 @@ export default function KnowledgeArticlePage() {
           <MarkdownMessage
             content={article.content}
             allowHtml
-            className="prose dark:prose-invert max-w-none text-base [&_*]:text-foreground"
+            className="markdown-body"
           />
         </CardContent>
       </Card>

@@ -1,7 +1,6 @@
 package admin
 
 import (
-	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -20,17 +19,12 @@ func NewLogHandler(db *gorm.DB) *LogHandler {
 
 // ListOperationLogs get操作日志列表
 func (h *LogHandler) ListOperationLogs(c *gin.Context) {
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
+	page, limit := response.GetPagination(c)
 	action := c.Query("action")
 	resourceType := c.Query("resource_type")
 	userID := c.Query("user_id")
 	startDate := c.Query("start_date")
 	endDate := c.Query("end_date")
-
-	if limit > 100 {
-		limit = 100
-	}
 
 	var logs []models.OperationLog
 	var total int64
@@ -78,17 +72,12 @@ func (h *LogHandler) ListOperationLogs(c *gin.Context) {
 
 // ListEmailLogs get邮件日志列表
 func (h *LogHandler) ListEmailLogs(c *gin.Context) {
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
+	page, limit := response.GetPagination(c)
 	status := c.Query("status")
 	eventType := c.Query("event_type")
 	toEmail := c.Query("to_email")
 	startDate := c.Query("start_date")
 	endDate := c.Query("end_date")
-
-	if limit > 100 {
-		limit = 100
-	}
 
 	var logs []models.EmailLog
 	var total int64
@@ -135,17 +124,12 @@ func (h *LogHandler) ListEmailLogs(c *gin.Context) {
 
 // ListSmsLogs get短信日志列表
 func (h *LogHandler) ListSmsLogs(c *gin.Context) {
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
+	page, limit := response.GetPagination(c)
 	status := c.Query("status")
 	eventType := c.Query("event_type")
 	phone := c.Query("phone")
 	startDate := c.Query("start_date")
 	endDate := c.Query("end_date")
-
-	if limit > 100 {
-		limit = 100
-	}
 
 	var logs []models.SmsLog
 	var total int64

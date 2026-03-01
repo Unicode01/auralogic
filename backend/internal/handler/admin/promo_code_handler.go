@@ -191,14 +191,9 @@ func (h *PromoCodeHandler) DeletePromoCode(c *gin.Context) {
 
 // ListPromoCodes 列表
 func (h *PromoCodeHandler) ListPromoCodes(c *gin.Context) {
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
+	page, limit := response.GetPagination(c)
 	status := c.Query("status")
 	search := c.Query("search")
-
-	if limit > 100 {
-		limit = 100
-	}
 
 	promoCodes, total, err := h.promoCodeService.List(page, limit, status, search)
 	if err != nil {

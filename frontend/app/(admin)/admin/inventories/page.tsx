@@ -7,9 +7,11 @@ import {
   getInventories,
   getLowStockList,
   deleteInventory,
+  updateInventory,
   getVirtualInventories,
   createVirtualInventory,
   deleteVirtualInventory,
+  updateVirtualInventory,
   importVirtualInventoryStock,
   createVirtualInventoryStockManually
 } from '@/lib/api'
@@ -48,7 +50,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { Package, AlertTriangle, Plus, Edit, Trash2, RefreshCw, Database, FileText, Upload } from 'lucide-react'
+import { Package, AlertTriangle, Plus, Edit, Trash2, RefreshCw, Database, FileText, Upload, Code2 } from 'lucide-react'
 import Link from 'next/link'
 import { useToast } from '@/hooks/use-toast'
 import {
@@ -101,7 +103,11 @@ function InventoriesContent() {
   const [newVirtualInventory, setNewVirtualInventory] = useState({
     name: '',
     sku: '',
+    type: 'static' as 'static' | 'script',
+    script: '',
+    script_config: '',
     description: '',
+    total_limit: 0,
     is_active: true,
     notes: ''
   })
@@ -158,7 +164,7 @@ function InventoriesContent() {
     onSuccess: () => {
       toast.success(t.admin.virtualCreated)
       setCreateDialogOpen(false)
-      setNewVirtualInventory({ name: '', sku: '', description: '', is_active: true, notes: '' })
+      setNewVirtualInventory({ name: '', sku: '', type: 'static', script: '', script_config: '', description: '', total_limit: 0, is_active: true, notes: '' })
       refetchVirtual()
     },
     onError: (error: Error) => {
@@ -224,11 +230,42 @@ function InventoriesContent() {
     },
   })
 
+  // 切换实物库存启用状态
+  const toggleInventoryMutation = useMutation({
+    mutationFn: (inventory: any) =>
+      updateInventory(inventory.id, {
+        stock: inventory.stock,
+        available_quantity: inventory.available_quantity,
+        safety_stock: inventory.safety_stock,
+        is_active: !inventory.is_active,
+      }),
+    onSuccess: () => {
+      toast.success(t.admin.updateSuccess)
+      refetch()
+    },
+    onError: (error: Error) => {
+      toast.error(`${t.admin.operationFailed}: ${error.message}`)
+    },
+  })
+
+  // 切换虚拟库存启用状态
+  const toggleVirtualMutation = useMutation({
+    mutationFn: (vi: any) =>
+      updateVirtualInventory(vi.id, { is_active: !vi.is_active }),
+    onSuccess: () => {
+      toast.success(t.admin.updateSuccess)
+      refetchVirtual()
+    },
+    onError: (error: Error) => {
+      toast.error(`${t.admin.operationFailed}: ${error.message}`)
+    },
+  })
+
   // 数据处理
   const inventories = showLowStock ? (data?.data || []) : (data?.data?.items || [])
   const pagination = showLowStock ? null : data?.data?.pagination
-  const virtualInventories = virtualData?.data?.list || []
-  const virtualPagination = virtualData?.data
+  const virtualInventories = virtualData?.data?.items || []
+  const virtualPagination = virtualData?.data?.pagination
 
   // 计算剩余库存
   const getRemainingStock = (inventory: any) => {
@@ -506,9 +543,23 @@ function InventoriesContent() {
                           <TableCell>
                             <div className="flex items-center gap-1.5 flex-nowrap">
                               {inventory.is_active ? (
-                                <Badge variant="default">{t.admin.enabled}</Badge>
+                                <Badge
+                                  variant="default"
+                                  className="cursor-pointer hover:opacity-80 transition-opacity"
+                                  onClick={() => toggleInventoryMutation.mutate(inventory)}
+                                  title={t.admin.toggleDisabled}
+                                >
+                                  {t.admin.enabled}
+                                </Badge>
                               ) : (
-                                <Badge variant="secondary">{t.admin.disabled}</Badge>
+                                <Badge
+                                  variant="secondary"
+                                  className="cursor-pointer hover:opacity-80 transition-opacity"
+                                  onClick={() => toggleInventoryMutation.mutate(inventory)}
+                                  title={t.admin.toggleEnabled}
+                                >
+                                  {t.admin.disabled}
+                                </Badge>
                               )}
                               {isLowStock(inventory) && (
                                 <Badge variant="destructive" className="h-5 w-5 p-0 justify-center">
@@ -672,10 +723,8 @@ function InventoriesContent() {
                         <TableHead>ID</TableHead>
                         <TableHead>{t.admin.inventoryName}</TableHead>
                         <TableHead>SKU</TableHead>
-                        <TableHead>{t.admin.totalStock}</TableHead>
-                        <TableHead>{t.admin.available}</TableHead>
-                        <TableHead>{t.admin.reservedStock}</TableHead>
-                        <TableHead>{t.admin.soldOut}</TableHead>
+                        <TableHead>{t.admin.inventoryType}</TableHead>
+                        <TableHead>{t.admin.stockInfo}</TableHead>
                         <TableHead>{t.admin.status}</TableHead>
                         <TableHead>{t.admin.actions}</TableHead>
                       </TableRow>
@@ -693,45 +742,98 @@ function InventoriesContent() {
                           <TableCell className="text-sm text-muted-foreground">
                             {vi.sku || '-'}
                           </TableCell>
-                          <TableCell className="font-semibold">{vi.total}</TableCell>
                           <TableCell>
-                            <Badge variant={vi.available > 0 ? 'default' : 'destructive'}>
-                              {vi.available}
-                            </Badge>
-                          </TableCell>
-                          <TableCell>
-                            {vi.reserved > 0 ? (
-                              <Badge variant="secondary">{vi.reserved}</Badge>
+                            {vi.type === 'script' ? (
+                              <Badge variant="outline" className="text-purple-600 dark:text-purple-400 border-purple-300 dark:border-purple-700">
+                                <Code2 className="h-3 w-3 mr-1" />
+                                {t.admin.scriptTypeTag}
+                              </Badge>
                             ) : (
-                              vi.reserved
+                              <Badge variant="outline">
+                                <Database className="h-3 w-3 mr-1" />
+                                {t.admin.staticTypeTag}
+                              </Badge>
                             )}
                           </TableCell>
-                          <TableCell>{vi.sold}</TableCell>
+                          <TableCell>
+                            {vi.type === 'script' ? (
+                              <div className="flex items-center gap-3 text-sm">
+                                {vi.total_limit > 0 ? (
+                                  <>
+                                    <span>{t.admin.statusSold}: <span className="font-medium">{vi.sold || 0}</span></span>
+                                    <span className="text-muted-foreground">/</span>
+                                    <span>{vi.total_limit}</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <span className="text-muted-foreground">{t.admin.scriptDynamicShort}</span>
+                                    {vi.sold > 0 && (
+                                      <span>{t.admin.deliveredCount}: <span className="font-medium">{vi.sold}</span></span>
+                                    )}
+                                  </>
+                                )}
+                              </div>
+                            ) : (
+                              <div className="flex items-center gap-2 text-sm tabular-nums">
+                                <Badge variant={vi.available > 0 ? 'default' : 'destructive'} className="min-w-[2rem] justify-center">
+                                  {vi.available}
+                                </Badge>
+                                <span className="text-muted-foreground">/</span>
+                                <span>{vi.total}</span>
+                                {vi.reserved > 0 && (
+                                  <Badge variant="secondary" className="text-xs">
+                                    {t.admin.reserved} {vi.reserved}
+                                  </Badge>
+                                )}
+                                {vi.sold > 0 && (
+                                  <span className="text-muted-foreground text-xs">({t.admin.soldOut} {vi.sold})</span>
+                                )}
+                              </div>
+                            )}
+                          </TableCell>
                           <TableCell>
                             {vi.is_active ? (
-                              <Badge variant="default">{t.admin.enabled}</Badge>
+                              <Badge
+                                variant="default"
+                                className="cursor-pointer hover:opacity-80 transition-opacity"
+                                onClick={() => toggleVirtualMutation.mutate(vi)}
+                                title={t.admin.toggleDisabled}
+                              >
+                                {t.admin.enabled}
+                              </Badge>
                             ) : (
-                              <Badge variant="secondary">{t.admin.disabled}</Badge>
+                              <Badge
+                                variant="secondary"
+                                className="cursor-pointer hover:opacity-80 transition-opacity"
+                                onClick={() => toggleVirtualMutation.mutate(vi)}
+                                title={t.admin.toggleEnabled}
+                              >
+                                {t.admin.disabled}
+                              </Badge>
                             )}
                           </TableCell>
                           <TableCell>
                             <div className="flex items-center gap-2">
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => openManualCreateDialog(vi.id)}
-                                title={t.admin.addCardKey}
-                              >
-                                <Plus className="h-3 w-3" />
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => openImportDialog(vi.id)}
-                                title={t.admin.batchImport}
-                              >
-                                <Upload className="h-3 w-3" />
-                              </Button>
+                              {vi.type !== 'script' && (
+                                <>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => openManualCreateDialog(vi.id)}
+                                    title={t.admin.addCardKey}
+                                  >
+                                    <Plus className="h-3 w-3" />
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => openImportDialog(vi.id)}
+                                    title={t.admin.batchImport}
+                                  >
+                                    <Upload className="h-3 w-3" />
+                                  </Button>
+                                </>
+                              )}
                               <Button
                                 asChild
                                 size="sm"
@@ -829,8 +931,13 @@ function InventoriesContent() {
       </Tabs>
 
       {/* 创建虚拟库存对话框 */}
-      <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
-        <DialogContent className="max-w-lg">
+      <Dialog open={createDialogOpen} onOpenChange={(open) => {
+        setCreateDialogOpen(open)
+        if (!open) {
+          setNewVirtualInventory({ name: '', sku: '', type: 'static', script: '', script_config: '', description: '', total_limit: 0, is_active: true, notes: '' })
+        }
+      }}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{t.admin.createVirtualTitle}</DialogTitle>
             <DialogDescription>
@@ -860,6 +967,46 @@ function InventoriesContent() {
             </div>
 
             <div className="space-y-2">
+              <Label>{t.admin.inventoryTypeLabel}</Label>
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={() => setNewVirtualInventory({ ...newVirtualInventory, type: 'static' })}
+                  className={`p-3 rounded-lg border-2 text-left transition-all ${
+                    newVirtualInventory.type === 'static'
+                      ? 'border-primary bg-primary/5'
+                      : 'border-border hover:border-muted-foreground'
+                  }`}
+                >
+                  <div className="font-medium text-sm flex items-center gap-2">
+                    <Database className="h-4 w-4" />
+                    {t.admin.inventoryTypeStatic}
+                  </div>
+                  <div className="text-xs text-muted-foreground mt-1">
+                    {t.admin.inventoryTypeStaticDesc}
+                  </div>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setNewVirtualInventory({ ...newVirtualInventory, type: 'script' })}
+                  className={`p-3 rounded-lg border-2 text-left transition-all ${
+                    newVirtualInventory.type === 'script'
+                      ? 'border-purple-500 bg-purple-500/5'
+                      : 'border-border hover:border-muted-foreground'
+                  }`}
+                >
+                  <div className="font-medium text-sm flex items-center gap-2">
+                    <Code2 className="h-4 w-4 text-purple-500" />
+                    {t.admin.inventoryTypeScript}
+                  </div>
+                  <div className="text-xs text-muted-foreground mt-1">
+                    {t.admin.inventoryTypeScriptDesc}
+                  </div>
+                </button>
+              </div>
+            </div>
+
+            <div className="space-y-2">
               <Label htmlFor="description">{t.admin.descriptionOptional}</Label>
               <Textarea
                 id="description"
@@ -869,6 +1016,21 @@ function InventoriesContent() {
                 rows={3}
               />
             </div>
+
+            {newVirtualInventory.type === 'script' && (
+              <div className="space-y-2">
+                <Label htmlFor="total_limit">{t.admin.scriptDeliveryLimit}</Label>
+                <p className="text-xs text-muted-foreground">{t.admin.scriptDeliveryLimitDesc}</p>
+                <Input
+                  id="total_limit"
+                  type="number"
+                  min={0}
+                  value={newVirtualInventory.total_limit}
+                  onChange={(e) => setNewVirtualInventory({ ...newVirtualInventory, total_limit: Math.max(0, parseInt(e.target.value) || 0) })}
+                  className="w-40"
+                />
+              </div>
+            )}
 
             <div className="space-y-2">
               <Label htmlFor="notes">{t.admin.notesOptional}</Label>

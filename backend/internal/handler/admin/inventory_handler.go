@@ -179,8 +179,7 @@ func (h *InventoryHandler) GetInventory(c *gin.Context) {
 
 // ListInventories Inventory列表
 func (h *InventoryHandler) ListInventories(c *gin.Context) {
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
+	page, limit := response.GetPagination(c)
 
 	filters := make(map[string]interface{})
 

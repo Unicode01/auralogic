@@ -47,6 +47,10 @@ type Order struct {
 	// Key: Order项索引(0,1,2...), Value: InventoryID
 	InventoryBindings map[int]uint `gorm:"type:text;serializer:json" json:"-"` // json:"-" 表示不序列化给前端
 
+	// 虚拟库存绑定（脚本类型，内部使用）
+	// Key: Order项索引(0,1,2...), Value: VirtualInventoryID
+	VirtualInventoryBindings map[int]uint `gorm:"type:text;serializer:json" json:"-"`
+
 	// 状态
 	Status OrderStatus `gorm:"type:varchar(30);not null;default:'draft';index" json:"status"`
 

@@ -1,20 +1,18 @@
 'use client'
 
-import { useState, useRef } from 'react'
+import { useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useMutation } from '@tanstack/react-query'
 import {
   getAdminProduct,
   getVirtualStockList,
   getVirtualStockStats,
-  importVirtualStock,
   deleteVirtualStock,
   deleteStockBatch,
+  getProductVirtualInventoryBindings,
 } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { Input } from '@/components/ui/input'
-import { Textarea } from '@/components/ui/textarea'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import {
   Select,
@@ -23,14 +21,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -50,17 +40,9 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import {
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
-} from '@/components/ui/tabs'
-import {
   ArrowLeft,
-  Upload,
   Trash2,
   RefreshCw,
-  FileText,
   Package,
   CheckCircle,
   Clock,
@@ -68,6 +50,7 @@ import {
   Copy,
   Eye,
   EyeOff,
+  Code2,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { VirtualProductStock, VirtualStockStats, VirtualStockStatus } from '@/types/product'
@@ -92,19 +75,13 @@ const statusLabelKeys: Record<VirtualStockStatus, 'statusAvailable' | 'statusRes
 export default function VirtualStockPage() {
   const params = useParams()
   const router = useRouter()
-  const queryClient = useQueryClient()
   const productId = Number(params.id)
-  const fileInputRef = useRef<HTMLInputElement>(null)
   const { locale } = useLocale()
   const t = getTranslations(locale)
   usePageTitle(t.pageTitle.adminVirtualStock)
 
   const [page, setPage] = useState(1)
   const [statusFilter, setStatusFilter] = useState<string>('all')
-  const [importDialogOpen, setImportDialogOpen] = useState(false)
-  const [importType, setImportType] = useState<'file' | 'text'>('text')
-  const [textContent, setTextContent] = useState('')
-  const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [deleteId, setDeleteId] = useState<number | null>(null)
   const [deleteBatchNo, setDeleteBatchNo] = useState<string | null>(null)
   const [showContent, setShowContent] = useState<Record<number, boolean>>({})
@@ -134,23 +111,15 @@ export default function VirtualStockPage() {
     enabled: !!productId,
   })
 
-  // 导入库存
-  const importMutation = useMutation({
-    mutationFn: (data: { import_type: 'file' | 'text'; file?: File; content?: string }) =>
-      importVirtualStock(productId, data),
-    onSuccess: (response: any) => {
-      toast.success(t.virtualStock.importSuccess.replace('{n}', String(response?.data?.count || 0)))
-      setImportDialogOpen(false)
-      setTextContent('')
-      setSelectedFile(null)
-      refetchStocks()
-      refetchStats()
-      queryClient.invalidateQueries({ queryKey: ['adminProduct', productId] })
-    },
-    onError: (error: Error) => {
-      toast.error(t.virtualStock.importFailed.replace('{msg}', error.message))
-    },
+  // 获取虚拟库存绑定信息（判断是否为脚本类型）
+  const { data: bindingsData } = useQuery({
+    queryKey: ['productVirtualBindings', productId],
+    queryFn: () => getProductVirtualInventoryBindings(productId),
+    enabled: !!productId,
   })
+
+  const bindings: any[] = bindingsData?.data || []
+  const isAllScript = bindings.length > 0 && bindings.every((b: any) => b.virtual_inventory?.type === 'script')
 
   // 删除单个库存
   const deleteMutation = useMutation({
@@ -180,35 +149,6 @@ export default function VirtualStockPage() {
     },
   })
 
-  const handleImport = () => {
-    if (importType === 'text') {
-      if (!textContent.trim()) {
-        toast.error(t.virtualStock.pleaseEnterContent)
-        return
-      }
-      importMutation.mutate({ import_type: 'text', content: textContent })
-    } else {
-      if (!selectedFile) {
-        toast.error(t.virtualStock.pleaseSelectFile)
-        return
-      }
-      importMutation.mutate({ import_type: 'file', file: selectedFile })
-    }
-  }
-
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (file) {
-      const validTypes = ['.xlsx', '.xls', '.csv', '.txt']
-      const ext = file.name.substring(file.name.lastIndexOf('.')).toLowerCase()
-      if (!validTypes.includes(ext)) {
-        toast.error(t.virtualStock.unsupportedFormat)
-        return
-      }
-      setSelectedFile(file)
-    }
-  }
-
   const copyToClipboard = (content: string) => {
     navigator.clipboard.writeText(content)
     toast.success(t.virtualStock.copiedToClipboard)
@@ -219,8 +159,8 @@ export default function VirtualStockPage() {
   }
 
   const product = productData?.data
-  const stocks: VirtualProductStock[] = stockData?.data?.list || []
-  const total = stockData?.data?.total || 0
+  const stocks: VirtualProductStock[] = stockData?.data?.items || []
+  const total = stockData?.data?.pagination?.total || 0
   const stats: VirtualStockStats = statsData?.data || { total: 0, available: 0, reserved: 0, sold: 0 }
   const totalPages = Math.ceil(total / 20)
 
@@ -272,6 +212,49 @@ export default function VirtualStockPage() {
       </div>
 
       {/* 统计卡片 */}
+      {isAllScript ? (
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+          {bindings.map((b: any) => {
+            const vi = b.virtual_inventory
+            if (!vi) return null
+            const limit = vi.total_limit || 0
+            const sold = vi.sold || 0
+            const remaining = limit > 0 ? Math.max(0, limit - sold) : -1
+            return (
+              <Card key={b.id} className="col-span-2 md:col-span-3">
+                <CardHeader className="pb-2">
+                  <CardDescription className="flex items-center gap-1.5">
+                    <Code2 className="w-3.5 h-3.5 text-purple-500" />
+                    {vi.name}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="flex items-center gap-6">
+                    <div>
+                      <div className="text-2xl font-bold text-blue-600 dark:text-blue-400">
+                        {limit > 0 ? limit : t.virtualStock.unlimited}
+                      </div>
+                      <p className="text-xs text-muted-foreground">{t.virtualStock.deliveryLimit}</p>
+                    </div>
+                    <div>
+                      <div className="text-2xl font-bold text-gray-500 dark:text-gray-400">{sold}</div>
+                      <p className="text-xs text-muted-foreground">{t.virtualStock.statusSold}</p>
+                    </div>
+                    {remaining >= 0 && (
+                      <div>
+                        <div className={`text-2xl font-bold ${remaining <= 0 ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'}`}>
+                          {remaining}
+                        </div>
+                        <p className="text-xs text-muted-foreground">{t.virtualStock.remaining}</p>
+                      </div>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            )
+          })}
+        </div>
+      ) : (
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <Card>
           <CardHeader className="pb-2">
@@ -298,8 +281,10 @@ export default function VirtualStockPage() {
           </CardHeader>
         </Card>
       </div>
+      )}
 
-      {/* 操作栏 */}
+      {/* 操作栏、库存列表、分页、批次管理 — 仅静态类型 */}
+      {!isAllScript && (<>
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
           <Select
@@ -325,10 +310,6 @@ export default function VirtualStockPage() {
           <Button variant="outline" size="sm" onClick={() => { refetchStocks(); refetchStats() }}>
             <RefreshCw className="w-4 h-4 mr-2" />
             {t.virtualStock.refresh}
-          </Button>
-          <Button onClick={() => setImportDialogOpen(true)}>
-            <Upload className="w-4 h-4 mr-2" />
-            {t.virtualStock.importStock}
           </Button>
         </div>
       </div>
@@ -493,92 +474,7 @@ export default function VirtualStockPage() {
         </Card>
       )}
 
-      {/* 导入对话框 */}
-      <Dialog open={importDialogOpen} onOpenChange={setImportDialogOpen}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>{t.virtualStock.importTitle}</DialogTitle>
-            <DialogDescription>
-              {t.virtualStock.importDescription}
-            </DialogDescription>
-          </DialogHeader>
-
-          <Tabs value={importType} onValueChange={(v) => setImportType(v as 'file' | 'text')}>
-            <TabsList className="grid w-full grid-cols-2">
-              <TabsTrigger value="text">
-                <FileText className="w-4 h-4 mr-2" />
-                {t.virtualStock.textInput}
-              </TabsTrigger>
-              <TabsTrigger value="file">
-                <Upload className="w-4 h-4 mr-2" />
-                {t.virtualStock.fileUpload}
-              </TabsTrigger>
-            </TabsList>
-
-            <TabsContent value="text" className="space-y-4">
-              <div>
-                <Textarea
-                  placeholder={t.virtualStock.textPlaceholder}
-                  value={textContent}
-                  onChange={(e) => setTextContent(e.target.value)}
-                  rows={10}
-                />
-                <p className="text-sm text-muted-foreground mt-2">
-                  {t.virtualStock.example}<br />
-                  ABCD-1234-EFGH<br />
-                  WXYZ-5678-IJKL,VIP
-                </p>
-              </div>
-            </TabsContent>
-
-            <TabsContent value="file" className="space-y-4">
-              <div
-                className="border-2 border-dashed rounded-lg p-8 text-center cursor-pointer hover:border-primary"
-                onClick={() => fileInputRef.current?.click()}
-              >
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept=".xlsx,.xls,.csv,.txt"
-                  onChange={handleFileChange}
-                  className="hidden"
-                />
-                {selectedFile ? (
-                  <div className="flex items-center justify-center gap-2">
-                    <FileText className="w-6 h-6 text-primary" />
-                    <span>{selectedFile.name}</span>
-                  </div>
-                ) : (
-                  <>
-                    <Upload className="w-8 h-8 mx-auto mb-2 text-muted-foreground" />
-                    <p className="text-muted-foreground">{t.virtualStock.clickToSelect}</p>
-                    <p className="text-sm text-muted-foreground">{t.virtualStock.supportedFormats}</p>
-                  </>
-                )}
-              </div>
-              <p className="text-sm text-muted-foreground">
-                {t.virtualStock.fileFormatTip}
-              </p>
-            </TabsContent>
-          </Tabs>
-
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setImportDialogOpen(false)}>
-              {t.virtualStock.cancel}
-            </Button>
-            <Button onClick={handleImport} disabled={importMutation.isPending}>
-              {importMutation.isPending ? (
-                <>
-                  <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
-                  {t.virtualStock.importing}
-                </>
-              ) : (
-                t.virtualStock.confirmImport
-              )}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      </>)}
 
       {/* 删除确认对话框 */}
       <AlertDialog open={deleteId !== null} onOpenChange={() => setDeleteId(null)}>

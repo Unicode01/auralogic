@@ -19,14 +19,20 @@ func NewAnnouncementHandler(db *gorm.DB) *AnnouncementHandler {
 
 // ListAnnouncements 公告列表
 func (h *AnnouncementHandler) ListAnnouncements(c *gin.Context) {
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
-
-	if limit > 100 {
-		limit = 100
-	}
+	page, limit := response.GetPagination(c)
+	search := c.Query("search")
+	mandatory := c.Query("is_mandatory") // "true" / "false" / ""
 
 	query := h.db.Model(&models.Announcement{})
+
+	if search != "" {
+		query = query.Where("title LIKE ?", "%"+search+"%")
+	}
+	if mandatory == "true" {
+		query = query.Where("is_mandatory = ?", true)
+	} else if mandatory == "false" {
+		query = query.Where("is_mandatory = ?", false)
+	}
 
 	var total int64
 	query.Count(&total)

@@ -18,7 +18,7 @@ import { createLoginSchema, loginSchema } from '@/lib/validators'
 import { useLocale } from '@/hooks/use-locale'
 import { usePageTitle } from '@/hooks/use-page-title'
 import { getTranslations } from '@/lib/i18n'
-import { Loader2, Mail, Lock, ArrowRight, KeyRound, Phone } from 'lucide-react'
+import { Loader2, Mail, Lock, ArrowRight, KeyRound, Phone, Eye, EyeOff } from 'lucide-react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useQuery } from '@tanstack/react-query'
@@ -56,6 +56,7 @@ export default function LoginPage() {
   const [phoneCountdown, setPhoneCountdown] = useState(0)
   const [isSendingPhoneCode, setIsSendingPhoneCode] = useState(false)
   const [phoneCodeSent, setPhoneCodeSent] = useState(false)
+  const [showPassword, setShowPassword] = useState(false)
   const { resolvedTheme } = useTheme()
   const captchaContainerRef = useRef<HTMLDivElement>(null)
   const widgetRendered = useRef(false)
@@ -249,6 +250,10 @@ export default function LoginPage() {
 
   async function handleSendCode() {
     if (!codeEmail || countdown > 0 || isSendingCode) return
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(codeEmail)) {
+      toast.error(t.auth.invalidEmail || 'Please enter a valid email address')
+      return
+    }
     let token = captchaToken
     if (needCaptcha && captchaConfig.provider === 'builtin') {
       token = `${builtinCaptcha?.data?.captcha_id}:${builtinCode}`
@@ -395,23 +400,20 @@ export default function LoginPage() {
                 name="password"
                 render={({ field }) => (
                   <FormItem className="space-y-2">
-                    <div className="flex items-center justify-between">
-                      <FormLabel className="text-sm font-medium">{t.auth.password}</FormLabel>
-                      {allowPasswordReset && (
-                        <Link href="/forgot-password" className="text-xs text-muted-foreground hover:text-primary transition-colors">
-                          {t.auth.forgotPassword}
-                        </Link>
-                      )}
-                    </div>
+                    <FormLabel className="text-sm font-medium">{t.auth.password}</FormLabel>
                     <FormControl>
                       <div className="relative">
                         <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                         <Input
-                          type="password"
+                          type={showPassword ? "text" : "password"}
                           placeholder={t.auth.passwordPlaceholder}
-                          className="pl-10 h-11"
+                          className="pl-10 pr-10 h-11"
                           {...field}
                         />
+                        <button type="button" onClick={() => setShowPassword(!showPassword)}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors">
+                          {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                        </button>
                       </div>
                     </FormControl>
                     <FormMessage />
@@ -639,6 +641,15 @@ export default function LoginPage() {
                   </>
                 )}
               </Button>
+            </div>
+          )}
+
+          {/* Forgot Password */}
+          {allowPasswordReset && (
+            <div className="text-center">
+              <Link href="/forgot-password" className="text-sm text-muted-foreground hover:text-primary transition-colors">
+                {t.auth.forgotPassword}
+              </Link>
             </div>
           )}
 

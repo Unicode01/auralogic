@@ -9,7 +9,7 @@ import { Badge } from '@/components/ui/badge'
 import { OrderStatusBadge } from './order-status-badge'
 import type { Order } from '@/types/order'
 import { formatDate, formatCurrency } from '@/lib/utils'
-import { Package, Truck, Shield, FileEdit, AlertCircle, Loader2, Key, Headphones } from 'lucide-react'
+import { Package, Truck, Shield, FileEdit, AlertCircle, Loader2, Key, Headphones, CreditCard } from 'lucide-react'
 import { getOrRefreshFormToken } from '@/lib/api'
 import toast from 'react-hot-toast'
 import { useLocale } from '@/hooks/use-locale'
@@ -26,6 +26,7 @@ export function OrderCard({ order }: OrderCardProps) {
   const orderNo = order.orderNo || order.order_no || ''
   const isDraft = order.status === 'draft'
   const isNeedResubmit = order.status === 'need_resubmit'
+  const isPendingPayment = order.status === 'pending_payment'
 
   // 判断是否为纯虚拟商品订单
   const isVirtualOnly = order.items.every(item =>
@@ -58,7 +59,7 @@ export function OrderCard({ order }: OrderCardProps) {
   }
 
   return (
-    <Card className={`hover:shadow-lg transition-all flex flex-col h-full ${needsFilling ? 'border-amber-500/30 bg-amber-500/10' : ''}`}>
+    <Card className={`hover:shadow-lg transition-all flex flex-col h-full ${needsFilling ? 'border-amber-500/30 bg-amber-500/10' : isPendingPayment ? 'border-amber-500/30 bg-amber-500/10' : ''}`}>
       <CardHeader className="pb-3">
         <div className="space-y-2">
           <div className="flex items-center justify-between gap-2">
@@ -70,6 +71,14 @@ export function OrderCard({ order }: OrderCardProps) {
                   className="text-amber-600 border-amber-300 bg-amber-50 dark:text-amber-300 dark:border-amber-800 dark:bg-amber-950/40"
                 >
                   <AlertCircle className="h-3 w-3" />
+                </Badge>
+              )}
+              {isPendingPayment && (
+                <Badge
+                  variant="outline"
+                  className="text-amber-600 border-amber-300 bg-amber-50 dark:text-amber-300 dark:border-amber-800 dark:bg-amber-950/40"
+                >
+                  <CreditCard className="h-3 w-3" />
                 </Badge>
               )}
               {(order.privacyProtected || order.privacy_protected) && (
@@ -180,6 +189,16 @@ export function OrderCard({ order }: OrderCardProps) {
             </p>
           </div>
         )}
+
+        {/* 待付款提示 */}
+        {isPendingPayment && (
+          <div className="flex items-start gap-2 p-2 border-t bg-amber-500/10 rounded mt-auto">
+            <CreditCard className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400 mt-0.5 flex-shrink-0" />
+            <p className="text-xs text-amber-700 dark:text-amber-300 leading-tight">
+              {t.order.pendingPaymentPrompt}
+            </p>
+          </div>
+        )}
       </CardContent>
 
       <CardFooter className="gap-2 pt-3">
@@ -207,6 +226,13 @@ export function OrderCard({ order }: OrderCardProps) {
               <Link href={`/orders/${orderNo}`}>{t.common.detail}</Link>
             </Button>
           </>
+        ) : isPendingPayment ? (
+          <Button asChild size="sm" className="w-full">
+            <Link href={`/orders/${orderNo}`}>
+              <CreditCard className="mr-1 h-3.5 w-3.5" />
+              {t.order.payNow}
+            </Link>
+          </Button>
         ) : (
           <Button asChild size="sm" variant="outline" className="w-full">
             <Link href={`/orders/${orderNo}`}>{t.order.viewOrder}</Link>

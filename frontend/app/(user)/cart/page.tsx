@@ -153,6 +153,7 @@ export default function CartPage() {
 
   // 处理删除
   const handleRemove = async (itemId: number) => {
+    if (!window.confirm(t.cart.confirmDeleteCartItem)) return
     try {
       await removeItem(itemId)
       setSelectedItems(prev => {
@@ -167,10 +168,12 @@ export default function CartPage() {
 
   // 处理全选
   const handleSelectAll = () => {
-    if (selectedItems.size === items.length) {
+    const availableItems = items.filter(item => item.is_available)
+    const allAvailableSelected = availableItems.length > 0 && availableItems.every(item => selectedItems.has(item.id))
+    if (allAvailableSelected) {
       setSelectedItems(new Set())
     } else {
-      setSelectedItems(new Set(items.map(item => item.id)))
+      setSelectedItems(new Set(availableItems.map(item => item.id)))
     }
   }
 
@@ -324,6 +327,7 @@ export default function CartPage() {
                 toast.error(t.cart.noItemsSelected)
                 return
               }
+              if (!window.confirm(t.cart.confirmClearSelected)) return
               removeItems(Array.from(selectedItems))
               setSelectedItems(new Set())
             }}
@@ -650,7 +654,7 @@ export default function CartPage() {
               <div className="flex items-center gap-2 md:gap-3 min-w-0">
                 <label className="flex items-center gap-2 cursor-pointer shrink-0">
                   <Checkbox
-                    checked={selectedItems.size === items.length && items.length > 0}
+                    checked={(() => { const avail = items.filter(i => i.is_available); return avail.length > 0 && avail.every(i => selectedItems.has(i.id)) })()}
                     onCheckedChange={handleSelectAll}
                   />
                   <span className="text-xs md:text-sm">

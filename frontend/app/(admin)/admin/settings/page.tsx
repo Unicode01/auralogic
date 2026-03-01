@@ -194,7 +194,7 @@ function TemplateEditor({
             srcDoc={local}
             className="w-full border-0"
             style={{ minHeight: '500px' }}
-            title="Template Preview"
+            title={t.admin.templatePreview}
             sandbox=""
           />
         </div>
@@ -365,6 +365,9 @@ export default function SettingsPage() {
   const [emailNotifications, setEmailNotifications] = useState<Record<string, boolean>>({})
   const [captchaProvider, setCaptchaProvider] = useState('none')
   const [smsProvider, setSmsProvider] = useState('aliyun')
+  const [invoiceEnabled, setInvoiceEnabled] = useState(false)
+  const [invoiceTemplateType, setInvoiceTemplateType] = useState('builtin')
+  const [invoiceCustomTemplate, setInvoiceCustomTemplate] = useState('')
   const queryClient = useQueryClient()
   const { resolvedTheme } = useTheme()
   const toast = useToast()
@@ -498,6 +501,8 @@ export default function SettingsPage() {
     ticket_created: t.admin.templateEventTicketCreated,
     ticket_reply: t.admin.templateEventTicketReply,
     ticket_resolved: t.admin.templateEventTicketResolved,
+    login_code: t.admin.templateEventLoginCode,
+    password_reset: t.admin.templateEventPasswordReset,
   }
 
   const settingsData = settings?.data
@@ -521,6 +526,11 @@ export default function SettingsPage() {
     }
     if (settingsData?.sms?.provider) {
       setSmsProvider(settingsData.sms.provider)
+    }
+    if (settingsData?.order?.invoice) {
+      setInvoiceEnabled(!!settingsData.order.invoice.enabled)
+      setInvoiceTemplateType(settingsData.order.invoice.template_type || 'builtin')
+      setInvoiceCustomTemplate(settingsData.order.invoice.custom_template || '')
     }
   }, [settingsData])
 
@@ -1019,7 +1029,7 @@ export default function SettingsPage() {
                       {(emailTemplatesData?.data || []).map((tmpl: any) => (
                         <SelectItem key={tmpl.filename} value={tmpl.filename}>
                           {templateEventLabels[tmpl.event] || tmpl.event}
-                          {tmpl.locale ? ` (${tmpl.locale === 'zh' ? t.admin.chinese : 'English'})` : ''}
+                          {tmpl.locale ? ` (${tmpl.locale === 'zh' ? t.admin.chinese : t.admin.english})` : ''}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -1086,7 +1096,7 @@ export default function SettingsPage() {
                     const raw = (formData.get('custom_headers') as string) || ''
                     if (raw.trim()) customHeaders = JSON.parse(raw)
                   } catch {
-                    toast.error(t.admin.pmInvalidJson || 'Invalid JSON format')
+                    toast.error(t.admin.pmInvalidJson)
                     return
                   }
                   handleSubmit('sms', {
@@ -2596,6 +2606,18 @@ export default function SettingsPage() {
                       low_stock_threshold: parseInt(formData.get('low_stock_threshold') as string) || 10,
                       high_stock_threshold: parseInt(formData.get('high_stock_threshold') as string) || 50,
                     },
+                    invoice: {
+                      enabled: invoiceEnabled,
+                      template_type: invoiceTemplateType,
+                      custom_template: invoiceCustomTemplate,
+                      company_name: (formData.get('invoice_company_name') as string) || '',
+                      company_address: (formData.get('invoice_company_address') as string) || '',
+                      company_phone: (formData.get('invoice_company_phone') as string) || '',
+                      company_email: (formData.get('invoice_company_email') as string) || '',
+                      company_logo: (formData.get('invoice_company_logo') as string) || '',
+                      tax_id: (formData.get('invoice_tax_id') as string) || '',
+                      footer_text: (formData.get('invoice_footer_text') as string) || '',
+                    },
                   })
                 }}
                 className="space-y-4"
@@ -2759,6 +2781,122 @@ export default function SettingsPage() {
                       </div>
                     </div>
                   </div>
+                </div>
+
+                <div className="border-t border-border pt-4 mt-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <div>
+                      <h4 className="font-medium">{t.admin.invoiceTitle}</h4>
+                      <p className="text-xs text-muted-foreground">{t.admin.invoiceDesc}</p>
+                    </div>
+                    <Switch
+                      checked={invoiceEnabled}
+                      onCheckedChange={setInvoiceEnabled}
+                    />
+                  </div>
+
+                  {invoiceEnabled && (
+                    <div className="space-y-4 mt-4">
+                      <div>
+                        <Label>{t.admin.invoiceTemplateType}</Label>
+                        <div className="grid grid-cols-2 gap-3 mt-1.5">
+                          <button
+                            type="button"
+                            onClick={() => setInvoiceTemplateType('builtin')}
+                            className={`p-3 rounded-lg border text-left text-sm transition-colors ${
+                              invoiceTemplateType === 'builtin'
+                                ? 'border-primary bg-primary/5'
+                                : 'border-border hover:border-primary/50'
+                            }`}
+                          >
+                            <div className="font-medium">{t.admin.invoiceBuiltin}</div>
+                            <div className="text-xs text-muted-foreground mt-1">{t.admin.invoiceBuiltinDesc}</div>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setInvoiceTemplateType('custom')}
+                            className={`p-3 rounded-lg border text-left text-sm transition-colors ${
+                              invoiceTemplateType === 'custom'
+                                ? 'border-primary bg-primary/5'
+                                : 'border-border hover:border-primary/50'
+                            }`}
+                          >
+                            <div className="font-medium">{t.admin.invoiceCustom}</div>
+                            <div className="text-xs text-muted-foreground mt-1">{t.admin.invoiceCustomDesc}</div>
+                          </button>
+                        </div>
+                      </div>
+
+                      {invoiceTemplateType === 'builtin' && (
+                        <div className="space-y-4 border rounded-lg p-4 bg-muted/30">
+                          <h5 className="text-sm font-medium">{t.admin.invoiceCompanyInfo}</h5>
+                          <div className="grid grid-cols-2 gap-4">
+                            <div>
+                              <Label htmlFor="invoice_company_name">{t.admin.invoiceCompanyName}</Label>
+                              <Input id="invoice_company_name" name="invoice_company_name"
+                                defaultValue={settingsData?.order?.invoice?.company_name || ''} className="mt-1.5" />
+                            </div>
+                            <div>
+                              <Label htmlFor="invoice_company_email">{t.admin.invoiceCompanyEmail}</Label>
+                              <Input id="invoice_company_email" name="invoice_company_email"
+                                defaultValue={settingsData?.order?.invoice?.company_email || ''} className="mt-1.5" />
+                            </div>
+                            <div>
+                              <Label htmlFor="invoice_company_phone">{t.admin.invoiceCompanyPhone}</Label>
+                              <Input id="invoice_company_phone" name="invoice_company_phone"
+                                defaultValue={settingsData?.order?.invoice?.company_phone || ''} className="mt-1.5" />
+                            </div>
+                            <div>
+                              <Label htmlFor="invoice_tax_id">{t.admin.invoiceTaxId}</Label>
+                              <Input id="invoice_tax_id" name="invoice_tax_id"
+                                defaultValue={settingsData?.order?.invoice?.tax_id || ''} className="mt-1.5" />
+                            </div>
+                          </div>
+                          <div>
+                            <Label htmlFor="invoice_company_address">{t.admin.invoiceCompanyAddress}</Label>
+                            <Input id="invoice_company_address" name="invoice_company_address"
+                              defaultValue={settingsData?.order?.invoice?.company_address || ''} className="mt-1.5" />
+                          </div>
+                          <div>
+                            <Label htmlFor="invoice_company_logo">{t.admin.invoiceCompanyLogo}</Label>
+                            <Input id="invoice_company_logo" name="invoice_company_logo"
+                              defaultValue={settingsData?.order?.invoice?.company_logo || ''} className="mt-1.5" placeholder="https://" />
+                          </div>
+                          <div>
+                            <Label htmlFor="invoice_footer_text">{t.admin.invoiceFooterText}</Label>
+                            <Input id="invoice_footer_text" name="invoice_footer_text"
+                              defaultValue={settingsData?.order?.invoice?.footer_text || ''}
+                              placeholder={t.admin.invoiceFooterPlaceholder} className="mt-1.5" />
+                          </div>
+                        </div>
+                      )}
+
+                      {invoiceTemplateType === 'custom' && (
+                        <div className="space-y-2">
+                          <Label>{t.admin.invoiceCustomTemplate}</Label>
+                          <CodeMirror
+                            value={invoiceCustomTemplate}
+                            extensions={[javascript()]}
+                            onChange={setInvoiceCustomTemplate}
+                            height="300px"
+                            theme={resolvedTheme === 'dark' ? 'dark' : 'light'}
+                            className="rounded-md border overflow-hidden text-sm"
+                          />
+                          <p className="text-xs text-muted-foreground">
+                            {t.admin.invoiceCustomTemplateTip}
+                          </p>
+                          {/* Hidden inputs for company info that custom templates also need */}
+                          <input type="hidden" name="invoice_company_name" value={settingsData?.order?.invoice?.company_name || ''} />
+                          <input type="hidden" name="invoice_company_address" value={settingsData?.order?.invoice?.company_address || ''} />
+                          <input type="hidden" name="invoice_company_phone" value={settingsData?.order?.invoice?.company_phone || ''} />
+                          <input type="hidden" name="invoice_company_email" value={settingsData?.order?.invoice?.company_email || ''} />
+                          <input type="hidden" name="invoice_company_logo" value={settingsData?.order?.invoice?.company_logo || ''} />
+                          <input type="hidden" name="invoice_tax_id" value={settingsData?.order?.invoice?.tax_id || ''} />
+                          <input type="hidden" name="invoice_footer_text" value={settingsData?.order?.invoice?.footer_text || ''} />
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 <Button type="submit" disabled={updateMutation.isPending}>

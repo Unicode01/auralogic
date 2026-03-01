@@ -32,6 +32,16 @@ func main() {
 	}
 	log.Printf("Config loaded from: %s", config.GetConfigPath())
 
+	// 初始化日志
+	logFile, err := config.InitLogger(&cfg.Log)
+	if err != nil {
+		log.Fatalf("Failed to initialize logger: %v", err)
+	}
+	if logFile != nil {
+		defer logFile.Close()
+	}
+	log.Printf("Logger initialized (level=%s, format=%s, output=%s)", cfg.Log.Level, cfg.Log.Format, cfg.Log.Output)
+
 	// 初始化数据库
 	if err := database.InitDatabase(&cfg.Database); err != nil {
 		log.Fatalf("Failed to initialize database: %v", err)

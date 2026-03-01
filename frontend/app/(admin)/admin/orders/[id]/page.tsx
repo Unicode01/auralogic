@@ -85,6 +85,7 @@ export default function AdminOrderDetailPage({ params }: { params: Promise<{ id:
     queryKey: ['adminOrderDetail', orderId],
     queryFn: () => getAdminOrderDetail(orderId),
     enabled: !!orderId,
+    staleTime: 0,
   })
 
   const assignMutation = useMutation({
@@ -402,7 +403,7 @@ export default function AdminOrderDetailPage({ params }: { params: Promise<{ id:
         <div className="flex items-center gap-4">
           <Button asChild variant="outline" size="sm">
             <Link href="/admin/orders">
-              <ArrowLeft className="mr-1.5 h-4 w-4" />
+              <ArrowLeft className="h-4 w-4 md:mr-1.5" />
               <span className="hidden md:inline">{t.order.backToListShort}</span>
             </Link>
           </Button>

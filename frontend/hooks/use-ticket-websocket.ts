@@ -36,7 +36,7 @@ export function useTicketWebSocket(
 
     const token = getToken()
     if (!token) {
-      setError('未登录')
+      setError('Not logged in')
       return
     }
 
@@ -89,7 +89,7 @@ export function useTicketWebSocket(
       }
 
       ws.onerror = () => {
-        setError('连接错误')
+        setError('Connection error')
       }
 
       ws.onclose = () => {
@@ -107,7 +107,7 @@ export function useTicketWebSocket(
       }
     } catch (e) {
       console.error('WebSocket connection failed:', e)
-      setError('连接失败')
+      setError('Connection failed')
     }
   }, [ticketId, userType])
 

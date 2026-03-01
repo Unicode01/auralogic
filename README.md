@@ -164,8 +164,9 @@ pnpm dev
 │   ├── hooks/                 # 自定义 Hooks
 │   └── types/                 # TypeScript 类型
 │
-├── scripts/                    # Docker 构建脚本
+├── scripts/                    # 脚本工具
 │   ├── build_docker.sh        # 一键构建脚本
+│   ├── migrate_dujiaoka.py    # 独角数卡数据迁移脚本
 │   └── docker/                # Dockerfile、Nginx、Supervisor 配置
 │
 ├── docs/                       # 文档
@@ -215,6 +216,56 @@ pnpm dev
   }
 }
 ```
+
+---
+
+## 从独角数卡迁移
+
+提供 Python 脚本将 [独角数卡 (Dujiaoka)](https://github.com/assimon/dujiaoka) 的数据迁移到 AuraLogic。
+
+**迁移内容**:
+- 商品 → AuraLogic 商品（保留名称、价格、图片、分类、购买限制等）
+- 卡密 → 虚拟库存（支持普通卡密批量导入和循环卡密单条导入并预留）
+- 优惠码 → 促销码（保留折扣金额、关联商品、使用次数）
+
+**安装依赖**:
+
+```bash
+pip install pymysql requests rich
+```
+
+**使用示例**:
+
+```bash
+# 预览模式（不写入数据，推荐先执行）
+python scripts/migrate_dujiaoka.py --dry-run \
+  --db-host 127.0.0.1 --db-password mypass --db-name dujiaoka \
+  --api-url http://localhost:8080 --api-key ak_live_xxx --api-secret sk_live_xxx
+
+# 正式迁移
+python scripts/migrate_dujiaoka.py \
+  --db-host 127.0.0.1 --db-password mypass --db-name dujiaoka \
+  --api-url http://localhost:8080 --api-key ak_live_xxx --api-secret sk_live_xxx
+
+# 仅迁移商品（跳过卡密和优惠码）
+python scripts/migrate_dujiaoka.py --no-carmis --no-coupons \
+  --db-host 127.0.0.1 --db-password mypass --db-name dujiaoka \
+  --api-url http://localhost:8080 --api-key ak_live_xxx --api-secret sk_live_xxx
+```
+
+**常用参数**:
+
+| 参数 | 说明 |
+|------|------|
+| `--dry-run` | 预览模式，不实际写入数据 |
+| `--no-products` | 跳过商品迁移 |
+| `--no-carmis` | 跳过卡密迁移 |
+| `--no-coupons` | 跳过优惠码迁移 |
+| `--skip-disabled` | 跳过已禁用的商品和分类 |
+| `--batch-size N` | 卡密批量导入大小（默认 50） |
+| `--product-status` | 导入商品的初始状态：`draft`（默认）/ `active` / `inactive` |
+
+迁移完成后会生成 `migration_mapping.json` 文件，记录独角数卡 ID 与 AuraLogic ID 的映射关系。
 
 ---
 

@@ -409,6 +409,14 @@ export async function getOrderVirtualProducts(orderNo: string) {
   return apiClient.get(`/api/user/orders/${orderNo}/virtual-products`)
 }
 
+export async function getOrderInvoice(orderNo: string) {
+  return apiClient.get(`/api/user/orders/${orderNo}/invoice`, { responseType: 'text' })
+}
+
+export async function getInvoiceToken(orderNo: string) {
+  return apiClient.get(`/api/user/orders/${orderNo}/invoice-token`)
+}
+
 // ==========================================
 // 商品API
 // ==========================================
@@ -893,6 +901,9 @@ export interface VirtualInventory {
   id: number
   name: string
   sku: string
+  type: 'static' | 'script'
+  script: string
+  script_config: string
   description: string
   is_active: boolean
   notes: string
@@ -921,6 +932,9 @@ export async function getVirtualInventories(params?: {
 export async function createVirtualInventory(data: {
   name: string
   sku?: string
+  type?: string
+  script?: string
+  script_config?: string
   description?: string
   is_active?: boolean
   notes?: string
@@ -937,6 +951,9 @@ export async function getVirtualInventory(id: number) {
 export async function updateVirtualInventory(id: number, data: {
   name?: string
   sku?: string
+  type?: string
+  script?: string
+  script_config?: string
   description?: string
   is_active?: boolean
   notes?: string
@@ -1017,6 +1034,11 @@ export async function releaseVirtualInventoryStock(virtualInventoryId: number, s
 // Get products bound to virtual inventory
 export async function getVirtualInventoryProducts(virtualInventoryId: number) {
   return apiClient.get(`/api/admin/virtual-inventories/${virtualInventoryId}/products`)
+}
+
+// Test delivery script
+export async function testDeliveryScript(script: string, config?: Record<string, any>, quantity?: number) {
+  return apiClient.post('/api/admin/virtual-inventories/test-script', { script, config, quantity })
 }
 
 // ==================== Product Virtual Inventory Bindings ====================

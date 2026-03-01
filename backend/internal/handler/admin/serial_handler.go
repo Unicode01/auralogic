@@ -20,8 +20,7 @@ func NewSerialHandler(serialService *service.SerialService) *SerialHandler {
 
 // ListSerials 列出所有序列号（管理员）
 func (h *SerialHandler) ListSerials(c *gin.Context) {
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
+	page, limit := response.GetPagination(c)
 
 	filters := make(map[string]interface{})
 

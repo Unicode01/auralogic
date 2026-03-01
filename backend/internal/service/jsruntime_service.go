@@ -21,10 +21,11 @@ import (
 	"sync"
 	"time"
 
+	"auralogic/internal/models"
+
 	"github.com/dop251/goja"
 	"github.com/google/uuid"
 	qrcode "github.com/skip2/go-qrcode"
-	"auralogic/internal/models"
 	"gorm.io/gorm"
 )
 
@@ -621,7 +622,7 @@ func (s *JSRuntimeService) createHTTPRequest(vm *goja.Runtime, ctx *JSContext, p
 			})
 		}
 
-		// ���析请求参数
+		// 解析请求参数
 		url, _ := optsMap["url"].(string)
 		method, _ := optsMap["method"].(string)
 		if method == "" {
@@ -654,29 +655,29 @@ func (s *JSRuntimeService) createHTTPRequest(vm *goja.Runtime, ctx *JSContext, p
 	}
 }
 
-	// doHTTPRequest 执行HTTP请求
-	func (s *JSRuntimeService) doHTTPRequest(vm *goja.Runtime, method, urlStr string, body interface{}, headers map[string]string, pmName string) goja.Value {
-		start := time.Now()
+// doHTTPRequest 执行HTTP请求
+func (s *JSRuntimeService) doHTTPRequest(vm *goja.Runtime, method, urlStr string, body interface{}, headers map[string]string, pmName string) goja.Value {
+	start := time.Now()
 
-		parsedURL, err := url.Parse(urlStr)
-		if err != nil {
-			return vm.ToValue(map[string]interface{}{
-				"error":  fmt.Sprintf("Invalid URL: %v", err),
-				"status": 0,
-			})
-		}
-		if err := validateExternalURL(parsedURL); err != nil {
-			return vm.ToValue(map[string]interface{}{
-				"error":  "URL is not allowed",
-				"status": 0,
-			})
-		}
+	parsedURL, err := url.Parse(urlStr)
+	if err != nil {
+		return vm.ToValue(map[string]interface{}{
+			"error":  fmt.Sprintf("Invalid URL: %v", err),
+			"status": 0,
+		})
+	}
+	if err := validateExternalURL(parsedURL); err != nil {
+		return vm.ToValue(map[string]interface{}{
+			"error":  "URL is not allowed",
+			"status": 0,
+		})
+	}
 
-		client := newPaymentHTTPClient()
+	client := newPaymentHTTPClient()
 
-		// 准备请求体
-		var reqBody io.Reader
-		contentType := ""
+	// 准备请求体
+	var reqBody io.Reader
+	contentType := ""
 	if body != nil {
 		switch v := body.(type) {
 		case string:
@@ -711,13 +712,13 @@ func (s *JSRuntimeService) createHTTPRequest(vm *goja.Runtime, ctx *JSContext, p
 	}
 
 	// 创建请求
-		req, err := http.NewRequest(method, parsedURL.String(), reqBody)
-		if err != nil {
-			return vm.ToValue(map[string]interface{}{
-				"error":  fmt.Sprintf("Failed to create request: %v", err),
-				"status": 0,
-			})
-		}
+	req, err := http.NewRequest(method, parsedURL.String(), reqBody)
+	if err != nil {
+		return vm.ToValue(map[string]interface{}{
+			"error":  fmt.Sprintf("Failed to create request: %v", err),
+			"status": 0,
+		})
+	}
 
 	// 设置默认User-Agent
 	req.Header.Set("User-Agent", "AuraLogic-PaymentScript/1.0")
@@ -727,14 +728,14 @@ func (s *JSRuntimeService) createHTTPRequest(vm *goja.Runtime, ctx *JSContext, p
 		req.Header.Set("Content-Type", contentType)
 	}
 
-		// 设置自定义headers
-		for k, v := range headers {
-			// Prevent scripts from trying to smuggle proxy hops / override host.
-			if strings.EqualFold(k, "Host") || strings.EqualFold(k, "Proxy-Authorization") {
-				continue
-			}
-			req.Header.Set(k, v)
+	// 设置自定义headers
+	for k, v := range headers {
+		// Prevent scripts from trying to smuggle proxy hops / override host.
+		if strings.EqualFold(k, "Host") || strings.EqualFold(k, "Proxy-Authorization") {
+			continue
 		}
+		req.Header.Set(k, v)
+	}
 
 	// 执行请求
 	resp, err := client.Do(req)

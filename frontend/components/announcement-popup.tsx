@@ -234,7 +234,7 @@ export function AnnouncementPopup() {
                   <MarkdownMessage
                     content={current?.content || ''}
                     allowHtml
-                    className="prose prose-sm dark:prose-invert max-w-none [&_*]:text-foreground"
+                    className="markdown-body"
                   />
                 </div>
               </>

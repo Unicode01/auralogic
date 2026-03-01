@@ -236,7 +236,7 @@ func (h *ShippingHandler) SubmitForm(c *gin.Context) {
 			"form_token": req.FormToken,
 			"error":      err.Error(),
 		})
-		response.BadRequest(c, err.Error())
+		response.HandleError(c, "Form submission failed", err)
 		return
 	}
 

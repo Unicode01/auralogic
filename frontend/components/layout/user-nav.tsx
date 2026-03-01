@@ -13,9 +13,13 @@ import { Button } from '@/components/ui/button'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { User, Settings, LogOut, Shield, Package } from 'lucide-react'
 import Link from 'next/link'
+import { useLocale } from '@/hooks/use-locale'
+import { getTranslations } from '@/lib/i18n'
 
 export function UserNav({ user }: { user: any }) {
   const { logout } = useAuth()
+  const { locale } = useLocale()
+  const t = getTranslations(locale)
   const isAdmin = user?.role === 'admin' || user?.role === 'super_admin'
 
   return (
@@ -42,21 +46,21 @@ export function UserNav({ user }: { user: any }) {
         <DropdownMenuItem asChild>
           <Link href="/orders" className="flex items-center cursor-pointer">
             <Package className="mr-2 h-4 w-4" />
-            我的订单
+            {t.sidebar.myOrders}
           </Link>
         </DropdownMenuItem>
 
         <DropdownMenuItem asChild>
           <Link href="/profile" className="flex items-center cursor-pointer">
             <User className="mr-2 h-4 w-4" />
-            个人中心
+            {t.sidebar.profile}
           </Link>
         </DropdownMenuItem>
 
         <DropdownMenuItem asChild>
           <Link href="/profile/settings" className="flex items-center cursor-pointer">
             <Settings className="mr-2 h-4 w-4" />
-            设置
+            {t.sidebar.accountSettings}
           </Link>
         </DropdownMenuItem>
 
@@ -67,7 +71,7 @@ export function UserNav({ user }: { user: any }) {
             <DropdownMenuItem asChild>
               <Link href="/admin/dashboard" className="flex items-center cursor-pointer">
                 <Shield className="mr-2 h-4 w-4" />
-                管理后台
+                {t.sidebar.adminPanel}
               </Link>
             </DropdownMenuItem>
           </>
@@ -77,7 +81,7 @@ export function UserNav({ user }: { user: any }) {
 
         <DropdownMenuItem className="text-red-600 cursor-pointer" onClick={() => logout()}>
           <LogOut className="mr-2 h-4 w-4" />
-          退出登录
+          {t.auth.logout}
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

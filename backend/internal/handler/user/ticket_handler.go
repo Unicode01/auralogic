@@ -161,14 +161,9 @@ func (h *TicketHandler) CreateTicket(c *gin.Context) {
 // ListTickets 获取用户工单列表
 func (h *TicketHandler) ListTickets(c *gin.Context) {
 	userID := middleware.MustGetUserID(c)
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
+	page, limit := response.GetPagination(c)
 	status := c.Query("status")
 	search := c.Query("search")
-
-	if limit > 100 {
-		limit = 100
-	}
 
 	var tickets []models.Ticket
 	var total int64

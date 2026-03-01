@@ -1,8 +1,12 @@
 package response
 
 import (
+	"errors"
 	"log"
 	"net/http"
+	"strconv"
+
+	"auralogic/internal/pkg/bizerr"
 
 	"github.com/gin-gonic/gin"
 )
@@ -91,6 +95,21 @@ func ValidationError(c *gin.Context, errors interface{}) {
 	})
 }
 
+// GetPagination 从请求中解析并校验分页参数
+func GetPagination(c *gin.Context) (page, limit int) {
+	page, _ = strconv.Atoi(c.DefaultQuery("page", "1"))
+	limit, _ = strconv.Atoi(c.DefaultQuery("limit", "20"))
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 {
+		limit = 20
+	} else if limit > 100 {
+		limit = 100
+	}
+	return
+}
+
 // Paginated 分页响应
 func Paginated(c *gin.Context, items interface{}, page, limit int, total int64) {
 	totalPages := int(total) / limit
@@ -164,6 +183,16 @@ func BizError(c *gin.Context, message string, key string, params map[string]inte
 			"params":    params,
 		},
 	})
+}
+
+// HandleError 统一错误处理：业务错误返回详细信息，其他错误仅记录日志并返回通用提示
+func HandleError(c *gin.Context, fallbackMsg string, err error) {
+	var bizErr *bizerr.Error
+	if errors.As(err, &bizErr) {
+		BizError(c, bizErr.Message, bizErr.Key, bizErr.Params)
+		return
+	}
+	InternalServerError(c, fallbackMsg, err)
 }
 
 // BadRequest Error请求

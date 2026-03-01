@@ -432,6 +432,7 @@ func (s *OrderService) CreateAdminOrder(req AdminOrderRequest) (*models.Order, e
 	}
 
 	// 虚拟产品预留库存（待付款状态，付款后才发货）
+	virtualInventoryBindings := make(map[int]uint)
 	if s.virtualProductSvc != nil {
 		for i := range orderItems {
 			item := &orderItems[i]
@@ -441,7 +442,7 @@ func (s *OrderService) CreateAdminOrder(req AdminOrderRequest) (*models.Order, e
 
 			// 如果管理员指定了虚拟库存ID，直接从该库存池分配
 			if vid, ok := virtualInventoryIDs[i]; ok && vid != nil {
-				_, err := s.virtualProductSvc.AllocateStockFromInventory(*vid, item.Quantity, orderNo)
+				_, scriptInvID, err := s.virtualProductSvc.AllocateStockFromInventory(*vid, item.Quantity, orderNo)
 				if err != nil {
 					// 分配失败，回滚物理库存和订单
 					for j, inventoryID := range inventoryBindings {
@@ -449,6 +450,9 @@ func (s *OrderService) CreateAdminOrder(req AdminOrderRequest) (*models.Order, e
 					}
 					s.OrderRepo.Delete(order.ID)
 					return nil, fmt.Errorf("Failed to allocate virtual product stock for %s: %v", item.Name, err)
+				}
+				if scriptInvID != nil {
+					virtualInventoryBindings[i] = *scriptInvID
 				}
 			} else {
 				// 未指定虚拟库存ID，尝试通过商品绑定自动分配
@@ -461,7 +465,7 @@ func (s *OrderService) CreateAdminOrder(req AdminOrderRequest) (*models.Order, e
 				for k, v := range item.Attributes {
 					allocAttrs[k] = v
 				}
-				_, err = s.virtualProductSvc.AllocateStockForProductByAttributes(product.ID, item.Quantity, orderNo, allocAttrs)
+				_, scriptInvID, err := s.virtualProductSvc.AllocateStockForProductByAttributes(product.ID, item.Quantity, orderNo, allocAttrs)
 				if err != nil {
 					// 分配失败，回滚物理库存和订单
 					for j, inventoryID := range inventoryBindings {
@@ -469,6 +473,9 @@ func (s *OrderService) CreateAdminOrder(req AdminOrderRequest) (*models.Order, e
 					}
 					s.OrderRepo.Delete(order.ID)
 					return nil, fmt.Errorf("Failed to allocate virtual product stock for %s: %v", item.Name, err)
+				}
+				if scriptInvID != nil {
+					virtualInventoryBindings[i] = *scriptInvID
 				}
 			}
 
@@ -480,6 +487,12 @@ func (s *OrderService) CreateAdminOrder(req AdminOrderRequest) (*models.Order, e
 				}
 			}
 		}
+	}
+
+	// 保存脚本类型虚拟库存绑定
+	if len(virtualInventoryBindings) > 0 {
+		order.VirtualInventoryBindings = virtualInventoryBindings
+		s.OrderRepo.Update(order)
 	}
 
 	// 发送订单创建通知邮件
@@ -891,6 +904,7 @@ func (s *OrderService) CreateUserOrder(userID uint, items []models.OrderItem, re
 	}
 
 	// 虚拟产品预留库存（待付款状态，付款后才发货）
+	userVirtualInventoryBindings := make(map[int]uint)
 	if s.virtualProductSvc != nil {
 		for i := range items {
 			item := &items[i]
@@ -914,7 +928,7 @@ func (s *OrderService) CreateUserOrder(userID uint, items []models.OrderItem, re
 						}
 					}
 				}
-				_, err := s.virtualProductSvc.AllocateStockForProductByAttributes(product.ID, item.Quantity, orderNo, allocAttrs)
+				_, scriptInvID, err := s.virtualProductSvc.AllocateStockForProductByAttributes(product.ID, item.Quantity, orderNo, allocAttrs)
 				if err != nil {
 					// 分配失败，需要回滚订单和已分配的物理库存
 					for j, inventoryID := range inventoryBindings {
@@ -923,9 +937,18 @@ func (s *OrderService) CreateUserOrder(userID uint, items []models.OrderItem, re
 					s.OrderRepo.Delete(order.ID)
 					return nil, fmt.Errorf("Failed to allocate virtual product stock: %v", err)
 				}
+				if scriptInvID != nil {
+					userVirtualInventoryBindings[i] = *scriptInvID
+				}
 			}
 		}
 		// 注意：待付款状态不自动发货，需要管理员标记付款后才发货
+	}
+
+	// 保存脚本类型虚拟库存绑定
+	if len(userVirtualInventoryBindings) > 0 {
+		order.VirtualInventoryBindings = userVirtualInventoryBindings
+		s.OrderRepo.Update(order)
 	}
 
 	// 零金额订单自动完成支付（如100%优惠码或价格为0的商品）
@@ -1307,7 +1330,10 @@ func (s *OrderService) CompleteOrder(orderID uint, completedBy uint, feedback, a
 		order.UserFeedback = feedback
 	}
 	if adminRemark != "" {
-		order.AdminRemark = adminRemark
+		if order.AdminRemark != "" {
+			order.AdminRemark += "\n"
+		}
+		order.AdminRemark += "[Complete] " + adminRemark
 	}
 
 	// 扣减优惠码（从预留转为已使用）
@@ -1344,7 +1370,12 @@ func (s *OrderService) RequestResubmit(orderID uint, reason string) (string, err
 	order.FormToken = &formToken
 	order.FormExpiresAt = &formExpiresAt
 	order.FormSubmittedAt = nil // 清空提交时间，允许重新提交
-	order.AdminRemark = reason
+	if reason != "" {
+		if order.AdminRemark != "" {
+			order.AdminRemark += "\n"
+		}
+		order.AdminRemark += "[Resubmit] " + reason
+	}
 
 	if err := s.OrderRepo.Update(order); err != nil {
 		return "", err
@@ -1466,7 +1497,10 @@ func (s *OrderService) CancelOrder(orderID uint, reason string) error {
 
 	order.Status = models.OrderStatusCancelled
 	if reason != "" {
-		order.AdminRemark = reason
+		if order.AdminRemark != "" {
+			order.AdminRemark += "\n"
+		}
+		order.AdminRemark += "[Cancel] " + reason
 	}
 
 	if err := s.OrderRepo.Update(order); err != nil {

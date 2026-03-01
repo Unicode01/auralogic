@@ -50,7 +50,6 @@ func (r *BindingRepository) FindByProductID(productID uint) ([]models.ProductInv
 	return bindings, err
 }
 
-// FindByInventoryID 获取库存的所有商品绑定
 func (r *BindingRepository) FindByInventoryID(inventoryID uint) ([]models.ProductInventoryBinding, error) {
 	var bindings []models.ProductInventoryBinding
 	err := r.db.Where("inventory_id = ?", inventoryID).

@@ -5,12 +5,13 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"auralogic/internal/config"
 	"auralogic/internal/database"
 	"auralogic/internal/models"
 	"auralogic/internal/pkg/cache"
 	"auralogic/internal/pkg/response"
+
+	"github.com/gin-gonic/gin"
 )
 
 const permCacheTTL = 1 * time.Minute
@@ -68,7 +69,7 @@ func getPermCached(userID uint) (*permCacheEntry, error) {
 		entry.Permissions = perm.Permissions
 	}
 
-	// 写入缓���
+	// 写入缓存
 	if data, err := json.Marshal(entry); err == nil {
 		cache.Set(key, string(data), permCacheTTL)
 	}

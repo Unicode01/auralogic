@@ -293,16 +293,11 @@ func (h *ProductHandler) GetProduct(c *gin.Context) {
 
 // ListProducts Product列表
 func (h *ProductHandler) ListProducts(c *gin.Context) {
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
+	page, limit := response.GetPagination(c)
 	status := c.Query("status")
 	category := c.Query("category")
 	search := c.Query("search")
 	isFeaturedStr := c.Query("is_featured")
-
-	if limit > 100 {
-		limit = 100
-	}
 
 	var isFeatured *bool
 	if isFeaturedStr != "" {

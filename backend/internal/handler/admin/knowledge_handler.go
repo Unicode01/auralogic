@@ -194,14 +194,9 @@ func (h *KnowledgeHandler) DeleteCategory(c *gin.Context) {
 
 // ListArticles 文章列表
 func (h *KnowledgeHandler) ListArticles(c *gin.Context) {
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
+	page, limit := response.GetPagination(c)
 	categoryID := c.Query("category_id")
 	search := c.Query("search")
-
-	if limit > 100 {
-		limit = 100
-	}
 
 	query := h.db.Model(&models.KnowledgeArticle{})
 

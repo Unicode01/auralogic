@@ -103,6 +103,8 @@ func (h *SettingsHandler) GetPublicConfig(c *gin.Context) {
 		"serial": gin.H{
 			"enabled": h.cfg.Serial.Enabled,
 		},
+		"auto_cancel_hours": h.cfg.Order.AutoCancelHours,
+		"invoice_enabled": h.cfg.Order.Invoice.Enabled,
 		"smtp_enabled": h.cfg.SMTP.Enabled,
 		"captcha": gin.H{
 			"provider":                 h.cfg.Security.Captcha.Provider,
@@ -180,6 +182,18 @@ func (h *SettingsHandler) GetSettings(c *gin.Context) {
 				"mode":                 h.cfg.Order.StockDisplay.Mode,
 				"low_stock_threshold":  h.cfg.Order.StockDisplay.LowStockThreshold,
 				"high_stock_threshold": h.cfg.Order.StockDisplay.HighStockThreshold,
+			},
+			"invoice": gin.H{
+				"enabled":         h.cfg.Order.Invoice.Enabled,
+				"template_type":   h.cfg.Order.Invoice.TemplateType,
+				"custom_template": h.cfg.Order.Invoice.CustomTemplate,
+				"company_name":    h.cfg.Order.Invoice.CompanyName,
+				"company_address": h.cfg.Order.Invoice.CompanyAddress,
+				"company_phone":   h.cfg.Order.Invoice.CompanyPhone,
+				"company_email":   h.cfg.Order.Invoice.CompanyEmail,
+				"company_logo":    h.cfg.Order.Invoice.CompanyLogo,
+				"tax_id":          h.cfg.Order.Invoice.TaxID,
+				"footer_text":     h.cfg.Order.Invoice.FooterText,
 			},
 		},
 		"magic_link": gin.H{
@@ -313,6 +327,7 @@ type UpdateSettingsRequest struct {
 		MaxItemQuantity      int                       `json:"max_item_quantity"`
 		VirtualDeliveryOrder string                    `json:"virtual_delivery_order"`
 		StockDisplay         config.StockDisplayConfig `json:"stock_display"`
+		Invoice              config.InvoiceConfig      `json:"invoice"`
 	} `json:"order,omitempty"`
 
 	MagicLink struct {
@@ -558,6 +573,18 @@ func (h *SettingsHandler) UpdateSettings(c *gin.Context) {
 				"mode":                 req.Order.StockDisplay.Mode,
 				"low_stock_threshold":  req.Order.StockDisplay.LowStockThreshold,
 				"high_stock_threshold": req.Order.StockDisplay.HighStockThreshold,
+			},
+			"invoice": map[string]interface{}{
+				"enabled":         req.Order.Invoice.Enabled,
+				"template_type":   req.Order.Invoice.TemplateType,
+				"custom_template": req.Order.Invoice.CustomTemplate,
+				"company_name":    req.Order.Invoice.CompanyName,
+				"company_address": req.Order.Invoice.CompanyAddress,
+				"company_phone":   req.Order.Invoice.CompanyPhone,
+				"company_email":   req.Order.Invoice.CompanyEmail,
+				"company_logo":    req.Order.Invoice.CompanyLogo,
+				"tax_id":          req.Order.Invoice.TaxID,
+				"footer_text":     req.Order.Invoice.FooterText,
 			},
 		}
 	}

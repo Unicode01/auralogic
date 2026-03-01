@@ -18,7 +18,7 @@ import { createRegisterSchema, registerSchema } from '@/lib/validators'
 import { useLocale } from '@/hooks/use-locale'
 import { usePageTitle } from '@/hooks/use-page-title'
 import { getTranslations } from '@/lib/i18n'
-import { Loader2, Mail, Lock, ArrowRight, User, Phone, KeyRound } from 'lucide-react'
+import { Loader2, Mail, Lock, ArrowRight, User, Phone, KeyRound, Eye, EyeOff } from 'lucide-react'
 import Link from 'next/link'
 import { useQuery } from '@tanstack/react-query'
 import { getPublicConfig, getCaptcha, sendPhoneRegisterCode } from '@/lib/api'
@@ -50,6 +50,8 @@ export default function RegisterPage() {
   const [phoneCode, setPhoneCode] = useState('')
   const [countdown, setCountdown] = useState(0)
   const [sendingCode, setSendingCode] = useState(false)
+  const [showPassword, setShowPassword] = useState(false)
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false)
 
   const { data: publicConfig } = useQuery({
     queryKey: ['publicConfig'],
@@ -319,8 +321,12 @@ export default function RegisterPage() {
                 <label className="text-sm font-medium">{t.auth.password}</label>
                 <div className="relative">
                   <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                  <Input type="password" placeholder={t.auth.passwordPlaceholder} className="pl-10 h-10"
+                  <Input type={showPassword ? "text" : "password"} placeholder={t.auth.passwordPlaceholder} className="pl-10 pr-10 h-10"
                     value={phonePassword} onChange={(e) => setPhonePassword(e.target.value)} />
+                  <button type="button" onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors">
+                    {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
                 </div>
               </div>
 
@@ -328,8 +334,12 @@ export default function RegisterPage() {
                 <label className="text-sm font-medium">{t.auth.confirmPassword}</label>
                 <div className="relative">
                   <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                  <Input type="password" placeholder={t.auth.confirmPasswordPlaceholder} className="pl-10 h-10"
+                  <Input type={showConfirmPassword ? "text" : "password"} placeholder={t.auth.confirmPasswordPlaceholder} className="pl-10 pr-10 h-10"
                     value={phoneConfirmPassword} onChange={(e) => setPhoneConfirmPassword(e.target.value)} />
+                  <button type="button" onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors">
+                    {showConfirmPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
                 </div>
               </div>
 
@@ -435,11 +445,15 @@ export default function RegisterPage() {
                       <div className="relative">
                         <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                         <Input
-                          type="password"
+                          type={showPassword ? "text" : "password"}
                           placeholder={t.auth.passwordPlaceholder}
-                          className="pl-10 h-10"
+                          className="pl-10 pr-10 h-10"
                           {...field}
                         />
+                        <button type="button" onClick={() => setShowPassword(!showPassword)}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors">
+                          {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                        </button>
                       </div>
                     </FormControl>
                     <FormMessage />
@@ -457,11 +471,15 @@ export default function RegisterPage() {
                       <div className="relative">
                         <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                         <Input
-                          type="password"
+                          type={showConfirmPassword ? "text" : "password"}
                           placeholder={t.auth.confirmPasswordPlaceholder}
-                          className="pl-10 h-10"
+                          className="pl-10 pr-10 h-10"
                           {...field}
                         />
+                        <button type="button" onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors">
+                          {showConfirmPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                        </button>
                       </div>
                     </FormControl>
                     <FormMessage />

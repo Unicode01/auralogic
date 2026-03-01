@@ -35,28 +35,34 @@ func (h *VirtualInventoryHandler) ListVirtualInventories(c *gin.Context) {
 	fmt.Sscanf(page, "%d", &pageInt)
 	fmt.Sscanf(limit, "%d", &limitInt)
 
+	if pageInt < 1 {
+		pageInt = 1
+	}
+	if limitInt < 1 || limitInt > 100 {
+		limitInt = 20
+	}
+
 	inventories, total, err := h.service.ListVirtualInventories(pageInt, limitInt, search)
 	if err != nil {
 		response.InternalError(c, "Failed to get virtual inventories")
 		return
 	}
 
-	response.Success(c, gin.H{
-		"list":  inventories,
-		"total": total,
-		"page":  pageInt,
-		"limit": limitInt,
-	})
+	response.Paginated(c, inventories, pageInt, limitInt, total)
 }
 
 // CreateVirtualInventory 创建虚拟库存
 func (h *VirtualInventoryHandler) CreateVirtualInventory(c *gin.Context) {
 	var req struct {
-		Name        string `json:"name" binding:"required"`
-		SKU         string `json:"sku"`
-		Description string `json:"description"`
-		IsActive    bool   `json:"is_active"`
-		Notes       string `json:"notes"`
+		Name         string `json:"name" binding:"required"`
+		SKU          string `json:"sku"`
+		Type         string `json:"type"`
+		Script       string `json:"script"`
+		ScriptConfig string `json:"script_config"`
+		Description  string `json:"description"`
+		TotalLimit   int64  `json:"total_limit"`
+		IsActive     bool   `json:"is_active"`
+		Notes        string `json:"notes"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -64,12 +70,25 @@ func (h *VirtualInventoryHandler) CreateVirtualInventory(c *gin.Context) {
 		return
 	}
 
+	invType := models.VirtualInventoryTypeStatic
+	if req.Type == "script" {
+		invType = models.VirtualInventoryTypeScript
+		if strings.TrimSpace(req.Script) == "" {
+			response.BadRequest(c, "Script content is required for script type inventory")
+			return
+		}
+	}
+
 	inventory := &models.VirtualInventory{
-		Name:        req.Name,
-		SKU:         req.SKU,
-		Description: req.Description,
-		IsActive:    req.IsActive,
-		Notes:       req.Notes,
+		Name:         req.Name,
+		SKU:          req.SKU,
+		Type:         invType,
+		Script:       req.Script,
+		ScriptConfig: req.ScriptConfig,
+		Description:  req.Description,
+		TotalLimit:   req.TotalLimit,
+		IsActive:     req.IsActive,
+		Notes:        req.Notes,
 	}
 
 	if err := h.service.CreateVirtualInventory(inventory); err != nil {
@@ -109,11 +128,15 @@ func (h *VirtualInventoryHandler) UpdateVirtualInventory(c *gin.Context) {
 	}
 
 	var req struct {
-		Name        string `json:"name"`
-		SKU         string `json:"sku"`
-		Description string `json:"description"`
-		IsActive    *bool  `json:"is_active"`
-		Notes       string `json:"notes"`
+		Name         string  `json:"name"`
+		SKU          string  `json:"sku"`
+		Type         string  `json:"type"`
+		Script       *string `json:"script"`
+		ScriptConfig *string `json:"script_config"`
+		Description  string  `json:"description"`
+		TotalLimit   *int64  `json:"total_limit"`
+		IsActive     *bool   `json:"is_active"`
+		Notes        string  `json:"notes"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -128,11 +151,27 @@ func (h *VirtualInventoryHandler) UpdateVirtualInventory(c *gin.Context) {
 	if req.SKU != "" {
 		updates["sku"] = req.SKU
 	}
+	if req.Type != "" {
+		if req.Type != "static" && req.Type != "script" {
+			response.BadRequest(c, "Invalid inventory type, must be 'static' or 'script'")
+			return
+		}
+		updates["type"] = req.Type
+	}
+	if req.Script != nil {
+		updates["script"] = *req.Script
+	}
+	if req.ScriptConfig != nil {
+		updates["script_config"] = *req.ScriptConfig
+	}
 	if req.Description != "" {
 		updates["description"] = req.Description
 	}
 	if req.IsActive != nil {
 		updates["is_active"] = *req.IsActive
+	}
+	if req.TotalLimit != nil {
+		updates["total_limit"] = *req.TotalLimit
 	}
 	if req.Notes != "" {
 		updates["notes"] = req.Notes
@@ -162,6 +201,32 @@ func (h *VirtualInventoryHandler) DeleteVirtualInventory(c *gin.Context) {
 	response.Success(c, gin.H{"message": "Virtual inventory deleted successfully"})
 }
 
+// TestDeliveryScript 测试发货脚本
+func (h *VirtualInventoryHandler) TestDeliveryScript(c *gin.Context) {
+	var req struct {
+		Script   string                 `json:"script" binding:"required"`
+		Config   map[string]interface{} `json:"config"`
+		Quantity int                    `json:"quantity"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request data")
+		return
+	}
+
+	if req.Quantity <= 0 {
+		req.Quantity = 1
+	}
+
+	result, err := h.service.TestDeliveryScript(req.Script, req.Config, req.Quantity)
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+
+	response.Success(c, result)
+}
+
 // ImportStock 导入库存项
 func (h *VirtualInventoryHandler) ImportStock(c *gin.Context) {
 	id, err := middleware.GetUintParam(c, "id")
@@ -171,9 +236,15 @@ func (h *VirtualInventoryHandler) ImportStock(c *gin.Context) {
 	}
 
 	// 检查库存是否存在
-	_, err = h.service.GetVirtualInventory(id)
+	inv, err := h.service.GetVirtualInventory(id)
 	if err != nil {
 		response.NotFound(c, "Virtual inventory not found")
+		return
+	}
+
+	// 脚本类型库存不允许手动导入
+	if inv.Type == models.VirtualInventoryTypeScript {
+		response.BadRequest(c, "Script type inventory does not support manual stock import")
 		return
 	}
 
@@ -281,6 +352,17 @@ func (h *VirtualInventoryHandler) CreateStockManually(c *gin.Context) {
 		return
 	}
 
+	// 检查库存类型
+	inv, err := h.service.GetVirtualInventory(id)
+	if err != nil {
+		response.NotFound(c, "Virtual inventory not found")
+		return
+	}
+	if inv.Type == models.VirtualInventoryTypeScript {
+		response.BadRequest(c, "Script type inventory does not support manual stock creation")
+		return
+	}
+
 	var req struct {
 		Content string `json:"content" binding:"required"`
 		Remark  string `json:"remark"`
@@ -321,18 +403,20 @@ func (h *VirtualInventoryHandler) GetStockList(c *gin.Context) {
 	fmt.Sscanf(page, "%d", &pageInt)
 	fmt.Sscanf(limit, "%d", &limitInt)
 
+	if pageInt < 1 {
+		pageInt = 1
+	}
+	if limitInt < 1 || limitInt > 100 {
+		limitInt = 20
+	}
+
 	stocks, total, err := h.service.ListStocks(id, status, pageInt, limitInt)
 	if err != nil {
 		response.InternalError(c, "Failed to get stock list")
 		return
 	}
 
-	response.Success(c, gin.H{
-		"list":  stocks,
-		"total": total,
-		"page":  pageInt,
-		"limit": limitInt,
-	})
+	response.Paginated(c, stocks, pageInt, limitInt, total)
 }
 
 // GetStockStats 获取库存统计
@@ -554,18 +638,20 @@ func (h *VirtualInventoryHandler) GetStockListForProduct(c *gin.Context) {
 	fmt.Sscanf(page, "%d", &pageInt)
 	fmt.Sscanf(limit, "%d", &limitInt)
 
+	if pageInt < 1 {
+		pageInt = 1
+	}
+	if limitInt < 1 || limitInt > 100 {
+		limitInt = 20
+	}
+
 	stocks, total, err := h.service.ListStocksForProduct(productID, status, pageInt, limitInt)
 	if err != nil {
 		response.InternalError(c, "Failed to get stock list")
 		return
 	}
 
-	response.Success(c, gin.H{
-		"list":  stocks,
-		"total": total,
-		"page":  pageInt,
-		"limit": limitInt,
-	})
+	response.Paginated(c, stocks, pageInt, limitInt, total)
 }
 
 // GetStockStatsForProduct 获取商品的虚拟库存统计
@@ -597,6 +683,17 @@ func (h *VirtualInventoryHandler) ImportStockForProduct(c *gin.Context) {
 	binding, err := h.service.GetFirstBindingForProduct(productID)
 	if err != nil {
 		response.BadRequest(c, "No virtual inventory bound to this product. Please bind a virtual inventory first.")
+		return
+	}
+
+	// 检查绑定的库存是否为脚本类型
+	inv, err := h.service.GetVirtualInventory(binding.VirtualInventoryID)
+	if err != nil {
+		response.InternalError(c, "Failed to get virtual inventory")
+		return
+	}
+	if inv.Type == models.VirtualInventoryTypeScript {
+		response.BadRequest(c, "Script type inventory does not support manual stock import")
 		return
 	}
 

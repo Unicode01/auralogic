@@ -269,18 +269,13 @@ func (h *OrderHandler) RequestResubmit(c *gin.Context) {
 
 // ListOrders QueryOrder List
 func (h *OrderHandler) ListOrders(c *gin.Context) {
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
+	page, limit := response.GetPagination(c)
 	status := c.Query("status")
 	search := c.Query("search")
 	country := c.Query("country")
 	productSearch := c.Query("product_search") // ProductSKU/名称搜索
 	promoCode := strings.ToUpper(strings.TrimSpace(c.Query("promo_code")))
 	promoCodeIDStr := c.Query("promo_code_id")
-
-	if limit > 100 {
-		limit = 100
-	}
 
 	var promoCodeID *uint
 	if promoCodeIDStr != "" {

@@ -1,7 +1,6 @@
 package admin
 
 import (
-	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -20,17 +19,12 @@ func NewInventoryLogHandler(db *gorm.DB) *InventoryLogHandler {
 
 // ListInventoryLogs getInventory日志列表
 func (h *InventoryLogHandler) ListInventoryLogs(c *gin.Context) {
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
+	page, limit := response.GetPagination(c)
 	inventoryID := c.Query("inventory_id")
 	logType := c.Query("type")
 	orderNo := c.Query("order_no")
 	startDate := c.Query("start_date")
 	endDate := c.Query("end_date")
-
-	if limit > 100 {
-		limit = 100
-	}
 
 	var logs []models.InventoryLog
 	var total int64

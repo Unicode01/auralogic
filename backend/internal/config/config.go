@@ -3,6 +3,9 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"io"
+	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -201,6 +204,57 @@ type LogConfig struct {
 	FilePath string `json:"file_path"`
 }
 
+// InitLogger 根据 LogConfig 初始化日志系统。
+// 使用 log/slog 作为结构化日志后端，同时桥接标准 log 包的输出。
+// 返回日志文件句柄（如果 output=file），调用方应 defer Close。
+func InitLogger(cfg *LogConfig) (*os.File, error) {
+	// 解析日志级别
+	var level slog.Level
+	switch strings.ToLower(cfg.Level) {
+	case "debug":
+		level = slog.LevelDebug
+	case "warn", "warning":
+		level = slog.LevelWarn
+	case "error":
+		level = slog.LevelError
+	default:
+		level = slog.LevelInfo
+	}
+
+	// 确定输出目标
+	var writer io.Writer
+	var logFile *os.File
+	switch strings.ToLower(cfg.Output) {
+	case "file":
+		if cfg.FilePath == "" {
+			cfg.FilePath = "auralogic.log"
+		}
+		f, err := os.OpenFile(cfg.FilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		if err != nil {
+			return nil, fmt.Errorf("failed to open log file %s: %w", cfg.FilePath, err)
+		}
+		writer = f
+		logFile = f
+	default:
+		writer = os.Stdout
+	}
+
+	// 根据格式创建 handler
+	opts := &slog.HandlerOptions{Level: level}
+	var handler slog.Handler
+	if strings.ToLower(cfg.Format) == "json" {
+		handler = slog.NewJSONHandler(writer, opts)
+	} else {
+		handler = slog.NewTextHandler(writer, opts)
+	}
+
+	// 设置为默认 logger（同时桥接标准 log 包）
+	slog.SetDefault(slog.New(handler))
+	log.SetOutput(writer)
+
+	return logFile, nil
+}
+
 // OrderConfig Order配置
 type OrderConfig struct {
 	NoPrefix             string             `json:"no_prefix"`
@@ -210,6 +264,21 @@ type OrderConfig struct {
 	MaxItemQuantity      int                `json:"max_item_quantity"`  // 单个商品项最大数量，0表示使用默认值9999
 	StockDisplay         StockDisplayConfig `json:"stock_display"`
 	VirtualDeliveryOrder string             `json:"virtual_delivery_order"` // 虚拟库存发货顺序: random(随机), newest(先发新库存), oldest(先发老库存)
+	Invoice              InvoiceConfig      `json:"invoice"`
+}
+
+// InvoiceConfig 账单/发票配置
+type InvoiceConfig struct {
+	Enabled        bool   `json:"enabled"`
+	TemplateType   string `json:"template_type"`   // "builtin" or "custom"
+	CustomTemplate string `json:"custom_template"` // 自定义 HTML 模板
+	CompanyName    string `json:"company_name"`
+	CompanyAddress string `json:"company_address"`
+	CompanyPhone   string `json:"company_phone"`
+	CompanyEmail   string `json:"company_email"`
+	CompanyLogo    string `json:"company_logo"` // Logo URL
+	TaxID          string `json:"tax_id"`
+	FooterText     string `json:"footer_text"`
 }
 
 // StockDisplayConfig 库存显示配置

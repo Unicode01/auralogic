@@ -32,13 +32,8 @@ func NewAdminHandler(userRepo *repository.UserRepository, db *gorm.DB, cfg *conf
 
 // ListAdmins Admin列表
 func (h *AdminHandler) ListAdmins(c *gin.Context) {
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
+	page, limit := response.GetPagination(c)
 	search := c.Query("search")
-
-	if limit > 100 {
-		limit = 100
-	}
 
 	var admins []models.User
 	var total int64

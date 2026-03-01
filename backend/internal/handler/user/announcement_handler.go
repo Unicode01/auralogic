@@ -22,12 +22,7 @@ func NewAnnouncementHandler(db *gorm.DB) *AnnouncementHandler {
 // ListAnnouncements 公告列表（带已读状态）
 func (h *AnnouncementHandler) ListAnnouncements(c *gin.Context) {
 	userID := middleware.MustGetUserID(c)
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
-
-	if limit > 100 {
-		limit = 100
-	}
+	page, limit := response.GetPagination(c)
 
 	query := h.db.Model(&models.Announcement{})
 

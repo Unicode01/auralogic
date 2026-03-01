@@ -23,12 +23,7 @@ func NewAPIKeyHandler(db *gorm.DB) *APIKeyHandler {
 
 // ListAPIKeys getAPI密钥列表
 func (h *APIKeyHandler) ListAPIKeys(c *gin.Context) {
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
-
-	if limit > 100 {
-		limit = 100
-	}
+	page, limit := response.GetPagination(c)
 
 	var keys []models.APIKey
 	var total int64

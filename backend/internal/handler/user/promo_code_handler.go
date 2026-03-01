@@ -31,7 +31,7 @@ func (h *PromoCodeHandler) ValidatePromoCode(c *gin.Context) {
 
 	promoCode, discount, err := h.promoCodeService.ValidateCode(req.Code, req.ProductIDs, req.Amount)
 	if err != nil {
-		response.BadRequest(c, err.Error())
+		response.HandleError(c, "Invalid promo code", err)
 		return
 	}
 

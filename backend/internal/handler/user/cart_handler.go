@@ -77,7 +77,7 @@ func (h *CartHandler) AddToCart(c *gin.Context) {
 			response.BizError(c, bizErr.Message, bizErr.Key, bizErr.Params)
 			return
 		}
-		response.BadRequest(c, err.Error())
+		response.HandleError(c, "Failed to add to cart", err)
 		return
 	}
 
@@ -115,7 +115,7 @@ func (h *CartHandler) UpdateQuantity(c *gin.Context) {
 			response.BizError(c, bizErr.Message, bizErr.Key, bizErr.Params)
 			return
 		}
-		response.BadRequest(c, err.Error())
+		response.HandleError(c, "Failed to update quantity", err)
 		return
 	}
 
@@ -141,7 +141,7 @@ func (h *CartHandler) RemoveFromCart(c *gin.Context) {
 			response.BizError(c, bizErr.Message, bizErr.Key, bizErr.Params)
 			return
 		}
-		response.BadRequest(c, err.Error())
+		response.HandleError(c, "Failed to remove from cart", err)
 		return
 	}
 

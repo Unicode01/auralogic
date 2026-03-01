@@ -1262,7 +1262,7 @@ Update system settings.
     "favicon_url": "",
     "page_rules": [
       {
-        "name": "全局样���",
+        "name": "全局样例",
         "pattern": ".*",
         "match_type": "regex",
         "css": "body { font-family: sans-serif; }",

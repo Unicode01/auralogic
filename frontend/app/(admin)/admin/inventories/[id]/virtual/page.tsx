@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import {
@@ -11,7 +11,8 @@ import {
   deleteVirtualInventoryStock,
   createVirtualInventoryStockManually,
   reserveVirtualInventoryStock,
-  releaseVirtualInventoryStock
+  releaseVirtualInventoryStock,
+  testDeliveryScript
 } from '@/lib/api'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -60,12 +61,83 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
-import { ArrowLeft, Save, Plus, Trash2, RefreshCw, Database, FileText, Upload, Loader2, Lock, Unlock } from 'lucide-react'
+import { ArrowLeft, Save, Plus, Trash2, RefreshCw, Database, FileText, Upload, Loader2, Lock, Unlock, Code2, Play, BookOpen } from 'lucide-react'
 import Link from 'next/link'
 import { useToast } from '@/hooks/use-toast'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { useLocale } from '@/hooks/use-locale'
 import { getTranslations } from '@/lib/i18n'
 import { usePageTitle } from '@/hooks/use-page-title'
+import dynamic from 'next/dynamic'
+import { useTheme } from '@/contexts/theme-context'
+import { ConfigEditor } from '@/components/admin/config-editor'
+
+const CodeMirror = dynamic(() => import('@uiw/react-codemirror'), { ssr: false })
+const loadJsLang = () => import('@codemirror/lang-javascript').then(m => m.javascript())
+
+// Example delivery scripts
+const SCRIPT_EXAMPLE_BASIC = `// Generate random activation codes
+function onDeliver(order, config) {
+  var items = [];
+  var chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  for (var i = 0; i < order.quantity; i++) {
+    var code = "";
+    for (var s = 0; s < 4; s++) {
+      if (s > 0) code += "-";
+      for (var j = 0; j < 4; j++) {
+        code += chars.charAt(Math.floor(Math.random() * chars.length));
+      }
+    }
+    items.push({
+      content: code,
+      remark: "Order " + order.order_no + " #" + (i + 1)
+    });
+  }
+  return { success: true, items: items };
+}`
+
+const SCRIPT_EXAMPLE_HTTP = `// Call external API to get delivery content
+// Set api_url and api_key in Script Config below
+function onDeliver(order, config) {
+  var resp = AuraLogic.http.post(config.api_url, {
+    order_no: order.order_no,
+    quantity: order.quantity
+  }, {
+    "Authorization": "Bearer " + config.api_key
+  });
+  if (resp.error || resp.status !== 200) {
+    return { success: false, message: resp.error || "API error: " + resp.status };
+  }
+  var items = [];
+  var codes = resp.data.codes || [];
+  for (var i = 0; i < codes.length; i++) {
+    items.push({ content: codes[i], remark: "" });
+  }
+  return { success: true, items: items };
+}`
+
+const SCRIPT_EXAMPLE_ORDER = `// Generate delivery content based on order & user info
+function onDeliver(order, config) {
+  var user = AuraLogic.order.getUser();
+  var items = [];
+  var prefix = (config.prefix || "VIP");
+  var ts = AuraLogic.system.getTimestamp();
+  for (var i = 0; i < order.quantity; i++) {
+    var id = AuraLogic.utils.generateId();
+    var content = prefix + "-" + id;
+    var remark = "";
+    if (user) {
+      remark = user.name + " (" + user.email + ")";
+    }
+    items.push({ content: content, remark: remark });
+  }
+  return { success: true, items: items };
+}`
 
 export default function VirtualInventoryEditPage() {
   const params = useParams()
@@ -76,15 +148,29 @@ export default function VirtualInventoryEditPage() {
   const { locale } = useLocale()
   const t = getTranslations(locale)
   usePageTitle(t.pageTitle.adminVirtualInventory)
+  const { resolvedTheme } = useTheme()
+  const cmTheme = resolvedTheme === 'dark' ? 'dark' as const : 'light' as const
 
   const [page, setPage] = useState(1)
   const [limit] = useState(20)
   const [statusFilter, setStatusFilter] = useState<string>('all')
+  const [jsExtensions, setJsExtensions] = useState<any[]>([])
+  const [testQuantity, setTestQuantity] = useState(1)
+  const [testResult, setTestResult] = useState<any>(null)
+  const configFlushRef = useRef<(() => string | null) | null>(null)
+
+  useEffect(() => {
+    loadJsLang().then(ext => setJsExtensions([ext]))
+  }, [])
 
   const [editForm, setEditForm] = useState({
     name: '',
     sku: '',
+    type: 'static' as string,
+    script: '',
+    script_config: '',
     description: '',
+    total_limit: 0,
     is_active: true,
     notes: ''
   })
@@ -110,7 +196,11 @@ export default function VirtualInventoryEditPage() {
     setEditForm({
       name: inv.name || '',
       sku: inv.sku || '',
+      type: inv.type || 'static',
+      script: inv.script || '',
+      script_config: inv.script_config || '',
       description: inv.description || '',
+      total_limit: inv.total_limit || 0,
       is_active: inv.is_active ?? true,
       notes: inv.notes || ''
     })
@@ -206,9 +296,22 @@ export default function VirtualInventoryEditPage() {
     },
   })
 
+  const testMutation = useMutation({
+    mutationFn: ({ script, config, quantity }: { script: string; config: Record<string, any>; quantity: number }) =>
+      testDeliveryScript(script, config, quantity),
+    onSuccess: (data: any) => {
+      setTestResult(data?.data)
+      toast.success(t.admin.scriptTestSuccess)
+    },
+    onError: (error: Error) => {
+      setTestResult({ error: error.message })
+      toast.error(`${t.admin.scriptTestFailed}: ${error.message}`)
+    },
+  })
+
   const inventory = inventoryData?.data
-  const stocks = stocksData?.data?.list || []
-  const total = stocksData?.data?.total || 0
+  const stocks = stocksData?.data?.items || []
+  const total = stocksData?.data?.pagination?.total || 0
   const totalPages = Math.ceil(total / limit)
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -253,7 +356,31 @@ export default function VirtualInventoryEditPage() {
       toast.error(t.admin.pleaseInputInventoryName)
       return
     }
-    updateMutation.mutate(editForm)
+    if (editForm.type === 'script' && !editForm.script.trim()) {
+      toast.error(t.admin.scriptPlaceholder)
+      return
+    }
+    // Flush any pending config editor changes
+    const flushed = configFlushRef.current?.()
+    const formToSave = flushed ? { ...editForm, script_config: flushed } : editForm
+    updateMutation.mutate(formToSave)
+  }
+
+  const handleTest = () => {
+    if (!editForm.script.trim()) {
+      toast.error(t.admin.scriptPlaceholder)
+      return
+    }
+    // Flush any pending config editor changes
+    const flushed = configFlushRef.current?.()
+    const configStr = flushed || editForm.script_config
+    let config: Record<string, any> = {}
+    try {
+      config = JSON.parse(configStr || '{}')
+    } catch {
+      // use empty config
+    }
+    testMutation.mutate({ script: editForm.script, config, quantity: testQuantity })
   }
 
   const getStatusBadge = (status: string) => {
@@ -299,53 +426,98 @@ export default function VirtualInventoryEditPage() {
         <div className="flex items-center gap-4">
           <Button variant="outline" size="sm" asChild>
             <Link href="/admin/inventories?tab=virtual">
-              <ArrowLeft className="mr-1.5 h-4 w-4" />
+              <ArrowLeft className="h-4 w-4 md:mr-1.5" />
               <span className="hidden md:inline">{t.common.back}</span>
             </Link>
           </Button>
           <div>
-            <h1 className="text-lg md:text-xl font-bold">{inventory.name}</h1>
+            <h1 className="text-lg md:text-xl font-bold flex items-center gap-2">
+              {inventory.name}
+              {inventory.type === 'script' && (
+                <Badge variant="outline" className="text-xs text-purple-600 dark:text-purple-400 border-purple-300 dark:border-purple-700">
+                  <Code2 className="h-3 w-3 mr-1" />
+                  {t.admin.scriptTypeTag}
+                </Badge>
+              )}
+            </h1>
             <p className="text-muted-foreground">{t.admin.virtualInventoryEditSubtitle}</p>
           </div>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" onClick={() => setManualDialogOpen(true)}>
-            <Plus className="mr-2 h-4 w-4" />
-            {t.admin.addCardKeyBtn}
-          </Button>
-          <Button variant="outline" onClick={() => setImportDialogOpen(true)}>
-            <Upload className="mr-2 h-4 w-4" />
-            {t.admin.batchImportBtn}
-          </Button>
+          {inventory.type !== 'script' && (
+            <>
+              <Button variant="outline" onClick={() => setManualDialogOpen(true)}>
+                <Plus className="mr-2 h-4 w-4" />
+                {t.admin.addCardKeyBtn}
+              </Button>
+              <Button variant="outline" onClick={() => setImportDialogOpen(true)}>
+                <Upload className="mr-2 h-4 w-4" />
+                {t.admin.batchImportBtn}
+              </Button>
+            </>
+          )}
         </div>
       </div>
 
-      <div className="grid grid-cols-4 gap-4">
-        <Card>
-          <CardContent className="pt-6">
-            <div className="text-2xl font-bold">{inventory.total || 0}</div>
-            <p className="text-sm text-muted-foreground">{t.admin.totalInventory}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <div className="text-2xl font-bold text-green-600 dark:text-green-400">{inventory.available || 0}</div>
-            <p className="text-sm text-muted-foreground">{t.admin.statusAvailable}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <div className="text-2xl font-bold text-yellow-600 dark:text-yellow-400">{inventory.reserved || 0}</div>
-            <p className="text-sm text-muted-foreground">{t.admin.statusReserved}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <div className="text-2xl font-bold text-gray-500 dark:text-gray-400">{inventory.sold || 0}</div>
-            <p className="text-sm text-muted-foreground">{t.admin.statusSold}</p>
-          </CardContent>
-        </Card>
-      </div>
+      {editForm.type === 'script' ? (
+        <div className={`grid gap-4 ${inventory.total_limit > 0 ? 'grid-cols-2 md:grid-cols-3' : 'grid-cols-2'}`}>
+          <Card>
+            <CardContent className="pt-6">
+              <div className="text-2xl font-bold text-blue-600 dark:text-blue-400">
+                {inventory.total_limit > 0 ? inventory.total_limit : t.admin.scriptUnlimited}
+              </div>
+              <p className="text-sm text-muted-foreground">{t.admin.scriptDeliveryLimit}</p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="pt-6">
+              <div className="text-2xl font-bold text-gray-500 dark:text-gray-400">{inventory.sold || 0}</div>
+              <p className="text-sm text-muted-foreground">{t.admin.statusSold}</p>
+            </CardContent>
+          </Card>
+          {inventory.total_limit > 0 && (
+            <Card>
+              <CardContent className="pt-6">
+                <div className={`text-2xl font-bold ${
+                  (inventory.total_limit - (inventory.sold || 0)) <= 0
+                    ? 'text-red-600 dark:text-red-400'
+                    : 'text-green-600 dark:text-green-400'
+                }`}>
+                  {Math.max(0, inventory.total_limit - (inventory.sold || 0))}
+                </div>
+                <p className="text-sm text-muted-foreground">{t.admin.scriptDeliveryRemaining}</p>
+              </CardContent>
+            </Card>
+          )}
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <Card>
+            <CardContent className="pt-6">
+              <div className="text-2xl font-bold">{inventory.total || 0}</div>
+              <p className="text-sm text-muted-foreground">{t.admin.totalInventory}</p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="pt-6">
+              <div className="text-2xl font-bold text-green-600 dark:text-green-400">{inventory.available || 0}</div>
+              <p className="text-sm text-muted-foreground">{t.admin.statusAvailable}</p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="pt-6">
+              <div className="text-2xl font-bold text-yellow-600 dark:text-yellow-400">{inventory.reserved || 0}</div>
+              <p className="text-sm text-muted-foreground">{t.admin.statusReserved}</p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="pt-6">
+              <div className="text-2xl font-bold text-gray-500 dark:text-gray-400">{inventory.sold || 0}</div>
+              <p className="text-sm text-muted-foreground">{t.admin.statusSold}</p>
+            </CardContent>
+          </Card>
+        </div>
+      )}
 
       <Card>
         <CardHeader>
@@ -355,7 +527,7 @@ export default function VirtualInventoryEditPage() {
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="grid grid-cols-2 gap-4">
+          <div className={`grid gap-4 ${editForm.type === 'script' ? 'grid-cols-3' : 'grid-cols-2'}`}>
             <div className="space-y-2">
               <Label htmlFor="name">{t.admin.inventoryNameRequired}</Label>
               <Input
@@ -372,6 +544,20 @@ export default function VirtualInventoryEditPage() {
                 onChange={(e) => setEditForm({ ...editForm, sku: e.target.value })}
               />
             </div>
+            {editForm.type === 'script' && (
+              <div className="space-y-2">
+                <Label htmlFor="total_limit">{t.admin.scriptDeliveryLimit}</Label>
+                <Input
+                  id="total_limit"
+                  type="number"
+                  min={0}
+                  placeholder="0"
+                  value={editForm.total_limit}
+                  onChange={(e) => setEditForm({ ...editForm, total_limit: Math.max(0, parseInt(e.target.value) || 0) })}
+                />
+                <p className="text-xs text-muted-foreground">{t.admin.scriptDeliveryLimitDesc}</p>
+              </div>
+            )}
           </div>
           <div className="space-y-2">
             <Label htmlFor="description">{t.admin.descriptionLabel}</Label>
@@ -408,6 +594,186 @@ export default function VirtualInventoryEditPage() {
         </CardContent>
       </Card>
 
+      {/* Script editing section (only for script type) */}
+      {editForm.type === 'script' && (
+        <>
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Code2 className="h-5 w-5 text-purple-500" />
+              {t.admin.scriptLabel}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label>{t.admin.scriptLabel}</Label>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="outline" size="sm">
+                      <BookOpen className="h-3.5 w-3.5 mr-1.5" />
+                      {t.admin.scriptExamples}
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem onClick={() => {
+                      setEditForm({ ...editForm, script: SCRIPT_EXAMPLE_BASIC })
+                      toast.success(t.admin.scriptExampleInserted)
+                    }}>
+                      {t.admin.scriptExampleBasic}
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => {
+                      setEditForm({ ...editForm, script: SCRIPT_EXAMPLE_HTTP })
+                      toast.success(t.admin.scriptExampleInserted)
+                    }}>
+                      {t.admin.scriptExampleHttp}
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => {
+                      setEditForm({ ...editForm, script: SCRIPT_EXAMPLE_ORDER })
+                      toast.success(t.admin.scriptExampleInserted)
+                    }}>
+                      {t.admin.scriptExampleOrder}
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+              <div className="rounded-md border overflow-hidden">
+                <CodeMirror
+                  value={editForm.script}
+                  extensions={jsExtensions}
+                  onChange={(v: string) => setEditForm({ ...editForm, script: v })}
+                  height="300px"
+                  theme={cmTheme}
+                  placeholder={t.admin.scriptPlaceholder}
+                  className="text-sm"
+                />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label>{t.admin.scriptConfigLabel}</Label>
+              <p className="text-xs text-muted-foreground">{t.admin.scriptConfigDesc}</p>
+              <ConfigEditor
+                value={editForm.script_config}
+                onChange={(v) => setEditForm({ ...editForm, script_config: v })}
+                flushRef={configFlushRef}
+                labels={{
+                  configJson: t.admin.scriptConfigJsonLabel,
+                  configFields: t.admin.scriptConfigFieldsLabel,
+                  jsonEditor: t.admin.scriptConfigJsonEditor,
+                  visualEditor: t.admin.scriptConfigVisualEditor,
+                  invalidJson: t.admin.scriptConfigJsonLabel,
+                  noFields: t.admin.scriptConfigNoFields,
+                  addField: t.admin.scriptConfigAddField,
+                }}
+                cmTheme={cmTheme}
+              />
+            </div>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Label>{t.admin.scriptTestQuantity}</Label>
+                <Input
+                  type="number"
+                  min={1}
+                  max={10}
+                  value={testQuantity}
+                  onChange={(e) => setTestQuantity(Math.max(1, Math.min(10, parseInt(e.target.value) || 1)))}
+                  className="w-20"
+                />
+                <Button variant="outline" onClick={handleTest} disabled={testMutation.isPending}>
+                  <Play className="h-4 w-4 mr-2" />
+                  {testMutation.isPending ? t.admin.scriptTesting : t.admin.scriptTestBtn}
+                </Button>
+              </div>
+              <Button onClick={handleSave} disabled={updateMutation.isPending}>
+                <Save className="mr-2 h-4 w-4" />
+                {updateMutation.isPending ? t.admin.savingText : t.common.save}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Test Result */}
+        {testResult && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-sm">{t.admin.scriptTestResult}</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {testResult.error ? (
+                <div className="text-sm text-destructive bg-destructive/10 p-3 rounded-md font-mono">
+                  {testResult.error}
+                </div>
+              ) : testResult.items && testResult.items.length > 0 ? (
+                <div className="space-y-2">
+                  <p className="text-sm text-muted-foreground">
+                    {t.admin.scriptTestItems}: {testResult.items.length}
+                  </p>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>#</TableHead>
+                        <TableHead>{t.admin.scriptTestContent}</TableHead>
+                        <TableHead>{t.admin.scriptTestRemark}</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {testResult.items.map((item: any, i: number) => (
+                        <TableRow key={i}>
+                          <TableCell className="font-mono text-muted-foreground">{i + 1}</TableCell>
+                          <TableCell className="font-mono max-w-md break-all">{item.content}</TableCell>
+                          <TableCell className="text-sm text-muted-foreground">{item.remark || '-'}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">{t.admin.scriptTestNoItems}</p>
+              )}
+              {testResult.message && (
+                <p className="text-sm mt-2 text-muted-foreground">{testResult.message}</p>
+              )}
+            </CardContent>
+          </Card>
+        )}
+
+        {/* API Reference */}
+        <Card className="bg-muted/50">
+          <CardHeader>
+            <CardTitle className="text-sm">{t.admin.scriptApiRef}</CardTitle>
+            <CardDescription className="text-xs">
+              {t.admin.scriptApiRefDesc}
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="text-xs space-y-3">
+            <div>
+              <p className="font-semibold mb-1">{t.admin.scriptRequiredCallback}</p>
+              <p><code>onDeliver(order, config)</code> - {t.admin.scriptCallbackDesc}</p>
+              <p className="text-muted-foreground ml-4">
+                {t.admin.scriptReturns}
+                <code>{`{success: true, items: [{content: "...", remark: "..."}]}`}</code>
+              </p>
+            </div>
+            <div>
+              <p className="font-semibold mb-1">AuraLogic.order <span className="font-normal text-muted-foreground">({t.admin.scriptOrderApi})</span></p>
+              <p><code>get()</code> - {t.admin.scriptGetOrder}</p>
+              <p><code>getItems()</code> - {t.admin.scriptGetOrderItems}</p>
+              <p><code>getUser()</code> - {t.admin.scriptGetUser}</p>
+            </div>
+            <div>
+              <p className="font-semibold mb-1">AuraLogic.utils <span className="font-normal text-muted-foreground">({t.admin.scriptUtilsApi})</span></p>
+              <p><code>generateId()</code> / <code>jsonEncode(obj)</code> / <code>jsonDecode(str)</code> / <code>formatDate()</code></p>
+            </div>
+            <div>
+              <p className="font-semibold mb-1">AuraLogic.http <span className="font-normal text-muted-foreground">({t.admin.scriptHttpApi})</span></p>
+              <p><code>get(url, headers?)</code> / <code>post(url, body, headers?)</code></p>
+            </div>
+          </CardContent>
+        </Card>
+        </>
+      )}
+
+      {editForm.type !== 'script' && (
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between">
@@ -608,6 +974,7 @@ export default function VirtualInventoryEditPage() {
           )}
         </CardContent>
       </Card>
+      )}
 
       <Dialog open={importDialogOpen} onOpenChange={setImportDialogOpen}>
         <DialogContent className="max-w-lg">

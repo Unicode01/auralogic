@@ -140,13 +140,8 @@ func (h *UserHandler) CreateUser(c *gin.Context) {
 
 // ListUsers - Get user list
 func (h *UserHandler) ListUsers(c *gin.Context) {
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
+	page, limit := response.GetPagination(c)
 	search := c.Query("search")
-
-	if limit > 100 {
-		limit = 100
-	}
 
 	users, total, err := h.userRepo.List(page, limit, search)
 	if err != nil {

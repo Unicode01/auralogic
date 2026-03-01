@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button'
 import { Globe } from 'lucide-react'
 import { useLocale } from '@/hooks/use-locale'
 import { getTranslations } from '@/lib/i18n'
+import { PageLoading } from '@/components/ui/page-loading'
 import { usePageTitle } from '@/hooks/use-page-title'
 import { getToken } from '@/lib/auth'
 
@@ -84,7 +85,7 @@ function ShippingFormContent() {
   if (isLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
-        <div>{lang === 'zh' ? '加载中...' : 'Loading...'}</div>
+        <PageLoading text={lang === 'zh' ? '加载中...' : 'Loading...'} />
       </div>
     )
   }
@@ -125,7 +126,7 @@ export default function ShippingFormPage() {
   return (
     <Suspense fallback={
       <div className="min-h-screen flex items-center justify-center">
-        <div>加载中...</div>
+        <PageLoading />
       </div>
     }>
       <ShippingFormContent />

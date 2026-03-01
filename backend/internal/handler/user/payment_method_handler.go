@@ -3,10 +3,11 @@ package user
 import (
 	"strconv"
 
-	"github.com/gin-gonic/gin"
 	"auralogic/internal/models"
 	"auralogic/internal/pkg/response"
 	"auralogic/internal/service"
+
+	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
 
@@ -116,7 +117,7 @@ func (h *PaymentMethodHandler) SelectPaymentMethod(c *gin.Context) {
 
 	// 选择付款方式
 	if err := h.service.SelectPaymentMethod(order.ID, req.PaymentMethodID); err != nil {
-		response.BadRequest(c, err.Error())
+		response.HandleError(c, "Failed to select payment method", err)
 		return
 	}
 
@@ -167,7 +168,7 @@ func (h *PaymentMethodHandler) GetOrderPaymentInfo(c *gin.Context) {
 	}
 
 	if pm == nil {
-		// 未选择付款方式，返回可用的付���方式列表
+		// 未选择付款方式，返回可用的付款方式列表
 		methods, _ := h.service.GetEnabledMethods()
 		var items []gin.H
 		for _, m := range methods {
@@ -198,9 +199,9 @@ func (h *PaymentMethodHandler) GetOrderPaymentInfo(c *gin.Context) {
 	}
 
 	response.Success(c, gin.H{
-		"selected":        true,
-		"payment_method":  gin.H{"id": pm.ID, "name": pm.Name, "icon": pm.Icon},
-		"payment_card":    result,
-		"order_payment":   opm,
+		"selected":       true,
+		"payment_method": gin.H{"id": pm.ID, "name": pm.Name, "icon": pm.Icon},
+		"payment_card":   result,
+		"order_payment":  opm,
 	})
 }

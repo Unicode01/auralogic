@@ -400,7 +400,7 @@ export default function ProductDetailPage() {
       <div className="flex items-center gap-3 mb-6">
         <Button asChild variant="outline" size="sm">
           <Link href="/products">
-            <ArrowLeft className="mr-1.5 h-4 w-4" />
+            <ArrowLeft className="h-4 w-4 md:mr-1.5" />
             <span className="hidden md:inline">{t.product.backToList}</span>
           </Link>
         </Button>
@@ -687,7 +687,7 @@ export default function ProductDetailPage() {
           {product.description && (
             <div className="rounded-xl border border-border p-4">
               <h3 className="font-semibold mb-3">{t.product.productDetailTitle}</h3>
-              <MarkdownMessage content={product.description} className="text-sm text-muted-foreground leading-relaxed" allowHtml />
+              <MarkdownMessage content={product.description} className="markdown-body text-sm" allowHtml />
             </div>
           )}
 
@@ -789,9 +789,11 @@ export default function ProductDetailPage() {
                 <Plus className="h-3.5 w-3.5" />
               </Button>
             </div>
-            <span className="text-xs text-muted-foreground">
-              ({t.product.stockLabel}: {availableStock})
-            </span>
+            {stockDisplayMode === 'exact' && (
+              <span className="text-xs text-muted-foreground">
+                ({t.product.stockLabel}: {availableStock})
+              </span>
+            )}
           </div>
 
           {!allAttributesSelected && product.attributes && product.attributes.length > 0 && (
