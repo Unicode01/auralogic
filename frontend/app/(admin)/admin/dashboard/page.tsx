@@ -9,7 +9,6 @@ import { OrderStatusBadge } from '@/components/orders/order-status-badge'
 import { Package, Users, Truck, CheckCircle, TrendingUp, TrendingDown, UserCog, Key, Activity, DollarSign } from 'lucide-react'
 import { formatDate, formatCurrency } from '@/lib/utils'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
 import { useLocale } from '@/hooks/use-locale'
 import { getTranslations } from '@/lib/i18n'
 import { usePageTitle } from '@/hooks/use-page-title'
@@ -19,7 +18,6 @@ export default function AdminDashboardPage() {
   const { locale } = useLocale()
   const t = getTranslations(locale)
   usePageTitle(t.pageTitle.adminDashboard)
-  const router = useRouter()
   const { isSuperAdmin } = usePermission()
   const isSuper = isSuperAdmin()
 
@@ -36,7 +34,6 @@ export default function AdminDashboardPage() {
   })
 
   if (!isSuper) {
-    router.push('/admin/orders')
     return null
   }
 
@@ -66,6 +63,17 @@ export default function AdminDashboardPage() {
     completed: t.order.status.completed,
     cancelled: t.order.status.cancelled,
     refunded: t.order.status.refunded,
+  }
+
+  const statusColors: Record<string, string> = {
+    pending_payment: 'bg-orange-500',
+    draft: 'bg-slate-500',
+    pending: 'bg-blue-500',
+    need_resubmit: 'bg-red-500',
+    shipped: 'bg-purple-500',
+    completed: 'bg-green-500',
+    cancelled: 'bg-gray-500',
+    refunded: 'bg-red-400',
   }
 
   return (
@@ -209,16 +217,6 @@ export default function AdminDashboardPage() {
           <CardContent>
             <div className="space-y-3">
               {statsData?.order_status_distribution?.map((item: any) => {
-                const statusColors: Record<string, string> = {
-                  pending_payment: 'bg-orange-500',
-                  draft: 'bg-slate-500',
-                  pending: 'bg-blue-500',
-                  need_resubmit: 'bg-red-500',
-                  shipped: 'bg-purple-500',
-                  completed: 'bg-green-500',
-                  cancelled: 'bg-gray-500',
-                  refunded: 'bg-red-400',
-                }
                 const total = statsData?.orders?.total || 1
                 const percentage = ((item.count / total) * 100).toFixed(1)
 
@@ -261,8 +259,9 @@ export default function AdminDashboardPage() {
           <CardContent>
             <div className="space-y-3">
               {statsData?.recent_orders?.slice(0, 10).map((order: any) => (
-                <div
+                <Link
                   key={order.id}
+                  href={`/admin/orders/${order.id}`}
                   className="flex items-center justify-between p-3 rounded-lg border hover:bg-accent transition-colors"
                 >
                   <div className="flex-1 min-w-0">
@@ -278,13 +277,13 @@ export default function AdminDashboardPage() {
                   </div>
                   <div className="text-right ml-4">
                     <div className="text-sm font-medium">
-                      {formatCurrency(order.total_amount || 0, order.currency || statsData?.sales?.currency || 'CNY')}
+                      {formatCurrency(order.total_amount_minor ?? 0, order.currency || statsData?.sales?.currency || 'CNY')}
                     </div>
                     <div className="text-xs text-muted-foreground">
                       {order.created_at ? formatDate(order.created_at) : '-'}
                     </div>
                   </div>
-                </div>
+                </Link>
               ))}
               {!statsData?.recent_orders?.length && (
                 <div className="text-center text-sm text-muted-foreground py-8">

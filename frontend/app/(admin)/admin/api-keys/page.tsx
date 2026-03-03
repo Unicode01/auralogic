@@ -34,6 +34,8 @@ import { usePageTitle } from '@/hooks/use-page-title'
 
 export default function ApiKeysPage() {
   const [open, setOpen] = useState(false)
+  const [secretDialogOpen, setSecretDialogOpen] = useState(false)
+  const [newSecret, setNewSecret] = useState('')
   const queryClient = useQueryClient()
   const toast = useToast()
   const { locale } = useLocale()
@@ -63,7 +65,8 @@ export default function ApiKeysPage() {
       form.reset()
 
       if (result?.data?.api_secret) {
-        alert(`${t.admin.apiSecretOnce}: ${result.data.api_secret}`)
+        setNewSecret(result.data.api_secret)
+        setSecretDialogOpen(true)
       }
     },
     onError: (error: any) => {
@@ -76,6 +79,9 @@ export default function ApiKeysPage() {
     onSuccess: () => {
       toast.success(t.admin.apiKeyDeleted)
       queryClient.invalidateQueries({ queryKey: ['apiKeys'] })
+    },
+    onError: (error: any) => {
+      toast.error(error.message || t.common.failed)
     },
   })
 
@@ -316,6 +322,39 @@ export default function ApiKeysPage() {
         data={data?.data?.items || []}
         isLoading={isLoading}
       />
+
+      {/* Secret Key Dialog */}
+      <Dialog open={secretDialogOpen} onOpenChange={(open) => {
+        if (!open) {
+          setSecretDialogOpen(false)
+          setNewSecret('')
+        }
+      }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t.admin.apiSecretOnce}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              {t.admin.apiSecretOnce}
+            </p>
+            <code className="block p-3 bg-muted rounded-md text-sm font-mono break-all select-all">
+              {newSecret}
+            </code>
+          </div>
+          <div className="flex justify-end">
+            <Button
+              variant="outline"
+              onClick={() => {
+                navigator.clipboard.writeText(newSecret)
+                toast.success(t.order.copiedToClipboard)
+              }}
+            >
+              {t.common.confirm}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

@@ -43,6 +43,7 @@ import * as z from 'zod'
 import { useLocale } from '@/hooks/use-locale'
 import { getTranslations, translateBizError } from '@/lib/i18n'
 import { usePageTitle } from '@/hooks/use-page-title'
+import { parseMajorToMinor } from '@/lib/utils'
 
 type ViewMode = 'all' | 'users' | 'admins'
 
@@ -59,7 +60,7 @@ export default function AdminUsersPage() {
   const [editingPermissions, setEditingPermissions] = useState<string[]>([])
   const [openCreateOrder, setOpenCreateOrder] = useState(false)
   const [createOrderUser, setCreateOrderUser] = useState<any>(null)
-  const [orderItems, setOrderItems] = useState<{ sku: string; name: string; quantity: number; unit_price: number; product_type: string; virtual_inventory_id?: number }[]>([{ sku: '', name: '', quantity: 1, unit_price: 0, product_type: 'physical' }])
+  const [orderItems, setOrderItems] = useState<{ sku: string; name: string; quantity: number; unit_price_major: string; product_type: string; virtual_inventory_id?: number }[]>([{ sku: '', name: '', quantity: 1, unit_price_major: '', product_type: 'physical' }])
   const queryClient = useQueryClient()
   const toast = useToast()
   const { locale } = useLocale()
@@ -192,7 +193,7 @@ export default function AdminUsersPage() {
       toast.success(t.admin.orderCreated)
       setOpenCreateOrder(false)
       setCreateOrderUser(null)
-      setOrderItems([{ sku: '', name: '', quantity: 1, unit_price: 0, product_type: 'physical' }])
+      setOrderItems([{ sku: '', name: '', quantity: 1, unit_price_major: '', product_type: 'physical' }])
     },
     onError: (error: any) => {
       if (error.code === 40010 && error.data?.error_key) {
@@ -295,7 +296,7 @@ export default function AdminUsersPage() {
             variant="secondary"
             onClick={() => {
               setCreateOrderUser(row.original)
-              setOrderItems([{ sku: '', name: '', quantity: 1, unit_price: 0, product_type: 'physical' }])
+          setOrderItems([{ sku: '', name: '', quantity: 1, unit_price_major: '', product_type: 'physical' }])
               setOpenCreateOrder(true)
             }}
           >
@@ -446,7 +447,7 @@ export default function AdminUsersPage() {
                 {t.admin.addAdmin}
               </Button>
             </DialogTrigger>
-            <DialogContent className="max-w-2xl">
+            <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>{t.admin.createNewAdmin}</DialogTitle>
               </DialogHeader>
@@ -498,7 +499,7 @@ export default function AdminUsersPage() {
                     control={adminForm.control}
                     name="permissions"
                     render={() => (
-                      <FormItem className="flex flex-col min-h-0">
+                      <FormItem className="flex flex-col">
                         <FormLabel className="shrink-0">{t.admin.permissionsRequired} <span className="text-sm text-muted-foreground font-normal">{t.admin.permissionsHint}</span></FormLabel>
                         <div className="flex gap-2 mb-2">
                           <Button
@@ -530,62 +531,64 @@ export default function AdminUsersPage() {
                             {t.admin.permInvertSelection}
                           </Button>
                         </div>
-                        <div className="border rounded-md p-4 h-64 overflow-y-auto space-y-4">
-                          {Object.entries(PERMISSIONS_BY_CATEGORY).map(([category, perms]) => (
-                            <div key={category} className="space-y-2">
-                              <div className="font-medium text-sm text-primary border-b pb-1 flex items-center justify-between">
-                                <span>{t.admin[CATEGORY_LABEL_KEYS[category] as keyof typeof t.admin] || category}</span>
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="sm"
-                                  className="h-5 px-1.5 text-xs"
-                                  onClick={() => {
-                                    const current = adminForm.getValues('permissions') || []
-                                    const categoryValues = perms.map(p => p.value)
-                                    const allSelected = categoryValues.every(v => current.includes(v))
-                                    if (allSelected) {
-                                      adminForm.setValue('permissions', current.filter(v => !categoryValues.includes(v)))
-                                    } else {
-                                      adminForm.setValue('permissions', [...new Set([...current, ...categoryValues])])
-                                    }
-                                  }}
-                                >
-                                  {(adminForm.watch('permissions') || []).length > 0 && perms.map(p => p.value).every(v => (adminForm.watch('permissions') || []).includes(v)) ? t.admin.permDeselectAll : t.admin.permSelectAll}
-                                </Button>
+                        <div className="border rounded-md p-4">
+                          <div className="space-y-4">
+                            {Object.entries(PERMISSIONS_BY_CATEGORY).map(([category, perms]) => (
+                              <div key={category} className="space-y-2">
+                                <div className="font-medium text-sm text-primary border-b pb-1 flex items-center justify-between">
+                                  <span>{t.admin[CATEGORY_LABEL_KEYS[category] as keyof typeof t.admin] || category}</span>
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-5 px-1.5 text-xs"
+                                    onClick={() => {
+                                      const current = adminForm.getValues('permissions') || []
+                                      const categoryValues = perms.map(p => p.value)
+                                      const allSelected = categoryValues.every(v => current.includes(v))
+                                      if (allSelected) {
+                                        adminForm.setValue('permissions', current.filter(v => !categoryValues.includes(v)))
+                                      } else {
+                                        adminForm.setValue('permissions', [...new Set([...current, ...categoryValues])])
+                                      }
+                                    }}
+                                  >
+                                    {(adminForm.watch('permissions') || []).length > 0 && perms.map(p => p.value).every(v => (adminForm.watch('permissions') || []).includes(v)) ? t.admin.permDeselectAll : t.admin.permSelectAll}
+                                  </Button>
+                                </div>
+                                <div className="grid grid-cols-2 gap-2 pl-2">
+                                  {perms.map((permission) => (
+                                    <FormField
+                                      key={permission.value}
+                                      control={adminForm.control}
+                                      name="permissions"
+                                      render={({ field }) => (
+                                        <FormItem className="flex items-start space-x-2 space-y-0">
+                                          <FormControl>
+                                            <Checkbox
+                                              checked={field.value?.includes(permission.value)}
+                                              onCheckedChange={(checked) => {
+                                                const currentValue = field.value || []
+                                                const permValue = permission.value
+                                                if (checked) {
+                                                  field.onChange([...currentValue, permValue])
+                                                } else {
+                                                  field.onChange(currentValue.filter((v) => v !== permValue))
+                                                }
+                                              }}
+                                            />
+                                          </FormControl>
+                                          <FormLabel className="text-sm font-normal cursor-pointer leading-tight">
+                                            {t.admin[permission.labelKey as keyof typeof t.admin] || permission.value}
+                                          </FormLabel>
+                                        </FormItem>
+                                      )}
+                                    />
+                                  ))}
+                                </div>
                               </div>
-                              <div className="grid grid-cols-2 gap-2 pl-2">
-                                {perms.map((permission) => (
-                                  <FormField
-                                    key={permission.value}
-                                    control={adminForm.control}
-                                    name="permissions"
-                                    render={({ field }) => (
-                                      <FormItem className="flex items-start space-x-2 space-y-0">
-                                        <FormControl>
-                                          <Checkbox
-                                            checked={field.value?.includes(permission.value)}
-                                            onCheckedChange={(checked) => {
-                                              const currentValue = field.value || []
-                                              const permValue = permission.value
-                                              if (checked) {
-                                                field.onChange([...currentValue, permValue])
-                                              } else {
-                                                field.onChange(currentValue.filter((v) => v !== permValue))
-                                              }
-                                            }}
-                                          />
-                                        </FormControl>
-                                        <FormLabel className="text-sm font-normal cursor-pointer leading-tight">
-                                          {t.admin[permission.labelKey as keyof typeof t.admin] || permission.value}
-                                        </FormLabel>
-                                      </FormItem>
-                                    )}
-                                  />
-                                ))}
-                              </div>
-                            </div>
-                          ))}
+                            ))}
+                          </div>
                         </div>
                         <p className="text-xs text-muted-foreground mt-2">
                           {t.admin.selectedPermissions.replace('{count}', String(adminForm.watch('permissions')?.length || 0))}
@@ -668,7 +671,7 @@ export default function AdminUsersPage() {
           }
         }}
       >
-        <DialogContent className={editingUser?.role !== 'user' ? "max-w-2xl" : "max-w-md"}>
+        <DialogContent className={`${editingUser?.role !== 'user' ? 'max-w-2xl' : 'max-w-md'} max-h-[90vh] overflow-y-auto`}>
           <DialogHeader>
             <DialogTitle>{editingUser?.role === 'user' ? t.admin.editUser : t.admin.editAdmin}</DialogTitle>
           </DialogHeader>
@@ -753,7 +756,7 @@ export default function AdminUsersPage() {
               </div>
 
               {editingUser.role !== 'user' && (
-                <div className="flex flex-col min-h-0">
+                <div className="flex flex-col">
                   <label className="text-sm font-medium shrink-0">
                     {t.admin.permissions} <span className="text-sm text-muted-foreground font-normal">{t.admin.selectedPermissions.replace('{count}', String(editingPermissions.length))}</span>
                   </label>
@@ -786,54 +789,56 @@ export default function AdminUsersPage() {
                       {t.admin.permInvertSelection}
                     </Button>
                   </div>
-                  <div className="border rounded-md p-4 h-64 overflow-y-auto space-y-4">
-                    {Object.entries(PERMISSIONS_BY_CATEGORY).map(([category, perms]) => (
-                      <div key={category} className="space-y-2">
-                        <div className="font-medium text-sm text-primary border-b pb-1 flex items-center justify-between">
-                          <span>{t.admin[CATEGORY_LABEL_KEYS[category] as keyof typeof t.admin] || category}</span>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            className="h-5 px-1.5 text-xs"
-                            onClick={() => {
-                              const categoryValues = perms.map(p => p.value)
-                              const allSelected = categoryValues.every(v => editingPermissions.includes(v))
-                              if (allSelected) {
-                                setEditingPermissions(editingPermissions.filter(v => !categoryValues.includes(v)))
-                              } else {
-                                setEditingPermissions([...new Set([...editingPermissions, ...categoryValues])])
-                              }
-                            }}
-                          >
-                            {perms.map(p => p.value).every(v => editingPermissions.includes(v)) ? t.admin.permDeselectAll : t.admin.permSelectAll}
-                          </Button>
+                  <div className="border rounded-md p-4">
+                    <div className="space-y-4">
+                      {Object.entries(PERMISSIONS_BY_CATEGORY).map(([category, perms]) => (
+                        <div key={category} className="space-y-2">
+                          <div className="font-medium text-sm text-primary border-b pb-1 flex items-center justify-between">
+                            <span>{t.admin[CATEGORY_LABEL_KEYS[category] as keyof typeof t.admin] || category}</span>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="h-5 px-1.5 text-xs"
+                              onClick={() => {
+                                const categoryValues = perms.map(p => p.value)
+                                const allSelected = categoryValues.every(v => editingPermissions.includes(v))
+                                if (allSelected) {
+                                  setEditingPermissions(editingPermissions.filter(v => !categoryValues.includes(v)))
+                                } else {
+                                  setEditingPermissions([...new Set([...editingPermissions, ...categoryValues])])
+                                }
+                              }}
+                            >
+                              {perms.map(p => p.value).every(v => editingPermissions.includes(v)) ? t.admin.permDeselectAll : t.admin.permSelectAll}
+                            </Button>
+                          </div>
+                          <div className="grid grid-cols-2 gap-2 pl-2">
+                            {perms.map((permission) => (
+                              <div key={permission.value} className="flex items-start space-x-2">
+                                <Checkbox
+                                  id={`edit-${permission.value}`}
+                                  checked={editingPermissions.includes(permission.value)}
+                                  onCheckedChange={(checked) => {
+                                    if (checked) {
+                                      setEditingPermissions([...editingPermissions, permission.value])
+                                    } else {
+                                      setEditingPermissions(editingPermissions.filter((v) => v !== permission.value))
+                                    }
+                                  }}
+                                />
+                                <label
+                                  htmlFor={`edit-${permission.value}`}
+                                  className="text-sm font-normal cursor-pointer leading-tight"
+                                >
+                                  {t.admin[permission.labelKey as keyof typeof t.admin] || permission.value}
+                                </label>
+                              </div>
+                            ))}
+                          </div>
                         </div>
-                        <div className="grid grid-cols-2 gap-2 pl-2">
-                          {perms.map((permission) => (
-                            <div key={permission.value} className="flex items-start space-x-2">
-                              <Checkbox
-                                id={`edit-${permission.value}`}
-                                checked={editingPermissions.includes(permission.value)}
-                                onCheckedChange={(checked) => {
-                                  if (checked) {
-                                    setEditingPermissions([...editingPermissions, permission.value])
-                                  } else {
-                                    setEditingPermissions(editingPermissions.filter((v) => v !== permission.value))
-                                  }
-                                }}
-                              />
-                              <label
-                                htmlFor={`edit-${permission.value}`}
-                                className="text-sm font-normal cursor-pointer leading-tight"
-                              >
-                                {t.admin[permission.labelKey as keyof typeof t.admin] || permission.value}
-                              </label>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    ))}
+                      ))}
+                    </div>
                   </div>
                 </div>
               )}
@@ -866,7 +871,7 @@ export default function AdminUsersPage() {
           setOpenCreateOrder(v)
           if (!v) {
             setCreateOrderUser(null)
-            setOrderItems([{ sku: '', name: '', quantity: 1, unit_price: 0, product_type: 'physical' }])
+            setOrderItems([{ sku: '', name: '', quantity: 1, unit_price_major: '', product_type: 'physical' }])
           }
         }}
       >
@@ -889,15 +894,36 @@ export default function AdminUsersPage() {
                   toast.error(t.admin.pleaseSelectVirtualInventory)
                   return
                 }
-                const totalAmountStr = formData.get('total_amount') as string
+                const totalAmountMajorStr = formData.get('total_amount_major') as string
+                const normalizedItems: any[] = []
+                for (const item of validItems) {
+                  const unitPriceMinor = parseMajorToMinor(item.unit_price_major || '0')
+                  if (unitPriceMinor === null || unitPriceMinor < 0) {
+                    toast.error(t.order.invalidPrice)
+                    return
+                  }
+                  normalizedItems.push({
+                    sku: item.sku,
+                    name: item.name,
+                    quantity: item.quantity,
+                    product_type: item.product_type,
+                    virtual_inventory_id: item.virtual_inventory_id,
+                    unit_price_minor: unitPriceMinor,
+                  })
+                }
                 const data: any = {
                   user_id: createOrderUser.id,
-                  items: validItems,
+                  items: normalizedItems,
                   remark: formData.get('remark') as string,
                   admin_remark: formData.get('admin_remark') as string,
                 }
-                if (totalAmountStr) {
-                  data.total_amount = parseFloat(totalAmountStr)
+                if (totalAmountMajorStr) {
+                  const totalAmountMinor = parseMajorToMinor(totalAmountMajorStr)
+                  if (totalAmountMinor === null || totalAmountMinor < 0) {
+                    toast.error(t.order.invalidPrice)
+                    return
+                  }
+                  data.total_amount_minor = totalAmountMinor
                 }
                 createOrderMutation.mutate(data)
               }}
@@ -910,7 +936,7 @@ export default function AdminUsersPage() {
                     type="button"
                     variant="outline"
                     size="sm"
-                    onClick={() => setOrderItems([...orderItems, { sku: '', name: '', quantity: 1, unit_price: 0, product_type: 'physical' }])}
+                    onClick={() => setOrderItems([...orderItems, { sku: '', name: '', quantity: 1, unit_price_major: '', product_type: 'physical' }])}
                   >
                     <Plus className="h-4 w-4 mr-1" />
                     {t.admin.addItem}
@@ -967,12 +993,12 @@ export default function AdminUsersPage() {
                           <Input
                             type="number"
                             placeholder={t.admin.unitPrice}
-                            value={item.unit_price || ''}
+                            value={item.unit_price_major}
                             min={0}
                             step="0.01"
                             onChange={(e) => {
                               const newItems = [...orderItems]
-                              newItems[index].unit_price = parseFloat(e.target.value) || 0
+                              newItems[index].unit_price_major = e.target.value
                               setOrderItems(newItems)
                             }}
                           />
@@ -1045,7 +1071,7 @@ export default function AdminUsersPage() {
 
               <div>
                 <label className="text-sm font-medium">{t.admin.totalAmountOverride}</label>
-                <Input name="total_amount" type="number" step="0.01" min={0} placeholder="0.00" className="mt-1.5" />
+                <Input name="total_amount_major" type="number" step="0.01" min={0} placeholder="0.00" className="mt-1.5" />
               </div>
 
               <div className="flex gap-2">

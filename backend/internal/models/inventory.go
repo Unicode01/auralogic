@@ -106,13 +106,15 @@ func (i *Inventory) SetAttributes(attrs map[string]string) error {
 // InventoryLog Inventory变动日志
 type InventoryLog struct {
 	ID            uint           `gorm:"primaryKey" json:"id"`
+	Source        string         `gorm:"type:varchar(20);not null;default:'physical';index" json:"source"` // physical(实物库存), virtual(虚拟库存)
 	InventoryID   uint           `gorm:"not null;index" json:"inventory_id"`
 	ProductID     uint           `gorm:"not null;index" json:"product_id"`
-	Type          string         `gorm:"type:varchar(20);not null" json:"type"` // in(入库), out(出库), reserve(预留), release(释放), adjust(调整)
+	Type          string         `gorm:"type:varchar(20);not null" json:"type"` // in, out, reserve, release, adjust, import, deliver, delete
 	Quantity      int            `gorm:"not null" json:"quantity"`              // 变动数量（正数或负数）
 	BeforeStock   int            `gorm:"not null" json:"before_stock"`          // 变动前Inventory
 	AfterStock    int            `gorm:"not null" json:"after_stock"`           // 变动后Inventory
 	OrderNo       string         `gorm:"type:varchar(50);index" json:"order_no,omitempty"` // 关联Order号
+	BatchNo       string         `gorm:"type:varchar(100)" json:"batch_no,omitempty"` // 导入批次号（虚拟库存用）
 	Operator      string         `gorm:"type:varchar(100)" json:"operator"`     // 操作人
 	Reason        string         `gorm:"type:varchar(255)" json:"reason"`       // 变动原因
 	Notes         string         `gorm:"type:text" json:"notes,omitempty"`      // 备注
@@ -125,6 +127,12 @@ func (InventoryLog) TableName() string {
 	return "inventory_logs"
 }
 
+// 库存来源常量
+const (
+	InventoryLogSourcePhysical = "physical" // 实物库存
+	InventoryLogSourceVirtual  = "virtual"  // 虚拟库存
+)
+
 // Inventory变动类型常量
 const (
 	InventoryLogTypeIn      = "in"      // 入库
@@ -132,4 +140,7 @@ const (
 	InventoryLogTypeReserve = "reserve" // 预留
 	InventoryLogTypeRelease = "release" // 释放预留
 	InventoryLogTypeAdjust  = "adjust"  // 调整
+	InventoryLogTypeImport  = "import"  // 导入（虚拟库存）
+	InventoryLogTypeDeliver = "deliver" // 发货（虚拟库存）
+	InventoryLogTypeDelete  = "delete"  // 删除（虚拟库存）
 )

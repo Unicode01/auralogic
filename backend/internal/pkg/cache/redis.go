@@ -6,8 +6,8 @@ import (
 	"log"
 	"time"
 
-	"github.com/go-redis/redis/v8"
 	"auralogic/internal/config"
+	"github.com/go-redis/redis/v8"
 )
 
 var (
@@ -69,6 +69,39 @@ func SetNX(key string, value interface{}, expiration time.Duration) (bool, error
 	return RedisClient.SetNX(ctx, key, value, expiration).Result()
 }
 
+// DeleteByPatterns 按通配符模式删除缓存键，返回删除数量
+func DeleteByPatterns(patterns ...string) (int64, error) {
+	if RedisClient == nil {
+		return 0, fmt.Errorf("redis client not initialized")
+	}
+
+	var deleted int64
+	for _, pattern := range patterns {
+		var cursor uint64
+		for {
+			keys, nextCursor, err := RedisClient.Scan(ctx, cursor, pattern, 500).Result()
+			if err != nil {
+				return deleted, err
+			}
+
+			if len(keys) > 0 {
+				n, err := RedisClient.Del(ctx, keys...).Result()
+				if err != nil {
+					return deleted, err
+				}
+				deleted += n
+			}
+
+			cursor = nextCursor
+			if cursor == 0 {
+				break
+			}
+		}
+	}
+
+	return deleted, nil
+}
+
 // Close 关闭Redis连接
 func Close() error {
 	if RedisClient != nil {
@@ -76,4 +109,3 @@ func Close() error {
 	}
 	return nil
 }
-

@@ -41,7 +41,9 @@ interface PromoCode {
   code: string
   name: string
   discount_type: 'percentage' | 'fixed'
-  discount_value: number
+  discount_value_minor: number
+  max_discount_minor?: number
+  min_order_amount_minor?: number
   total_quantity: number
   used_quantity: number
   reserved_quantity: number
@@ -108,8 +110,8 @@ export default function AdminPromoCodesPage() {
         return (
           <div>
             {promo.discount_type === 'percentage'
-              ? `${promo.discount_value}%`
-              : `\u00a5${promo.discount_value}`}
+              ? `${((promo.discount_value_minor ?? 0) / 100).toFixed(2)}%`
+              : `\u00a5${((promo.discount_value_minor ?? 0) / 100).toFixed(2)}`}
           </div>
         )
       },

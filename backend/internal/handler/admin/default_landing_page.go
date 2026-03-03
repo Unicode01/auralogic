@@ -282,7 +282,7 @@ var defaultLandingPageBody = `
       items.forEach(function(p){
         var img=p.images&&p.images.length?p.images[0]:'';
         var imgTag=img?'<div class="product-img-wrap"><img class="product-img" src="'+img+'" alt="'+p.name+'" loading="lazy"></div>':'<div class="product-img-wrap"><div class="product-img"></div></div>';
-        html+='<a href="/products/'+p.id+'" class="product-card fade-in">'+imgTag+'<div class="product-info"><h3>'+p.name+'</h3><div class="desc">'+(p.short_description||p.description||'')+'</div><div class="product-meta"><span class="product-price">'+currency+' '+Number(p.price).toFixed(2)+'</span>'+(p.category?'<span class="product-badge">'+p.category+'</span>':'')+'</div></div></a>';
+        html+='<a href="/products/'+p.id+'" class="product-card fade-in">'+imgTag+'<div class="product-info"><h3>'+p.name+'</h3><div class="desc">'+(p.short_description||p.description||'')+'</div><div class="product-meta"><span class="product-price">'+currency+' '+(Number(p.price_minor||0)/100).toFixed(2)+'</span>'+(p.category?'<span class="product-badge">'+p.category+'</span>':'')+'</div></div></a>';
       });
       grid.innerHTML=html;
       // Observe new cards

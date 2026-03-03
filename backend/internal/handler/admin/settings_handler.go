@@ -12,11 +12,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"auralogic/internal/config"
+	"auralogic/internal/middleware"
+	"auralogic/internal/models"
+	"auralogic/internal/pkg/cache"
 	"auralogic/internal/pkg/logger"
 	"auralogic/internal/pkg/response"
 	"auralogic/internal/service"
+	"github.com/gin-gonic/gin"
 	"gopkg.in/gomail.v2"
 	"gorm.io/gorm"
 )
@@ -69,18 +72,18 @@ func (h *SettingsHandler) GetPublicConfig(c *gin.Context) {
 		defaultTheme = "system"
 	}
 	publicConfig := gin.H{
-		"currency":           h.cfg.Order.Currency,
-		"max_order_items":    h.cfg.Order.MaxOrderItems,
-		"max_item_quantity":  h.cfg.Order.MaxItemQuantity,
-		"app_name":           h.cfg.App.Name,
-		"default_theme":      defaultTheme,
-		"allow_registration":     h.cfg.Security.Login.AllowRegistration,
-		"allow_password_login":   h.cfg.Security.Login.AllowPasswordLogin,
-		"allow_email_login":      h.cfg.Security.Login.AllowEmailLogin,
+		"currency":                   h.cfg.Order.Currency,
+		"max_order_items":            h.cfg.Order.MaxOrderItems,
+		"max_item_quantity":          h.cfg.Order.MaxItemQuantity,
+		"app_name":                   h.cfg.App.Name,
+		"default_theme":              defaultTheme,
+		"allow_registration":         h.cfg.Security.Login.AllowRegistration,
+		"allow_password_login":       h.cfg.Security.Login.AllowPasswordLogin,
+		"allow_email_login":          h.cfg.Security.Login.AllowEmailLogin,
 		"allow_password_reset":       h.cfg.Security.Login.AllowPasswordReset,
-		"sms_enabled":               h.cfg.SMS.Enabled,
-		"allow_phone_login":         h.cfg.Security.Login.AllowPhoneLogin,
-		"allow_phone_register":      h.cfg.Security.Login.AllowPhoneRegister,
+		"sms_enabled":                h.cfg.SMS.Enabled,
+		"allow_phone_login":          h.cfg.Security.Login.AllowPhoneLogin,
+		"allow_phone_register":       h.cfg.Security.Login.AllowPhoneRegister,
 		"allow_phone_password_reset": h.cfg.Security.Login.AllowPhonePasswordReset,
 		"stock_display": gin.H{
 			"mode":                 h.cfg.Order.StockDisplay.Mode,
@@ -88,10 +91,10 @@ func (h *SettingsHandler) GetPublicConfig(c *gin.Context) {
 			"high_stock_threshold": h.cfg.Order.StockDisplay.HighStockThreshold,
 		},
 		"customization": gin.H{
-			"primary_color":  h.cfg.Customization.PrimaryColor,
-			"logo_url":       h.cfg.Customization.LogoURL,
-			"favicon_url":    h.cfg.Customization.FaviconURL,
-			"auth_branding":  h.renderAuthBranding(),
+			"primary_color": h.cfg.Customization.PrimaryColor,
+			"logo_url":      h.cfg.Customization.LogoURL,
+			"favicon_url":   h.cfg.Customization.FaviconURL,
+			"auth_branding": h.renderAuthBranding(),
 		},
 		"ticket": gin.H{
 			"enabled":            h.cfg.Ticket.Enabled,
@@ -103,9 +106,10 @@ func (h *SettingsHandler) GetPublicConfig(c *gin.Context) {
 		"serial": gin.H{
 			"enabled": h.cfg.Serial.Enabled,
 		},
-		"auto_cancel_hours": h.cfg.Order.AutoCancelHours,
-		"invoice_enabled": h.cfg.Order.Invoice.Enabled,
-		"smtp_enabled": h.cfg.SMTP.Enabled,
+		"auto_cancel_hours":         h.cfg.Order.AutoCancelHours,
+		"invoice_enabled":           h.cfg.Order.Invoice.Enabled,
+		"show_virtual_stock_remark": h.cfg.Order.ShowVirtualStockRemark,
+		"smtp_enabled":              h.cfg.SMTP.Enabled,
 		"captcha": gin.H{
 			"provider":                 h.cfg.Security.Captcha.Provider,
 			"site_key":                 h.cfg.Security.Captcha.SiteKey,
@@ -168,16 +172,17 @@ func (h *SettingsHandler) GetSettings(c *gin.Context) {
 			"ip_header":       h.cfg.Security.IPHeader,
 			"trusted_proxies": h.cfg.Security.TrustedProxies,
 		},
-		"rate_limit": h.cfg.RateLimit,
+		"rate_limit":       h.cfg.RateLimit,
 		"email_rate_limit": h.cfg.EmailRateLimit,
 		"sms_rate_limit":   h.cfg.SMSRateLimit,
 		"order": gin.H{
-			"no_prefix":              h.cfg.Order.NoPrefix,
-			"auto_cancel_hours":      h.cfg.Order.AutoCancelHours,
-			"currency":               h.cfg.Order.Currency,
-			"max_order_items":        h.cfg.Order.MaxOrderItems,
-			"max_item_quantity":      h.cfg.Order.MaxItemQuantity,
-			"virtual_delivery_order": h.cfg.Order.VirtualDeliveryOrder,
+			"no_prefix":                 h.cfg.Order.NoPrefix,
+			"auto_cancel_hours":         h.cfg.Order.AutoCancelHours,
+			"currency":                  h.cfg.Order.Currency,
+			"max_order_items":           h.cfg.Order.MaxOrderItems,
+			"max_item_quantity":         h.cfg.Order.MaxItemQuantity,
+			"virtual_delivery_order":    h.cfg.Order.VirtualDeliveryOrder,
+			"show_virtual_stock_remark": h.cfg.Order.ShowVirtualStockRemark,
 			"stock_display": gin.H{
 				"mode":                 h.cfg.Order.StockDisplay.Mode,
 				"low_stock_threshold":  h.cfg.Order.StockDisplay.LowStockThreshold,
@@ -246,11 +251,11 @@ func (h *SettingsHandler) GetSettings(c *gin.Context) {
 			"enabled": h.cfg.Serial.Enabled,
 		},
 		"customization": gin.H{
-			"primary_color":  h.cfg.Customization.PrimaryColor,
-			"logo_url":       h.cfg.Customization.LogoURL,
-			"favicon_url":    h.cfg.Customization.FaviconURL,
-			"page_rules":     h.cfg.Customization.PageRules,
-			"auth_branding":  h.cfg.Customization.AuthBranding,
+			"primary_color": h.cfg.Customization.PrimaryColor,
+			"logo_url":      h.cfg.Customization.LogoURL,
+			"favicon_url":   h.cfg.Customization.FaviconURL,
+			"page_rules":    h.cfg.Customization.PageRules,
+			"auth_branding": h.cfg.Customization.AuthBranding,
 		},
 		"email_notifications": h.cfg.EmailNotifications,
 		"analytics": gin.H{
@@ -281,25 +286,25 @@ type UpdateSettingsRequest struct {
 	} `json:"smtp,omitempty"`
 
 	SMS struct {
-		Submitted              bool              `json:"_submitted"`
-		Enabled                bool              `json:"enabled"`
-		Provider               string            `json:"provider"`
-		AliyunAccessKeyID      string            `json:"aliyun_access_key_id"`
-		AliyunAccessSecret     string            `json:"aliyun_access_secret,omitempty"`
-		AliyunSignName         string            `json:"aliyun_sign_name"`
-		AliyunTemplateCode     string            `json:"aliyun_template_code"`
-		TemplateLogin          string            `json:"template_login"`
-		TemplateRegister       string            `json:"template_register"`
-		TemplateResetPassword  string            `json:"template_reset_password"`
-		TemplateBindPhone      string            `json:"template_bind_phone"`
-		TwilioAccountSID       string            `json:"twilio_account_sid"`
-		TwilioAuthToken        string            `json:"twilio_auth_token,omitempty"`
-		TwilioFromNumber       string            `json:"twilio_from_number"`
-		DYPNSCodeLength        int               `json:"dypns_code_length"`
-		CustomURL              string            `json:"custom_url"`
-		CustomMethod           string            `json:"custom_method"`
-		CustomHeaders          map[string]string `json:"custom_headers"`
-		CustomBodyTemplate     string            `json:"custom_body_template"`
+		Submitted             bool              `json:"_submitted"`
+		Enabled               bool              `json:"enabled"`
+		Provider              string            `json:"provider"`
+		AliyunAccessKeyID     string            `json:"aliyun_access_key_id"`
+		AliyunAccessSecret    string            `json:"aliyun_access_secret,omitempty"`
+		AliyunSignName        string            `json:"aliyun_sign_name"`
+		AliyunTemplateCode    string            `json:"aliyun_template_code"`
+		TemplateLogin         string            `json:"template_login"`
+		TemplateRegister      string            `json:"template_register"`
+		TemplateResetPassword string            `json:"template_reset_password"`
+		TemplateBindPhone     string            `json:"template_bind_phone"`
+		TwilioAccountSID      string            `json:"twilio_account_sid"`
+		TwilioAuthToken       string            `json:"twilio_auth_token,omitempty"`
+		TwilioFromNumber      string            `json:"twilio_from_number"`
+		DYPNSCodeLength       int               `json:"dypns_code_length"`
+		CustomURL             string            `json:"custom_url"`
+		CustomMethod          string            `json:"custom_method"`
+		CustomHeaders         map[string]string `json:"custom_headers"`
+		CustomBodyTemplate    string            `json:"custom_body_template"`
 	} `json:"sms,omitempty"`
 
 	Security struct {
@@ -320,14 +325,15 @@ type UpdateSettingsRequest struct {
 	SMSRateLimit   *config.MessageRateLimit `json:"sms_rate_limit,omitempty"`
 
 	Order struct {
-		NoPrefix             string                    `json:"no_prefix"`
-		AutoCancelHours      int                       `json:"auto_cancel_hours"`
-		Currency             string                    `json:"currency"`
-		MaxOrderItems        int                       `json:"max_order_items"`
-		MaxItemQuantity      int                       `json:"max_item_quantity"`
-		VirtualDeliveryOrder string                    `json:"virtual_delivery_order"`
-		StockDisplay         config.StockDisplayConfig `json:"stock_display"`
-		Invoice              config.InvoiceConfig      `json:"invoice"`
+		NoPrefix               string                    `json:"no_prefix"`
+		AutoCancelHours        int                       `json:"auto_cancel_hours"`
+		Currency               string                    `json:"currency"`
+		MaxOrderItems          int                       `json:"max_order_items"`
+		MaxItemQuantity        int                       `json:"max_item_quantity"`
+		VirtualDeliveryOrder   string                    `json:"virtual_delivery_order"`
+		ShowVirtualStockRemark *bool                     `json:"show_virtual_stock_remark"`
+		StockDisplay           config.StockDisplayConfig `json:"stock_display"`
+		Invoice                config.InvoiceConfig      `json:"invoice"`
 	} `json:"order,omitempty"`
 
 	MagicLink struct {
@@ -372,10 +378,10 @@ type UpdateSettingsRequest struct {
 	} `json:"serial,omitempty"`
 
 	Customization struct {
-		Submitted    bool                      `json:"_submitted"`
-		PrimaryColor string                    `json:"primary_color"`
-		LogoURL      string                    `json:"logo_url"`
-		FaviconURL   string                    `json:"favicon_url"`
+		Submitted    bool                       `json:"_submitted"`
+		PrimaryColor string                     `json:"primary_color"`
+		LogoURL      string                     `json:"logo_url"`
+		FaviconURL   string                     `json:"favicon_url"`
 		PageRules    []config.PageRule          `json:"page_rules"`
 		AuthBranding *config.AuthBrandingConfig `json:"auth_branding,omitempty"`
 	} `json:"customization,omitempty"`
@@ -386,6 +392,14 @@ type UpdateSettingsRequest struct {
 		Submitted bool `json:"_submitted"`
 		Enabled   bool `json:"enabled"`
 	} `json:"analytics,omitempty"`
+
+	Maintenance struct {
+		Submitted              bool `json:"_submitted"`
+		ClearPaymentCardCache  bool `json:"clear_payment_card_cache"`
+		ClearJSProgramCache    bool `json:"clear_js_program_cache"`
+		ClearPermissionCache   bool `json:"clear_permission_cache"`
+		ClearRuntimeRedisCache bool `json:"clear_runtime_redis_cache"`
+	} `json:"maintenance,omitempty"`
 }
 
 // UpdateSettings Update系统设置
@@ -395,6 +409,10 @@ func (h *SettingsHandler) UpdateSettings(c *gin.Context) {
 		response.BadRequest(c, "Invalid request parameters")
 		return
 	}
+	var paymentCardCacheClearedRows int64
+	var jsProgramCacheCleared int
+	var permissionCacheCleared int64
+	var runtimeRedisCacheCleared int64
 
 	// 读取current配置文件
 	configPath := config.GetConfigPath()
@@ -520,14 +538,14 @@ func (h *SettingsHandler) UpdateSettings(c *gin.Context) {
 
 		securityConfig := currentConfig["security"].(map[string]interface{})
 		securityConfig["login"] = map[string]interface{}{
-			"allow_password_login":        req.Security.Login.AllowPasswordLogin,
-			"allow_registration":          req.Security.Login.AllowRegistration,
-			"require_email_verification":  req.Security.Login.RequireEmailVerification,
-			"allow_email_login":           req.Security.Login.AllowEmailLogin,
-			"allow_password_reset":        req.Security.Login.AllowPasswordReset,
-			"allow_phone_login":           req.Security.Login.AllowPhoneLogin,
-			"allow_phone_register":        req.Security.Login.AllowPhoneRegister,
-			"allow_phone_password_reset":  req.Security.Login.AllowPhonePasswordReset,
+			"allow_password_login":       req.Security.Login.AllowPasswordLogin,
+			"allow_registration":         req.Security.Login.AllowRegistration,
+			"require_email_verification": req.Security.Login.RequireEmailVerification,
+			"allow_email_login":          req.Security.Login.AllowEmailLogin,
+			"allow_password_reset":       req.Security.Login.AllowPasswordReset,
+			"allow_phone_login":          req.Security.Login.AllowPhoneLogin,
+			"allow_phone_register":       req.Security.Login.AllowPhoneRegister,
+			"allow_phone_password_reset": req.Security.Login.AllowPhonePasswordReset,
 		}
 	}
 
@@ -562,13 +580,18 @@ func (h *SettingsHandler) UpdateSettings(c *gin.Context) {
 
 	// UpdateOrder配置
 	if req.Order.NoPrefix != "" {
+		showVirtualStockRemark := false
+		if req.Order.ShowVirtualStockRemark != nil {
+			showVirtualStockRemark = *req.Order.ShowVirtualStockRemark
+		}
 		currentConfig["order"] = map[string]interface{}{
-			"no_prefix":              req.Order.NoPrefix,
-			"auto_cancel_hours":      req.Order.AutoCancelHours,
-			"currency":               req.Order.Currency,
-			"max_order_items":        req.Order.MaxOrderItems,
-			"max_item_quantity":      req.Order.MaxItemQuantity,
-			"virtual_delivery_order": req.Order.VirtualDeliveryOrder,
+			"no_prefix":                 req.Order.NoPrefix,
+			"auto_cancel_hours":         req.Order.AutoCancelHours,
+			"currency":                  req.Order.Currency,
+			"max_order_items":           req.Order.MaxOrderItems,
+			"max_item_quantity":         req.Order.MaxItemQuantity,
+			"virtual_delivery_order":    req.Order.VirtualDeliveryOrder,
+			"show_virtual_stock_remark": showVirtualStockRemark,
 			"stock_display": map[string]interface{}{
 				"mode":                 req.Order.StockDisplay.Mode,
 				"low_stock_threshold":  req.Order.StockDisplay.LowStockThreshold,
@@ -771,6 +794,77 @@ func (h *SettingsHandler) UpdateSettings(c *gin.Context) {
 		analyticsConfig["enabled"] = req.Analytics.Enabled
 	}
 
+	// Maintenance actions: run one-time cache cleanup operations.
+	if req.Maintenance.Submitted {
+		if req.Maintenance.ClearPaymentCardCache {
+			result := h.db.Model(&models.OrderPaymentMethod{}).
+				Where("payment_card_cache <> '' OR cache_expires_at IS NOT NULL").
+				Updates(map[string]interface{}{
+					"payment_card_cache": "",
+					"cache_expires_at":   nil,
+				})
+			if result.Error != nil {
+				response.InternalError(c, "Failed to clear payment card cache")
+				return
+			}
+			paymentCardCacheClearedRows = result.RowsAffected
+			logger.LogOperation(h.db, c, "maintenance", "payment_card_cache", nil, map[string]interface{}{
+				"cleared_rows": paymentCardCacheClearedRows,
+			})
+		}
+
+		if req.Maintenance.ClearJSProgramCache {
+			jsProgramCacheCleared = service.ClearJSProgramCache()
+			logger.LogOperation(h.db, c, "maintenance", "js_program_cache", nil, map[string]interface{}{
+				"cleared_entries": jsProgramCacheCleared,
+			})
+		}
+
+		if req.Maintenance.ClearPermissionCache {
+			cleared, err := middleware.InvalidateAllPermissionCache()
+			if err != nil {
+				response.InternalError(c, "Failed to clear permission cache")
+				return
+			}
+			permissionCacheCleared = cleared
+			logger.LogOperation(h.db, c, "maintenance", "permission_cache", nil, map[string]interface{}{
+				"cleared_keys": permissionCacheCleared,
+			})
+		}
+
+		if req.Maintenance.ClearRuntimeRedisCache {
+			cleared, err := cache.DeleteByPatterns(
+				"rate:*",
+				"captcha:*",
+				"email_login_code:*",
+				"password_reset:*",
+				"phone_login_code:*",
+				"phone_reset_code:*",
+				"phone_register_code:*",
+				"bind_email_code:*",
+				"bind_phone_code:*",
+				"email_login_cooldown:*",
+				"password_reset_cooldown:*",
+				"phone_login_cooldown:*",
+				"phone_reset_cooldown:*",
+				"bind_email_cooldown:*",
+				"bind_phone_cooldown:*",
+				"phone_register_cooldown:*",
+				"invoice_dl:*",
+				"invoice_pending:*",
+				"ticket_notify:*",
+			)
+			if err != nil {
+				response.InternalError(c, "Failed to clear runtime redis cache")
+				return
+			}
+			runtimeRedisCacheCleared = cleared
+			logger.LogOperation(h.db, c, "maintenance", "runtime_redis_cache", nil, map[string]interface{}{
+				"cleared_keys": runtimeRedisCacheCleared,
+			})
+		}
+	}
+
 	// 保存到文件
 	if err := writeConfigFile(configPath, currentConfig); err != nil {
 		response.InternalError(c, "Failed to save config file")
@@ -793,9 +887,24 @@ func (h *SettingsHandler) UpdateSettings(c *gin.Context) {
 		})
 	}
 
-	response.Success(c, gin.H{
+	resp := gin.H{
 		"message": "Settings saved and applied. Some configurations (Database, Redis, JWT) require service restart to take effect",
-	})
+	}
+	if req.Maintenance.Submitted {
+		if req.Maintenance.ClearPaymentCardCache {
+			resp["payment_card_cache_cleared"] = paymentCardCacheClearedRows
+		}
+		if req.Maintenance.ClearJSProgramCache {
+			resp["js_program_cache_cleared"] = jsProgramCacheCleared
+		}
+		if req.Maintenance.ClearPermissionCache {
+			resp["permission_cache_cleared"] = permissionCacheCleared
+		}
+		if req.Maintenance.ClearRuntimeRedisCache {
+			resp["runtime_redis_cache_cleared"] = runtimeRedisCacheCleared
+		}
+	}
+	response.Success(c, resp)
 }
 
 // TestSMTP 测试SMTP配置

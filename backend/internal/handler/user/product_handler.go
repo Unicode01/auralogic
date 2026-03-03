@@ -4,10 +4,10 @@ import (
 	"encoding/json"
 	"strconv"
 
-	"github.com/gin-gonic/gin"
 	"auralogic/internal/models"
 	"auralogic/internal/pkg/response"
 	"auralogic/internal/service"
+	"github.com/gin-gonic/gin"
 )
 
 type ProductHandler struct {
@@ -118,22 +118,31 @@ func (h *ProductHandler) GetProductAvailableStock(c *gin.Context) {
 	}
 
 	var totalStock int
+	isUnlimited := false
 	// 根据商品类型获取不同的库存
 	if product.ProductType == models.ProductTypeVirtual {
 		// 虚拟商品：从虚拟库存绑定中获取可用库存
 		var stock int64
+		var unlimited bool
 		if len(attributes) > 0 {
 			// 根据规格属性查询
 			stock, err = h.virtualInventoryService.GetAvailableCountForProductByAttributes(uint(productID), attributes)
+			if err == nil {
+				unlimited, _ = h.virtualInventoryService.HasUnlimitedScriptInventoryForProductByAttributes(uint(productID), attributes)
+			}
 		} else {
 			// 无属性，查询总库存
 			stock, err = h.virtualInventoryService.GetAvailableCountForProduct(uint(productID))
+			if err == nil {
+				unlimited, _ = h.virtualInventoryService.HasUnlimitedScriptInventoryForProduct(uint(productID))
+			}
 		}
 		if err != nil {
 			response.InternalError(c, "QueryInventoryFailed")
 			return
 		}
 		totalStock = int(stock)
+		isUnlimited = unlimited
 	} else {
 		// 实体商品：从实体库存绑定中获取可用库存
 		var stock int
@@ -154,6 +163,7 @@ func (h *ProductHandler) GetProductAvailableStock(c *gin.Context) {
 	response.Success(c, gin.H{
 		"product_id":      productID,
 		"available_stock": totalStock,
+		"is_unlimited":    isUnlimited,
 	})
 }
 

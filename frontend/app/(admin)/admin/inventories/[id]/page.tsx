@@ -1,6 +1,6 @@
 'use client'
 
-import { use, useState } from 'react'
+import { use, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { getInventory, updateInventory, adjustStock } from '@/lib/api'
@@ -56,7 +56,7 @@ export default function InventoryDetailPage({
   const [adjustNotes, setAdjustNotes] = useState<string>('')
 
   // 初始化表单
-  useState(() => {
+  useEffect(() => {
     if (inventory) {
       setStock(inventory.stock.toString())
       setAvailableQuantity(inventory.available_quantity.toString())
@@ -65,7 +65,7 @@ export default function InventoryDetailPage({
       setAlertEmail(inventory.alert_email || '')
       setNotes(inventory.notes || '')
     }
-  })
+  }, [inventory])
 
   // 更新库存配置
   const updateMutation = useMutation({
@@ -152,12 +152,12 @@ export default function InventoryDetailPage({
     const newAvailable = inventory.available_quantity + availableDelta
 
     if (newStock < 0) {
-      toast.error(t.admin.invStockInsufficient.replace('{current}', inventory.stock).replace('{delta}', Math.abs(stockDelta).toString()))
+      toast.error(t.admin.invStockInsufficient.replace('{current}', inventory.stock.toString()).replace('{delta}', Math.abs(stockDelta).toString()))
       return
     }
 
     if (newAvailable < 0) {
-      toast.error(t.admin.invAvailableInsufficient.replace('{current}', inventory.available_quantity).replace('{delta}', Math.abs(availableDelta).toString()))
+      toast.error(t.admin.invAvailableInsufficient.replace('{current}', inventory.available_quantity.toString()).replace('{delta}', Math.abs(availableDelta).toString()))
       return
     }
 
@@ -390,7 +390,7 @@ export default function InventoryDetailPage({
                       placeholder={t.admin.invStockDeltaPlaceholder}
                     />
                     <p className="text-sm text-muted-foreground">
-                      {t.admin.invCurrentStock.replace('{current}', inventory.stock).replace('{after}', (inventory.stock + (parseInt(adjustStockValue) || 0)).toString())}
+                      {t.admin.invCurrentStock.replace('{current}', inventory.stock.toString()).replace('{after}', (inventory.stock + (parseInt(adjustStockValue) || 0)).toString())}
                     </p>
                   </div>
 
@@ -404,7 +404,7 @@ export default function InventoryDetailPage({
                       placeholder={t.admin.invStockDeltaPlaceholder}
                     />
                     <p className="text-sm text-muted-foreground">
-                      {t.admin.invCurrentAvailable.replace('{current}', inventory.available_quantity).replace('{after}', (inventory.available_quantity + (parseInt(adjustAvailableValue) || 0)).toString())}
+                      {t.admin.invCurrentAvailable.replace('{current}', inventory.available_quantity.toString()).replace('{after}', (inventory.available_quantity + (parseInt(adjustAvailableValue) || 0)).toString())}
                     </p>
                   </div>
                 </div>

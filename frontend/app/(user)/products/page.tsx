@@ -179,7 +179,7 @@ export default function ProductsPage() {
             {displayProducts.map((product: Product) => {
               const primaryImage = product.images?.find(img => img.is_primary || img.isPrimary)?.url
               const isFeatured = product.is_featured || product.isFeatured
-              const hasDiscount = product.original_price && product.original_price > product.price
+              const hasDiscount = product.original_price_minor > product.price_minor
               const isVirtual = (product.product_type || product.productType) === 'virtual'
               const isSoldOut = product.status === 'out_of_stock'
 
@@ -240,12 +240,12 @@ export default function ProductsPage() {
                       )}
                       <div className="flex items-baseline gap-1 md:gap-2 pt-1 flex-wrap">
                         <span className="text-base md:text-xl font-bold text-red-600">
-                          {formatPrice(product.price, currency)}
+                          {formatPrice(product.price_minor, currency)}
                         </span>
                         {/* 原价：移动端隐藏，桌面端显示 */}
                         {hasDiscount && (
                           <span className="hidden md:inline text-xs text-muted-foreground line-through">
-                            {formatPrice(product.original_price!, currency)}
+                            {formatPrice(product.original_price_minor, currency)}
                           </span>
                         )}
                       </div>

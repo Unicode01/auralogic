@@ -127,11 +127,11 @@ function onGeneratePaymentCard(order, config) {
     }
 
     // 计算USDT金额
-    var usdtAmount = order.total_amount;
+    var usdtAmount = (order.total_amount_minor || 0) / 100;
     if (order.currency === 'CNY') {
-        usdtAmount = order.total_amount / cnyRate;
+        usdtAmount = ((order.total_amount_minor || 0) / 100) / cnyRate;
     } else if (order.currency === 'USD') {
-        usdtAmount = order.total_amount;
+        usdtAmount = (order.total_amount_minor || 0) / 100;
     }
     // 保留2位小数，加上基于订单ID的偏移量区分并发订单（USDT支持6位小数）
     // order.id % 10000 产生 0~9999 的偏移值，除以 1000000 得到 0.000000~0.009999 的尾数
@@ -176,7 +176,7 @@ function onGeneratePaymentCard(order, config) {
             '</div>' +
             '<div class="text-center py-3">' +
                 '<div class="text-3xl font-bold text-green-600 dark:text-green-400">' + usdtAmount + ' USDT</div>' +
-                '<div class="text-xs text-muted-foreground mt-1">≈ ' + order.currency + ' ' + order.total_amount.toFixed(2) + '</div>' +
+                '<div class="text-xs text-muted-foreground mt-1">≈ ' + order.currency + ' ' + (((order.total_amount_minor || 0) / 100).toFixed(2)) + '</div>' +
             '</div>' +
         '</div>' +
         '<div class="space-y-2">' +
@@ -373,9 +373,9 @@ function onRefund(order, config) {
     // If storage was cleaned up after payment confirmation, recalculate USDT amount
     if (!savedAmount) {
         var cnyRate = parseFloat(config.cny_rate) || 7.2;
-        var usdtAmount = order.total_amount;
+        var usdtAmount = (order.total_amount_minor || 0) / 100;
         if (order.currency === 'CNY') {
-            usdtAmount = order.total_amount / cnyRate;
+            usdtAmount = ((order.total_amount_minor || 0) / 100) / cnyRate;
         }
         var randomCents = (parseInt(order.id) % 10000) / 1000000;
         usdtAmount = (Math.floor(usdtAmount * 100) / 100) + randomCents;
@@ -384,10 +384,10 @@ function onRefund(order, config) {
 
     return {
         success: true,
-        message: 'USDT TRC20退款需手动操作，请将' + (savedAmount || order.total_amount) + ' USDT转回用户地址',
+        message: 'USDT TRC20退款需手动操作，请将' + (savedAmount || ((order.total_amount_minor || 0) / 100).toFixed(2)) + ' USDT转回用户地址',
         data: {
             network: 'TRC20',
-            amount: savedAmount || order.total_amount.toString(),
+            amount: savedAmount || ((order.total_amount_minor || 0) / 100).toFixed(2),
             wallet_address: config.wallet_address || ''
         }
     };
@@ -440,11 +440,11 @@ function onGeneratePaymentCard(order, config) {
     }
 
     // 计算USDT金额
-    var usdtAmount = order.total_amount;
+    var usdtAmount = (order.total_amount_minor || 0) / 100;
     if (order.currency === 'CNY') {
-        usdtAmount = order.total_amount / cnyRate;
+        usdtAmount = ((order.total_amount_minor || 0) / 100) / cnyRate;
     } else if (order.currency === 'USD') {
-        usdtAmount = order.total_amount;
+        usdtAmount = (order.total_amount_minor || 0) / 100;
     }
     // 保留2位小数，加上基于订单ID的偏移量区分并发订单（USDT支持18位小数）
     var randomCents = (parseInt(order.id) % 10000) / 1000000;
@@ -487,7 +487,7 @@ function onGeneratePaymentCard(order, config) {
             '</div>' +
             '<div class="text-center py-3">' +
                 '<div class="text-3xl font-bold text-yellow-600 dark:text-yellow-400">' + usdtAmount + ' USDT</div>' +
-                '<div class="text-xs text-muted-foreground mt-1">≈ ' + order.currency + ' ' + order.total_amount.toFixed(2) + '</div>' +
+                '<div class="text-xs text-muted-foreground mt-1">≈ ' + order.currency + ' ' + (((order.total_amount_minor || 0) / 100).toFixed(2)) + '</div>' +
             '</div>' +
         '</div>' +
         '<div class="space-y-2">' +
@@ -707,9 +707,9 @@ function onRefund(order, config) {
     // If storage was cleaned up after payment confirmation, recalculate USDT amount
     if (!savedAmount) {
         var cnyRate = parseFloat(config.cny_rate) || 7.2;
-        var usdtAmount = order.total_amount;
+        var usdtAmount = (order.total_amount_minor || 0) / 100;
         if (order.currency === 'CNY') {
-            usdtAmount = order.total_amount / cnyRate;
+            usdtAmount = ((order.total_amount_minor || 0) / 100) / cnyRate;
         }
         var randomCents = (parseInt(order.id) % 10000) / 1000000;
         usdtAmount = (Math.floor(usdtAmount * 100) / 100) + randomCents;
@@ -718,10 +718,10 @@ function onRefund(order, config) {
 
     return {
         success: true,
-        message: 'USDT BEP20退款需手动操作，请将' + (savedAmount || order.total_amount) + ' USDT转回用户地址',
+        message: 'USDT BEP20退款需手动操作，请将' + (savedAmount || ((order.total_amount_minor || 0) / 100).toFixed(2)) + ' USDT转回用户地址',
         data: {
             network: 'BEP20',
-            amount: savedAmount || order.total_amount.toString(),
+            amount: savedAmount || ((order.total_amount_minor || 0) / 100).toFixed(2),
             wallet_address: config.wallet_address || ''
         }
     };

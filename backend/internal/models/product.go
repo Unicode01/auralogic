@@ -1,6 +1,7 @@
 package models
 
 import (
+	"encoding/json"
 	"time"
 
 	"gorm.io/gorm"
@@ -83,9 +84,9 @@ type Product struct {
 	Tags     []string `gorm:"type:text;serializer:json" json:"tags,omitempty"`
 
 	// 价格和Inventory
-	Price         float64 `gorm:"type:decimal(10,2);not null" json:"price"`
-	OriginalPrice float64 `gorm:"type:decimal(10,2)" json:"original_price,omitempty"`
-	Stock         int     `gorm:"not null;default:0" json:"stock"` // Inventory汇总字段，实际Inventory由Inventory表管理
+	Price         int64 `gorm:"type:bigint;not null;default:0" json:"-"`
+	OriginalPrice int64 `gorm:"type:bigint;default:0" json:"-"`
+	Stock         int   `gorm:"not null;default:0" json:"stock"` // Inventory汇总字段，实际Inventory由Inventory表管理
 
 	// 购买限制
 	MaxPurchaseLimit int `gorm:"default:0" json:"max_purchase_limit,omitempty"` // 每个账户最大购买数量，0表示不限制
@@ -128,6 +129,19 @@ type Product struct {
 // TableName 指定表名
 func (Product) TableName() string {
 	return "products"
+}
+
+func (p Product) MarshalJSON() ([]byte, error) {
+	type Alias Product
+	return json.Marshal(&struct {
+		Alias
+		PriceMinor         int64 `json:"price_minor"`
+		OriginalPriceMinor int64 `json:"original_price_minor"`
+	}{
+		Alias:              Alias(p),
+		PriceMinor:         p.Price,
+		OriginalPriceMinor: p.OriginalPrice,
+	})
 }
 
 // GetPrimaryImage get主图

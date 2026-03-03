@@ -55,7 +55,7 @@ export function useCurrency() {
 export function formatPrice(amount: number | undefined, currency: string = 'CNY') {
   if (amount === undefined || amount === null) return '-'
   const symbol = currencySymbols[currency] || currency + ' '
-  return `${symbol}${amount.toFixed(2)}`
+  return `${symbol}${(amount / 100).toFixed(2)}`
 }
 
 // 获取货币符号

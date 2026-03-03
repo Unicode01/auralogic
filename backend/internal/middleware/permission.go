@@ -42,6 +42,11 @@ func InvalidatePermissionCache(userID uint) {
 	cache.Del(permCacheKey(userID))
 }
 
+// InvalidateAllPermissionCache 清除所有用户权限缓存
+func InvalidateAllPermissionCache() (int64, error) {
+	return cache.DeleteByPatterns("perm:user:*")
+}
+
 // getPermCached 从缓存获取用户角色和权限，缓存未命中则查DB并写入缓存
 func getPermCached(userID uint) (*permCacheEntry, error) {
 	key := permCacheKey(userID)

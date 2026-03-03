@@ -16,8 +16,8 @@ type PollingTask struct {
 	OrderID         uint      `json:"order_id"`
 	PaymentMethodID uint      `json:"payment_method_id"`
 	AddedAt         time.Time `json:"added_at"`
-	NextCheckAt     time.Time `json:"next_check_at"`    // 下次检查时间
-	CheckInterval   int       `json:"check_interval"`   // 检查间隔(秒)
+	NextCheckAt     time.Time `json:"next_check_at"`  // 下次检查时间
+	CheckInterval   int       `json:"check_interval"` // 检查间隔(秒)
 	RetryCount      int       `json:"retry_count"`
 	index           int       // 堆中的索引
 }
@@ -77,9 +77,9 @@ func NewPaymentPollingService(db *gorm.DB, virtualInventorySvc *VirtualInventory
 		taskMap:             make(map[uint]*PollingTask),
 		stopChan:            make(chan struct{}),
 		wakeupChan:          make(chan struct{}, 1),
-		defaultInterval:     30,                // 默认30秒
-		maxRetries:          480,               // 最多重试480次
-		maxDuration:         4 * time.Hour,     // 最长轮询4小时
+		defaultInterval:     30,            // 默认30秒
+		maxRetries:          480,           // 最多重试480次
+		maxDuration:         4 * time.Hour, // 最长轮询4小时
 	}
 }
 
@@ -351,9 +351,17 @@ func (s *PaymentPollingService) handlePaymentSuccess(task *PollingTask, order *m
 		}
 	}
 
-	// 根据订单类型设置状态
-	updates := map[string]interface{}{}
+	// 根据订单类型设置基础状态
+	baseStatus := models.OrderStatusPending
+	if !isVirtualOnly {
+		// 实物或混合订单：等待填写收货信息
+		baseStatus = models.OrderStatusDraft
+	}
+	updates := map[string]interface{}{
+		"status": baseStatus,
+	}
 
+	shouldAttemptAutoDelivery := false
 	if isVirtualOnly {
 		// 纯虚拟商品订单
 		if s.virtualInventorySvc != nil {
@@ -366,39 +374,15 @@ func (s *PaymentPollingService) handlePaymentSuccess(task *PollingTask, order *m
 			}
 
 			if canAuto {
-				// 所有库存都属于自动发货商品，执行自动发货
-				if err := s.virtualInventorySvc.DeliverAutoDeliveryStock(order.ID, order.OrderNo, nil); err != nil {
-					logger.LogPaymentOperation(s.db, "virtual_delivery_failed", task.OrderID, map[string]interface{}{
-						"error": err.Error(),
-					})
-					// 自动发货失败，回退到手动发货
-					updates["status"] = models.OrderStatusPending
-				} else {
-					now := time.Now()
-					updates["status"] = models.OrderStatusShipped
-					updates["shipped_at"] = now
-				}
-			} else {
-				// 存在非自动发货的库存，全部交给管理员手动发货
-				updates["status"] = models.OrderStatusPending
+				shouldAttemptAutoDelivery = true
 			}
-		} else {
-			updates["status"] = models.OrderStatusPending
 		}
 	} else {
-		// 实物或混合订单：设置为草稿状态，等待填写收货信息
-		updates["status"] = models.OrderStatusDraft
-
 		// 混合订单：仅当所有虚拟库存都可自动发货时才自动发货，否则全部留给管理员
 		if s.virtualInventorySvc != nil {
 			canAuto, _ := s.virtualInventorySvc.CanAutoDeliver(order.OrderNo)
 			if canAuto {
-				if err := s.virtualInventorySvc.DeliverAutoDeliveryStock(order.ID, order.OrderNo, nil); err != nil {
-					logger.LogPaymentOperation(s.db, "virtual_delivery_failed", task.OrderID, map[string]interface{}{
-						"error":      err.Error(),
-						"order_type": "mixed",
-					})
-				}
+				shouldAttemptAutoDelivery = true
 			}
 		}
 	}
@@ -416,9 +400,48 @@ func (s *PaymentPollingService) handlePaymentSuccess(task *PollingTask, order *m
 		}
 	}
 	paymentDataJSON, _ := json.Marshal(paymentData)
+	finalStatus := baseStatus
+	var finalShippedAt *time.Time
+	var virtualDeliveryErr error
 
 	if err := s.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Model(order).Updates(updates).Error; err != nil {
+		txUpdates := make(map[string]interface{}, len(updates)+1)
+		for k, v := range updates {
+			txUpdates[k] = v
+		}
+
+		if shouldAttemptAutoDelivery && s.virtualInventorySvc != nil {
+			// 使用嵌套事务隔离自动发货写入，失败时仅回滚发货数据，不影响订单状态更新
+			err := tx.Transaction(func(deliveryTx *gorm.DB) error {
+				return s.virtualInventorySvc.DeliverAutoDeliveryStockWithTx(deliveryTx, order.ID, order.OrderNo, nil)
+			})
+			if err != nil {
+				virtualDeliveryErr = err
+				if isVirtualOnly {
+					// 自动发货失败，回退到手动发货
+					txUpdates["status"] = models.OrderStatusPending
+					delete(txUpdates, "shipped_at")
+				}
+			} else if isVirtualOnly {
+				now := time.Now()
+				txUpdates["status"] = models.OrderStatusShipped
+				txUpdates["shipped_at"] = now
+			}
+		}
+
+		if status, ok := txUpdates["status"].(models.OrderStatus); ok {
+			finalStatus = status
+		} else if statusStr, ok := txUpdates["status"].(string); ok {
+			finalStatus = models.OrderStatus(statusStr)
+		}
+		if shippedAt, ok := txUpdates["shipped_at"].(time.Time); ok {
+			tmp := shippedAt
+			finalShippedAt = &tmp
+		} else {
+			finalShippedAt = nil
+		}
+
+		if err := tx.Model(order).Updates(txUpdates).Error; err != nil {
 			return err
 		}
 		return tx.Model(&models.OrderPaymentMethod{}).
@@ -431,17 +454,30 @@ func (s *PaymentPollingService) handlePaymentSuccess(task *PollingTask, order *m
 		return
 	}
 
+	if virtualDeliveryErr != nil {
+		logData := map[string]interface{}{
+			"error": virtualDeliveryErr.Error(),
+		}
+		if !isVirtualOnly {
+			logData["order_type"] = "mixed"
+		}
+		logger.LogPaymentOperation(s.db, "virtual_delivery_failed", task.OrderID, logData)
+	}
+
+	order.Status = finalStatus
+	order.ShippedAt = finalShippedAt
+
 	// 记录付款成功日志
 	logger.LogPaymentOperation(s.db, "payment_success", task.OrderID, map[string]interface{}{
-		"order_no":          order.OrderNo,
-		"payment_method":    pm.Name,
-		"transaction_id":    result.TransactionID,
-		"total_amount":      order.TotalAmount,
-		"currency":          order.Currency,
-		"polling_attempts":  task.RetryCount,
-		"check_interval":    task.CheckInterval,
-		"new_status":        updates["status"],
-		"is_virtual_only":   isVirtualOnly,
+		"order_no":           order.OrderNo,
+		"payment_method":     pm.Name,
+		"transaction_id":     result.TransactionID,
+		"total_amount_minor": order.TotalAmount,
+		"currency":           order.Currency,
+		"polling_attempts":   task.RetryCount,
+		"check_interval":     task.CheckInterval,
+		"new_status":         finalStatus,
+		"is_virtual_only":    isVirtualOnly,
 	})
 
 	// 发送付款成功邮件

@@ -111,7 +111,7 @@ export function DataTable<T>({
               type="number"
               min={1}
               max={pagination.total_pages}
-              value={pageInput || pagination.page}
+              value={pageInput !== '' ? pageInput : pagination.page}
               onChange={(e) => setPageInput(e.target.value)}
               onBlur={() => {
                 const p = parseInt(pageInput)
@@ -141,7 +141,7 @@ export function DataTable<T>({
               size="sm"
               type="button"
               onClick={() => pagination.onPageChange(pagination.page + 1)}
-              disabled={pagination.page === pagination.total_pages}
+              disabled={pagination.page >= pagination.total_pages}
             >
               {t.common.nextPage}
               <ChevronRight className="h-4 w-4" />

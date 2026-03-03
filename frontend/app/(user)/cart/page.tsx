@@ -50,9 +50,9 @@ export default function CartPage() {
     promo_code_id: number
     name: string
     discount_type: string
-    discount_value: number
-    max_discount: number
-    min_order_amount: number
+    discount_value_minor: number
+    max_discount_minor: number
+    min_order_amount_minor: number
   } | null>(null)
 
   const handleViewModeChange = (mode: 'list' | 'card') => {
@@ -68,12 +68,12 @@ export default function CartPage() {
     try {
       const selectedCartItems = items.filter(item => selectedItems.has(item.id) && item.is_available)
       const productIds = selectedCartItems.map(item => item.product_id)
-      const amount = selectedCartItems.reduce((sum, item) => sum + item.price * item.quantity, 0)
+      const amount = selectedCartItems.reduce((sum, item) => sum + item.price_minor * item.quantity, 0)
 
       const response = await validatePromoCode({
         code: promoCodeInput.trim(),
         product_ids: productIds.length > 0 ? productIds : undefined,
-        amount: amount > 0 ? amount : undefined,
+        amount_minor: amount > 0 ? amount : undefined,
       })
 
       const data = response.data
@@ -82,14 +82,14 @@ export default function CartPage() {
         promo_code_id: data.promo_code_id,
         name: data.name,
         discount_type: data.discount_type,
-        discount_value: data.discount_value,
-        max_discount: data.max_discount || 0,
-        min_order_amount: data.min_order_amount || 0,
+        discount_value_minor: data.discount_value_minor,
+        max_discount_minor: data.max_discount_minor || 0,
+        min_order_amount_minor: data.min_order_amount_minor || 0,
       })
       toast.success(
         t.promoCode.promoCodeApplied
           .replace('{code}', data.promo_code)
-          .replace('{discount}', formatPrice(data.discount, currency))
+          .replace('{discount}', formatPrice(data.discount_minor, currency))
       )
     } catch (error: any) {
       const msg = error?.message || t.promoCode.invalidCode
@@ -193,7 +193,7 @@ export default function CartPage() {
   // 计算选中商品的总价
   const selectedTotalPrice = items
     .filter(item => selectedItems.has(item.id) && item.is_available)
-    .reduce((sum, item) => sum + item.price * item.quantity, 0)
+    .reduce((sum, item) => sum + item.price_minor * item.quantity, 0)
 
   const selectedTotalQuantity = items
     .filter(item => selectedItems.has(item.id) && item.is_available)
@@ -204,13 +204,13 @@ export default function CartPage() {
     if (!appliedPromo || selectedTotalPrice <= 0) return 0
 
     if (appliedPromo.discount_type === 'percentage') {
-      let discount = selectedTotalPrice * appliedPromo.discount_value / 100
-      if (appliedPromo.max_discount > 0 && discount > appliedPromo.max_discount) {
-        discount = appliedPromo.max_discount
+      let discount = selectedTotalPrice * appliedPromo.discount_value_minor / 10000
+      if (appliedPromo.max_discount_minor > 0 && discount > appliedPromo.max_discount_minor) {
+        discount = appliedPromo.max_discount_minor
       }
       return Math.min(discount, selectedTotalPrice)
     } else {
-      return Math.min(appliedPromo.discount_value, selectedTotalPrice)
+      return Math.min(appliedPromo.discount_value_minor, selectedTotalPrice)
     }
   }, [appliedPromo, selectedTotalPrice])
 
@@ -395,7 +395,7 @@ export default function CartPage() {
                   </div>
                   {/* 第二行：价格 + 数量控制 */}
                   <div className="flex items-center justify-between mt-2 pl-7">
-                    <span className="text-red-600 font-bold">{formatPrice(item.price, currency)}</span>
+                    <span className="text-red-600 font-bold">{formatPrice(item.price_minor, currency)}</span>
                     <div className="flex items-center gap-1">
                       <Button variant="outline" size="icon" className="h-7 w-7" onClick={() => handleQuantityChange(item.id, item.quantity - 1)} disabled={item.quantity <= 1}>
                         <Minus className="h-3 w-3" />
@@ -455,7 +455,7 @@ export default function CartPage() {
                       </div>
                     )}
                     <div className="flex items-center justify-between mt-2">
-                      <span className="text-red-600 font-bold">{formatPrice(item.price, currency)}</span>
+                      <span className="text-red-600 font-bold">{formatPrice(item.price_minor, currency)}</span>
                       <div className="flex items-center gap-2">
                         <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => handleQuantityChange(item.id, item.quantity - 1)} disabled={item.quantity <= 1}>
                           <Minus className="h-4 w-4" />
@@ -561,7 +561,7 @@ export default function CartPage() {
 
                 {/* 价格和数量 */}
                 <div className="flex items-center justify-between pt-2 border-t">
-                  <span className="text-red-600 font-bold">{formatPrice(item.price, currency)}</span>
+                  <span className="text-red-600 font-bold">{formatPrice(item.price_minor, currency)}</span>
                   <div className="flex items-center gap-1">
                     <Button variant="outline" size="icon" className="h-7 w-7" onClick={() => handleQuantityChange(item.id, item.quantity - 1)} disabled={item.quantity <= 1}>
                       <Minus className="h-3 w-3" />
@@ -583,7 +583,7 @@ export default function CartPage() {
                 {/* 小计 */}
                 <div className="flex items-center justify-between text-sm">
                   <span className="text-muted-foreground">{t.cart.subtotal}</span>
-                  <span className="font-semibold text-primary">{formatPrice(item.price * item.quantity, currency)}</span>
+                  <span className="font-semibold text-primary">{formatPrice(item.price_minor * item.quantity, currency)}</span>
                 </div>
               </CardContent>
 

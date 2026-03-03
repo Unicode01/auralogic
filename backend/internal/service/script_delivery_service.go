@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"auralogic/internal/models"
+	"auralogic/internal/pkg/money"
 
 	"github.com/dop251/goja"
 	"gorm.io/gorm"
@@ -32,12 +33,32 @@ type ScriptDeliveryItem struct {
 
 // ScriptDeliveryService JS脚本发货服务
 type ScriptDeliveryService struct {
-	db *gorm.DB
+	db              *gorm.DB
+	moneyMinorUnits bool
 }
 
 // NewScriptDeliveryService 创建脚本发货服务
 func NewScriptDeliveryService(db *gorm.DB) *ScriptDeliveryService {
-	return &ScriptDeliveryService{db: db}
+	svc := &ScriptDeliveryService{db: db}
+	svc.moneyMinorUnits = svc.detectMoneyMinorUnits()
+	return svc
+}
+
+func (s *ScriptDeliveryService) detectMoneyMinorUnits() bool {
+	if s == nil || s.db == nil {
+		return true
+	}
+	if !s.db.Migrator().HasTable("system_migrations") {
+		return false
+	}
+
+	var count int64
+	if err := s.db.Table("system_migrations").
+		Where("name = ?", "money_minor_units_v1").
+		Count(&count).Error; err != nil {
+		return true
+	}
+	return count > 0
 }
 
 // ScriptDeliveryContext 脚本执行上下文
@@ -75,10 +96,15 @@ func (s *ScriptDeliveryService) ExecuteDeliveryScript(
 	}
 
 	// 注册API
-	s.registerAPIs(vm, ctx, inventory, order)
+	configData := s.parseScriptConfig(inventory.ScriptConfig)
+	s.registerAPIs(vm, ctx, order, configData)
 
 	// 执行脚本
-	_, err := vm.RunString(inventory.Script)
+	program, err := getOrCompileJSProgram("virtual_inventory_delivery", inventory.Script)
+	if err != nil {
+		return nil, fmt.Errorf("script compile error: %w", err)
+	}
+	_, err = vm.RunProgram(program)
 	if err != nil {
 		return nil, fmt.Errorf("script execution error: %w", err)
 	}
@@ -91,8 +117,6 @@ func (s *ScriptDeliveryService) ExecuteDeliveryScript(
 
 	// 准备参数
 	orderData := s.orderToJS(order, quantity)
-	configData := s.parseScriptConfig(inventory.ScriptConfig)
-
 	result, err := fn(goja.Undefined(), vm.ToValue(orderData), vm.ToValue(configData))
 	if err != nil {
 		return nil, fmt.Errorf("onDeliver execution error: %w", err)
@@ -105,8 +129,8 @@ func (s *ScriptDeliveryService) ExecuteDeliveryScript(
 func (s *ScriptDeliveryService) registerAPIs(
 	vm *goja.Runtime,
 	ctx *ScriptDeliveryContext,
-	inventory *models.VirtualInventory,
 	order *models.Order,
+	configData map[string]interface{},
 ) {
 	auralogic := vm.NewObject()
 	vm.Set("AuraLogic", auralogic)
@@ -118,27 +142,14 @@ func (s *ScriptDeliveryService) registerAPIs(
 		return vm.ToValue(s.orderToJS(order, ctx.Quantity))
 	})
 	orderObj.Set("getItems", func(call goja.FunctionCall) goja.Value {
-		var items []models.OrderItem
-		s.db.Where("order_id = ?", order.ID).Find(&items)
 		var result []map[string]interface{}
-		for _, item := range items {
+		for _, item := range order.Items {
 			result = append(result, map[string]interface{}{
 				"sku":          item.SKU,
 				"name":         item.Name,
 				"quantity":     item.Quantity,
 				"product_type": item.ProductType,
 			})
-		}
-		if result == nil {
-			// Order items are embedded JSON, use order.Items directly
-			for _, item := range order.Items {
-				result = append(result, map[string]interface{}{
-					"sku":          item.SKU,
-					"name":         item.Name,
-					"quantity":     item.Quantity,
-					"product_type": item.ProductType,
-				})
-			}
 		}
 		return vm.ToValue(result)
 	})
@@ -221,7 +232,6 @@ func (s *ScriptDeliveryService) registerAPIs(
 	// 配置API
 	config := vm.NewObject()
 	auralogic.Set("config", config)
-	configData := s.parseScriptConfig(inventory.ScriptConfig)
 	config.Set("get", func(call goja.FunctionCall) goja.Value {
 		if len(call.Arguments) < 1 {
 			return vm.ToValue(configData)
@@ -277,7 +287,7 @@ func (s *ScriptDeliveryService) doHTTPRequest(vm *goja.Runtime, method, urlStr s
 		return vm.ToValue(map[string]interface{}{"error": "URL is not allowed", "status": 0})
 	}
 
-	client := newPaymentHTTPClient()
+	client := getPaymentHTTPClient()
 
 	// 准备请求体
 	var reqBody io.Reader
@@ -347,11 +357,18 @@ func (s *ScriptDeliveryService) doHTTPRequest(vm *goja.Runtime, method, urlStr s
 
 // orderToJS 将订单转换为JS对象
 func (s *ScriptDeliveryService) orderToJS(order *models.Order, quantity int) map[string]interface{} {
+	totalAmountMinor := order.TotalAmount
+	if !s.moneyMinorUnits {
+		totalAmountMinor = order.TotalAmount * money.CurrencyScale
+	}
+
 	return map[string]interface{}{
-		"id":           order.ID,
-		"order_no":     order.OrderNo,
-		"status":       order.Status,
-		"total_amount": order.TotalAmount,
+		"id":                 order.ID,
+		"order_no":           order.OrderNo,
+		"status":             order.Status,
+		"total_amount_minor": totalAmountMinor,
+		// Legacy alias for old scripts still using major-unit field.
+		"total_amount": float64(totalAmountMinor) / float64(money.CurrencyScale),
 		"currency":     order.Currency,
 		"quantity":     quantity,
 		"created_at":   order.CreatedAt.Format(time.RFC3339),

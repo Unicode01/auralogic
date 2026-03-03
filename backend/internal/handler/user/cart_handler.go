@@ -4,11 +4,11 @@ import (
 	"errors"
 	"strconv"
 
-	"github.com/gin-gonic/gin"
 	"auralogic/internal/middleware"
 	"auralogic/internal/pkg/bizerr"
 	"auralogic/internal/pkg/response"
 	"auralogic/internal/service"
+	"github.com/gin-gonic/gin"
 )
 
 type CartHandler struct {
@@ -32,20 +32,20 @@ func (h *CartHandler) GetCart(c *gin.Context) {
 	}
 
 	// 计算总价
-	var totalPrice float64
+	var totalPrice int64
 	var totalQuantity int
 	for _, item := range items {
 		if item.IsAvailable {
-			totalPrice += item.Price * float64(item.Quantity)
+			totalPrice += item.Price * int64(item.Quantity)
 		}
 		totalQuantity += item.Quantity
 	}
 
 	response.Success(c, gin.H{
-		"items":          items,
-		"total_price":    totalPrice,
-		"total_quantity": totalQuantity,
-		"item_count":     len(items),
+		"items":             items,
+		"total_price_minor": totalPrice,
+		"total_quantity":    totalQuantity,
+		"item_count":        len(items),
 	})
 }
 

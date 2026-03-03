@@ -24,8 +24,7 @@ export interface Order {
   platform?: string
   status: OrderStatus
   items: OrderItem[]
-  totalAmount?: number
-  total_amount?: number
+  total_amount_minor?: number
   currency?: string
   receiverName?: string
   receiver_name?: string

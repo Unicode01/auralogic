@@ -32,17 +32,47 @@ func NewVirtualInventoryService(db *gorm.DB) *VirtualInventoryService {
 	}
 }
 
+// createVirtualInventoryLog 记录虚拟库存变动日志
+func (s *VirtualInventoryService) createVirtualInventoryLog(tx *gorm.DB, virtualInventoryID uint, logType string, quantity int, orderNo, batchNo, operator, reason string) {
+	log := &models.InventoryLog{
+		Source:      models.InventoryLogSourceVirtual,
+		InventoryID: virtualInventoryID,
+		Type:        logType,
+		Quantity:    quantity,
+		OrderNo:     orderNo,
+		BatchNo:     batchNo,
+		Operator:    operator,
+		Reason:      reason,
+	}
+	tx.Create(log)
+}
+
 // scriptPendingItem 脚本类型虚拟库存的待发货条目
 type scriptPendingItem struct {
 	InventoryID uint
 	Quantity    int
 }
 
+type inventorySoldCountRow struct {
+	VirtualInventoryID uint
+	Sold               int64
+}
+
+type inventoryStatusCountRow struct {
+	VirtualInventoryID uint
+	Status             string
+	Count              int64
+}
+
 // getScriptPendingItems 获取订单中脚本类型虚拟库存的待发货条目
 // 通过 VirtualInventoryBindings 记录的绑定关系，减去已有的 sold 记录数
 func (s *VirtualInventoryService) getScriptPendingItems(orderNo string) ([]scriptPendingItem, error) {
+	return s.getScriptPendingItemsWithDB(s.db, orderNo)
+}
+
+func (s *VirtualInventoryService) getScriptPendingItemsWithDB(db *gorm.DB, orderNo string) ([]scriptPendingItem, error) {
 	var order models.Order
-	if err := s.db.Select("id, virtual_inventory_bindings, items").
+	if err := db.Select("id, virtual_inventory_bindings, items").
 		Where("order_no = ?", orderNo).
 		First(&order).Error; err != nil {
 		return nil, err
@@ -60,17 +90,31 @@ func (s *VirtualInventoryService) getScriptPendingItems(orderNo string) ([]scrip
 		}
 	}
 
+	inventoryIDs := make([]uint, 0, len(inventoryQty))
+	for invID := range inventoryQty {
+		inventoryIDs = append(inventoryIDs, invID)
+	}
+
+	soldCountMap := make(map[uint]int64)
+	if len(inventoryIDs) > 0 {
+		var soldRows []inventorySoldCountRow
+		if err := db.Model(&models.VirtualProductStock{}).
+			Select("virtual_inventory_id, COUNT(*) as sold").
+			Where("order_no = ? AND status = ? AND virtual_inventory_id IN ?",
+				orderNo, models.VirtualStockStatusSold, inventoryIDs).
+			Group("virtual_inventory_id").
+			Scan(&soldRows).Error; err != nil {
+			return nil, err
+		}
+		for _, row := range soldRows {
+			soldCountMap[row.VirtualInventoryID] = row.Sold
+		}
+	}
+
 	var result []scriptPendingItem
 	for invID, totalQty := range inventoryQty {
 		// 减去已有的 sold 记录数
-		var soldCount int64
-		if err := s.db.Model(&models.VirtualProductStock{}).
-			Where("order_no = ? AND virtual_inventory_id = ? AND status = ?",
-				orderNo, invID, models.VirtualStockStatusSold).
-			Count(&soldCount).Error; err != nil {
-			return nil, err
-		}
-
+		soldCount := soldCountMap[invID]
 		pending := totalQty - int(soldCount)
 		if pending > 0 {
 			result = append(result, scriptPendingItem{
@@ -89,6 +133,83 @@ func (s *VirtualInventoryService) getRandomOrderClause() string {
 		return "RAND()"
 	}
 	return "RANDOM()"
+}
+
+// getStockStatsForInventories 批量获取库存统计，避免 N+1 查询
+func (s *VirtualInventoryService) getStockStatsForInventories(inventoryIDs []uint) (map[uint]map[string]int64, error) {
+	statsByInventory := make(map[uint]map[string]int64, len(inventoryIDs))
+	if len(inventoryIDs) == 0 {
+		return statsByInventory, nil
+	}
+
+	var inventories []models.VirtualInventory
+	if err := s.db.Select("id, type, total_limit").
+		Where("id IN ?", inventoryIDs).
+		Find(&inventories).Error; err != nil {
+		return nil, err
+	}
+
+	if len(inventories) == 0 {
+		return statsByInventory, nil
+	}
+
+	var countRows []inventoryStatusCountRow
+	if err := s.db.Model(&models.VirtualProductStock{}).
+		Select("virtual_inventory_id, status, COUNT(*) as count").
+		Where("virtual_inventory_id IN ?", inventoryIDs).
+		Group("virtual_inventory_id, status").
+		Scan(&countRows).Error; err != nil {
+		return nil, err
+	}
+
+	statusCounts := make(map[uint]map[string]int64, len(inventoryIDs))
+	for _, row := range countRows {
+		if _, ok := statusCounts[row.VirtualInventoryID]; !ok {
+			statusCounts[row.VirtualInventoryID] = make(map[string]int64)
+		}
+		statusCounts[row.VirtualInventoryID][row.Status] = row.Count
+	}
+
+	for _, inv := range inventories {
+		counts := statusCounts[inv.ID]
+		if counts == nil {
+			counts = make(map[string]int64)
+		}
+
+		stats := map[string]int64{
+			"total":     0,
+			"available": 0,
+			"reserved":  0,
+			"sold":      0,
+		}
+
+		if inv.Type == models.VirtualInventoryTypeScript {
+			sold := counts[string(models.VirtualStockStatusSold)]
+			stats["sold"] = sold
+			stats["reserved"] = 0
+			if inv.TotalLimit > 0 {
+				stats["total"] = inv.TotalLimit
+				remaining := inv.TotalLimit - sold
+				if remaining < 0 {
+					remaining = 0
+				}
+				stats["available"] = remaining
+			}
+		} else {
+			var total int64
+			for _, count := range counts {
+				total += count
+			}
+			stats["total"] = total
+			stats["available"] = counts[string(models.VirtualStockStatusAvailable)]
+			stats["reserved"] = counts[string(models.VirtualStockStatusReserved)]
+			stats["sold"] = counts[string(models.VirtualStockStatusSold)]
+		}
+
+		statsByInventory[inv.ID] = stats
+	}
+
+	return statsByInventory, nil
 }
 
 // CreateVirtualInventory 创建虚拟库存
@@ -158,10 +279,27 @@ func (s *VirtualInventoryService) ListVirtualInventories(page, limit int, search
 		return nil, 0, err
 	}
 
+	inventoryIDs := make([]uint, 0, len(inventories))
+	for _, inv := range inventories {
+		inventoryIDs = append(inventoryIDs, inv.ID)
+	}
+	statsByInventory, err := s.getStockStatsForInventories(inventoryIDs)
+	if err != nil {
+		return nil, 0, err
+	}
+
 	// 获取每个库存的统计信息
 	var result []models.VirtualInventoryWithStats
 	for _, inv := range inventories {
-		stats, _ := s.GetStockStats(inv.ID)
+		stats := statsByInventory[inv.ID]
+		if stats == nil {
+			stats = map[string]int64{
+				"total":     0,
+				"available": 0,
+				"reserved":  0,
+				"sold":      0,
+			}
+		}
 		result = append(result, models.VirtualInventoryWithStats{
 			ID:           inv.ID,
 			Name:         inv.Name,
@@ -186,77 +324,19 @@ func (s *VirtualInventoryService) ListVirtualInventories(page, limit int, search
 
 // GetStockStats 获取库存统计
 func (s *VirtualInventoryService) GetStockStats(virtualInventoryID uint) (map[string]int64, error) {
-	stats := make(map[string]int64)
-
-	// 检查是否为脚本类型
-	var inv models.VirtualInventory
-	if err := s.db.Select("id, type, total_limit").First(&inv, virtualInventoryID).Error; err != nil {
+	statsByInventory, err := s.getStockStatsForInventories([]uint{virtualInventoryID})
+	if err != nil {
 		return nil, err
 	}
-
-	if inv.Type == models.VirtualInventoryTypeScript {
-		// 脚本类型：只统计已售出数量
-		var sold int64
-		if err := s.db.Model(&models.VirtualProductStock{}).
-			Where("virtual_inventory_id = ? AND status = ?", virtualInventoryID, models.VirtualStockStatusSold).
-			Count(&sold).Error; err != nil {
-			return nil, err
-		}
-		stats["sold"] = sold
-		stats["reserved"] = 0
-
-		if inv.TotalLimit > 0 {
-			stats["total"] = inv.TotalLimit
-			remaining := inv.TotalLimit - sold
-			if remaining < 0 {
-				remaining = 0
-			}
-			stats["available"] = remaining
-		} else {
-			stats["total"] = 0
-			stats["available"] = 0
-		}
+	if stats, ok := statsByInventory[virtualInventoryID]; ok {
 		return stats, nil
 	}
-
-	// 静态类型：统计所有状态
-	// 总数
-	var total int64
-	if err := s.db.Model(&models.VirtualProductStock{}).
-		Where("virtual_inventory_id = ?", virtualInventoryID).
-		Count(&total).Error; err != nil {
-		return nil, err
-	}
-	stats["total"] = total
-
-	// 可用
-	var available int64
-	if err := s.db.Model(&models.VirtualProductStock{}).
-		Where("virtual_inventory_id = ? AND status = ?", virtualInventoryID, models.VirtualStockStatusAvailable).
-		Count(&available).Error; err != nil {
-		return nil, err
-	}
-	stats["available"] = available
-
-	// 已预留
-	var reserved int64
-	if err := s.db.Model(&models.VirtualProductStock{}).
-		Where("virtual_inventory_id = ? AND status = ?", virtualInventoryID, models.VirtualStockStatusReserved).
-		Count(&reserved).Error; err != nil {
-		return nil, err
-	}
-	stats["reserved"] = reserved
-
-	// 已售出
-	var sold int64
-	if err := s.db.Model(&models.VirtualProductStock{}).
-		Where("virtual_inventory_id = ? AND status = ?", virtualInventoryID, models.VirtualStockStatusSold).
-		Count(&sold).Error; err != nil {
-		return nil, err
-	}
-	stats["sold"] = sold
-
-	return stats, nil
+	return map[string]int64{
+		"total":     0,
+		"available": 0,
+		"reserved":  0,
+		"sold":      0,
+	}, nil
 }
 
 // ImportFromExcel 从Excel导入虚拟产品库存
@@ -321,6 +401,8 @@ func (s *VirtualInventoryService) ImportFromExcel(virtualInventoryID uint, fileP
 		return 0, fmt.Errorf("failed to insert stocks: %w", err)
 	}
 
+	s.createVirtualInventoryLog(s.db, virtualInventoryID, models.InventoryLogTypeImport, len(stocks), "", batchNo, importedBy, "Import from Excel")
+
 	return len(stocks), nil
 }
 
@@ -366,6 +448,8 @@ func (s *VirtualInventoryService) ImportFromText(virtualInventoryID uint, conten
 	if err := s.db.Create(&stocks).Error; err != nil {
 		return 0, fmt.Errorf("failed to insert stocks: %w", err)
 	}
+
+	s.createVirtualInventoryLog(s.db, virtualInventoryID, models.InventoryLogTypeImport, len(stocks), "", batchNo, importedBy, "Import from text")
 
 	return len(stocks), nil
 }
@@ -427,6 +511,8 @@ func (s *VirtualInventoryService) ImportFromCSV(virtualInventoryID uint, reader 
 		return 0, fmt.Errorf("failed to insert stocks: %w", err)
 	}
 
+	s.createVirtualInventoryLog(s.db, virtualInventoryID, models.InventoryLogTypeImport, len(stocks), "", batchNo, importedBy, "Import from CSV")
+
 	return len(stocks), nil
 }
 
@@ -444,6 +530,8 @@ func (s *VirtualInventoryService) CreateStockManually(virtualInventoryID uint, c
 	if err := s.db.Create(stock).Error; err != nil {
 		return nil, err
 	}
+
+	s.createVirtualInventoryLog(s.db, virtualInventoryID, models.InventoryLogTypeImport, 1, "", stock.BatchNo, importedBy, "Create stock manually")
 
 	return stock, nil
 }
@@ -482,16 +570,33 @@ func (s *VirtualInventoryService) DeleteStock(id uint) error {
 		return errors.New("only available or reserved stock can be deleted")
 	}
 
-	return s.db.Delete(&stock).Error
+	if err := s.db.Delete(&stock).Error; err != nil {
+		return err
+	}
+
+	s.createVirtualInventoryLog(s.db, stock.VirtualInventoryID, models.InventoryLogTypeDelete, 1, stock.OrderNo, "", "admin", "Delete stock item")
+
+	return nil
 }
 
 // DeleteBatch 删除整个批次
 func (s *VirtualInventoryService) DeleteBatch(batchNo string) (int64, error) {
+	// 查找该批次对应的虚拟库存ID
+	var invID uint
+	s.db.Model(&models.VirtualProductStock{}).
+		Select("virtual_inventory_id").
+		Where("batch_no = ? AND status = ?", batchNo, models.VirtualStockStatusAvailable).
+		Limit(1).Pluck("virtual_inventory_id", &invID)
+
 	result := s.db.Where("batch_no = ? AND status = ?", batchNo, models.VirtualStockStatusAvailable).
 		Delete(&models.VirtualProductStock{})
 
 	if result.Error != nil {
 		return 0, result.Error
+	}
+
+	if result.RowsAffected > 0 && invID > 0 {
+		s.createVirtualInventoryLog(s.db, invID, models.InventoryLogTypeDelete, int(result.RowsAffected), "", batchNo, "admin", "Delete batch")
 	}
 
 	return result.RowsAffected, nil
@@ -594,9 +699,31 @@ func (s *VirtualInventoryService) GetProductBindings(productID uint) ([]models.B
 		return nil, err
 	}
 
+	inventoryIDSet := make(map[uint]struct{}, len(bindings))
+	inventoryIDs := make([]uint, 0, len(bindings))
+	for _, binding := range bindings {
+		if _, exists := inventoryIDSet[binding.VirtualInventoryID]; exists {
+			continue
+		}
+		inventoryIDSet[binding.VirtualInventoryID] = struct{}{}
+		inventoryIDs = append(inventoryIDs, binding.VirtualInventoryID)
+	}
+	statsByInventory, err := s.getStockStatsForInventories(inventoryIDs)
+	if err != nil {
+		return nil, err
+	}
+
 	var result []models.BindingWithVirtualInventoryInfo
 	for _, binding := range bindings {
-		stats, _ := s.GetStockStats(binding.VirtualInventoryID)
+		stats := statsByInventory[binding.VirtualInventoryID]
+		if stats == nil {
+			stats = map[string]int64{
+				"total":     0,
+				"available": 0,
+				"reserved":  0,
+				"sold":      0,
+			}
+		}
 
 		var invWithStats *models.VirtualInventoryWithStats
 		if binding.VirtualInventory != nil {
@@ -853,6 +980,8 @@ func (s *VirtualInventoryService) AllocateStockForProductByAttributes(productID 
 				continue
 			}
 
+			s.createVirtualInventoryLog(tx, binding.VirtualInventoryID, models.InventoryLogTypeReserve, len(stocks), orderNo, "", "system", "Reserve stock for order")
+
 			allocatedStocks = append(allocatedStocks, stocks...)
 			remainingQuantity -= len(stocks)
 		}
@@ -937,6 +1066,8 @@ func (s *VirtualInventoryService) AllocateStockFromInventory(virtualInventoryID 
 			}).Error; err != nil {
 			return err
 		}
+
+		s.createVirtualInventoryLog(tx, virtualInventoryID, models.InventoryLogTypeReserve, len(stocks), orderNo, "", "system", "Reserve stock for order (direct)")
 
 		allocatedStocks = stocks
 		return nil
@@ -1056,12 +1187,96 @@ func (s *VirtualInventoryService) GetAvailableCountForProductByAttributes(produc
 	return totalCount, nil
 }
 
+// HasUnlimitedScriptInventoryForProduct returns whether the product is backed by any
+// script virtual inventory without total_limit (i.e. unlimited stock).
+func (s *VirtualInventoryService) HasUnlimitedScriptInventoryForProduct(productID uint) (bool, error) {
+	bindings, err := s.GetProductBindings(productID)
+	if err != nil {
+		return false, err
+	}
+	for _, binding := range bindings {
+		var inv models.VirtualInventory
+		if err := s.db.Select("type, total_limit").First(&inv, binding.VirtualInventoryID).Error; err != nil {
+			continue
+		}
+		if inv.Type == models.VirtualInventoryTypeScript && inv.TotalLimit <= 0 {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// HasUnlimitedScriptInventoryForProductByAttributes returns whether the matched
+// virtual inventory set contains unlimited script inventory for the selected attributes.
+func (s *VirtualInventoryService) HasUnlimitedScriptInventoryForProductByAttributes(productID uint, attributes map[string]string) (bool, error) {
+	if len(attributes) == 0 {
+		return s.HasUnlimitedScriptInventoryForProduct(productID)
+	}
+
+	normalizedAttrs := models.NormalizeAttributes(attributes)
+	attrsHash := models.GenerateAttributesHash(normalizedAttrs)
+
+	var bindings []models.ProductVirtualInventoryBinding
+	if err := s.db.Where("product_id = ?", productID).Find(&bindings).Error; err != nil {
+		return false, err
+	}
+
+	// Exact match first.
+	for _, binding := range bindings {
+		if binding.AttributesHash != attrsHash {
+			continue
+		}
+		var inv models.VirtualInventory
+		if err := s.db.Select("type, total_limit").First(&inv, binding.VirtualInventoryID).Error; err != nil {
+			continue
+		}
+		if inv.Type == models.VirtualInventoryTypeScript && inv.TotalLimit <= 0 {
+			return true, nil
+		}
+		return false, nil
+	}
+
+	// Partial match (same behavior as stock calculation path).
+	inventoryMap := make(map[uint]bool)
+	for _, binding := range bindings {
+		if len(binding.Attributes) == 0 {
+			continue
+		}
+		isMatch := true
+		for userKey, userValue := range normalizedAttrs {
+			if bindingValue, exists := binding.Attributes[userKey]; !exists || bindingValue != userValue {
+				isMatch = false
+				break
+			}
+		}
+		if !isMatch || inventoryMap[binding.VirtualInventoryID] {
+			continue
+		}
+		inventoryMap[binding.VirtualInventoryID] = true
+
+		var inv models.VirtualInventory
+		if err := s.db.Select("type, total_limit").First(&inv, binding.VirtualInventoryID).Error; err != nil {
+			continue
+		}
+		if inv.Type == models.VirtualInventoryTypeScript && inv.TotalLimit <= 0 {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // DeliverStock 发货（将预留转为已售）
 func (s *VirtualInventoryService) DeliverStock(orderID uint, orderNo string, deliveredBy *uint) error {
 	// 先处理脚本类型的库存
 	if err := s.executeScriptDelivery(orderID, orderNo, nil, deliveredBy); err != nil {
 		return fmt.Errorf("script delivery failed: %w", err)
 	}
+
+	// 查询待发货的预留项（用于日志）
+	var reservedStocks []models.VirtualProductStock
+	s.db.Select("id, virtual_inventory_id").
+		Where("order_no = ? AND status = ?", orderNo, models.VirtualStockStatusReserved).
+		Find(&reservedStocks)
 
 	now := models.NowFunc()
 
@@ -1075,9 +1290,23 @@ func (s *VirtualInventoryService) DeliverStock(orderID uint, orderNo string, del
 		updates["delivered_by"] = *deliveredBy
 	}
 
-	return s.db.Model(&models.VirtualProductStock{}).
+	if err := s.db.Model(&models.VirtualProductStock{}).
 		Where("order_no = ? AND status = ?", orderNo, models.VirtualStockStatusReserved).
-		Updates(updates).Error
+		Updates(updates).Error; err != nil {
+		return err
+	}
+
+	// 按虚拟库存ID分组记录日志
+	invCounts := make(map[uint]int)
+	for _, stock := range reservedStocks {
+		invCounts[stock.VirtualInventoryID]++
+	}
+	operator := "system"
+	for invID, count := range invCounts {
+		s.createVirtualInventoryLog(s.db, invID, models.InventoryLogTypeDeliver, count, orderNo, "", operator, "Deliver stock")
+	}
+
+	return nil
 }
 
 // CanAutoDeliver 检查订单的所有预留虚拟库存是否都属于自动发货商品
@@ -1153,17 +1382,45 @@ func (s *VirtualInventoryService) CanAutoDeliver(orderNo string) (bool, error) {
 
 // DeliverAutoDeliveryStock 仅发货启用自动发货的商品库存
 func (s *VirtualInventoryService) DeliverAutoDeliveryStock(orderID uint, orderNo string, deliveredBy *uint) error {
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		return s.deliverAutoDeliveryStockWithDB(tx, orderID, orderNo, deliveredBy)
+	})
+}
+
+// DeliverAutoDeliveryStockWithTx 在外部事务中发货启用自动发货的商品库存
+func (s *VirtualInventoryService) DeliverAutoDeliveryStockWithTx(tx *gorm.DB, orderID uint, orderNo string, deliveredBy *uint) error {
+	if tx == nil {
+		return errors.New("transaction is required")
+	}
+	return s.deliverAutoDeliveryStockWithDB(tx, orderID, orderNo, deliveredBy)
+}
+
+func (s *VirtualInventoryService) deliverAutoDeliveryStockWithDB(db *gorm.DB, orderID uint, orderNo string, deliveredBy *uint) error {
 	// 构建自动发货库存ID过滤器（仅启用的库存）
-	autoDeliveryFilter := s.db.Table("product_virtual_inventory_bindings pvib").
-		Select("pvib.virtual_inventory_id").
+	autoDeliveryFilter := db.Table("product_virtual_inventory_bindings pvib").
+		Select("DISTINCT pvib.virtual_inventory_id AS virtual_inventory_id").
 		Joins("JOIN products p ON p.id = pvib.product_id").
 		Joins("JOIN virtual_inventories vi ON vi.id = pvib.virtual_inventory_id").
 		Where("p.auto_delivery = ? AND p.deleted_at IS NULL AND vi.is_active = ?", true, true)
 
 	// 只处理属于自动发货商品的脚本类型库存
-	if err := s.executeScriptDelivery(orderID, orderNo, autoDeliveryFilter, deliveredBy); err != nil {
+	if err := s.executeScriptDeliveryWithDB(db, orderID, orderNo, autoDeliveryFilter, deliveredBy); err != nil {
 		return fmt.Errorf("script delivery failed: %w", err)
 	}
+
+	// 子查询：找出所有绑定到 auto_delivery=true 且库存已启用的虚拟库存ID
+	subQuery := db.Table("product_virtual_inventory_bindings pvib").
+		Select("pvib.virtual_inventory_id").
+		Joins("JOIN products p ON p.id = pvib.product_id").
+		Joins("JOIN virtual_inventories vi ON vi.id = pvib.virtual_inventory_id").
+		Where("p.auto_delivery = ? AND p.deleted_at IS NULL AND vi.is_active = ?", true, true)
+
+	// 查询待发货的预留项（用于日志）
+	var reservedStocks []models.VirtualProductStock
+	db.Select("id, virtual_inventory_id").
+		Where("order_no = ? AND status = ? AND virtual_inventory_id IN (?)",
+			orderNo, models.VirtualStockStatusReserved, subQuery).
+		Find(&reservedStocks)
 
 	now := models.NowFunc()
 
@@ -1177,17 +1434,23 @@ func (s *VirtualInventoryService) DeliverAutoDeliveryStock(orderID uint, orderNo
 		updates["delivered_by"] = *deliveredBy
 	}
 
-	// 子查询：找出所有绑定到 auto_delivery=true 且库存已启用的虚拟库存ID
-	subQuery := s.db.Table("product_virtual_inventory_bindings pvib").
-		Select("pvib.virtual_inventory_id").
-		Joins("JOIN products p ON p.id = pvib.product_id").
-		Joins("JOIN virtual_inventories vi ON vi.id = pvib.virtual_inventory_id").
-		Where("p.auto_delivery = ? AND p.deleted_at IS NULL AND vi.is_active = ?", true, true)
-
-	return s.db.Model(&models.VirtualProductStock{}).
+	if err := db.Model(&models.VirtualProductStock{}).
 		Where("order_no = ? AND status = ? AND virtual_inventory_id IN (?)",
 			orderNo, models.VirtualStockStatusReserved, subQuery).
-		Updates(updates).Error
+		Updates(updates).Error; err != nil {
+		return err
+	}
+
+	// 按虚拟库存ID分组记录日志
+	invCounts := make(map[uint]int)
+	for _, stock := range reservedStocks {
+		invCounts[stock.VirtualInventoryID]++
+	}
+	for invID, count := range invCounts {
+		s.createVirtualInventoryLog(db, invID, models.InventoryLogTypeDeliver, count, orderNo, "", "system", "Auto deliver stock")
+	}
+
+	return nil
 }
 
 // HasPendingVirtualStock 检查订单是否还有待发货的虚拟库存
@@ -1216,12 +1479,16 @@ func (s *VirtualInventoryService) HasPendingVirtualStock(orderNo string) (bool, 
 // inventoryIDFilter: 可选的库存ID过滤子查询，为nil时处理所有脚本类型库存
 // deliveredBy: 发货操作人ID（可选）
 func (s *VirtualInventoryService) executeScriptDelivery(orderID uint, orderNo string, inventoryIDFilter *gorm.DB, deliveredBy *uint) error {
+	return s.executeScriptDeliveryWithDB(s.db, orderID, orderNo, inventoryIDFilter, deliveredBy)
+}
+
+func (s *VirtualInventoryService) executeScriptDeliveryWithDB(db *gorm.DB, orderID uint, orderNo string, inventoryIDFilter *gorm.DB, deliveredBy *uint) error {
 	// === 旧流程：处理已有占位记录（兼容旧订单） ===
-	scriptInvSubQuery := s.db.Table("virtual_inventories").
+	scriptInvSubQuery := db.Table("virtual_inventories").
 		Select("id").
 		Where("type = ?", models.VirtualInventoryTypeScript)
 
-	query := s.db.Where("order_no = ? AND status = ? AND virtual_inventory_id IN (?)",
+	query := db.Where("order_no = ? AND status = ? AND virtual_inventory_id IN (?)",
 		orderNo, models.VirtualStockStatusReserved, scriptInvSubQuery)
 
 	if inventoryIDFilter != nil {
@@ -1235,7 +1502,7 @@ func (s *VirtualInventoryService) executeScriptDelivery(orderID uint, orderNo st
 
 	// 获取订单信息
 	var order models.Order
-	if err := s.db.First(&order, orderID).Error; err != nil {
+	if err := db.First(&order, orderID).Error; err != nil {
 		return fmt.Errorf("order not found: %w", err)
 	}
 
@@ -1248,7 +1515,7 @@ func (s *VirtualInventoryService) executeScriptDelivery(orderID uint, orderNo st
 
 		for inventoryID, stocks := range grouped {
 			var inventory models.VirtualInventory
-			if err := s.db.First(&inventory, inventoryID).Error; err != nil {
+			if err := db.First(&inventory, inventoryID).Error; err != nil {
 				return fmt.Errorf("inventory %d not found: %w", inventoryID, err)
 			}
 
@@ -1269,7 +1536,7 @@ func (s *VirtualInventoryService) executeScriptDelivery(orderID uint, orderNo st
 					if result.Items[i].Remark != "" {
 						updates["remark"] = result.Items[i].Remark
 					}
-					if err := s.db.Model(&models.VirtualProductStock{}).
+					if err := db.Model(&models.VirtualProductStock{}).
 						Where("id = ?", stock.ID).
 						Updates(updates).Error; err != nil {
 						return fmt.Errorf("failed to update stock content: %w", err)
@@ -1280,7 +1547,7 @@ func (s *VirtualInventoryService) executeScriptDelivery(orderID uint, orderNo st
 	}
 
 	// === 新流程：处理 VirtualInventoryBindings（无占位记录） ===
-	pendingItems, err := s.getScriptPendingItems(orderNo)
+	pendingItems, err := s.getScriptPendingItemsWithDB(db, orderNo)
 	if err != nil || len(pendingItems) == 0 {
 		return err
 	}
@@ -1289,11 +1556,13 @@ func (s *VirtualInventoryService) executeScriptDelivery(orderID uint, orderNo st
 	var allowedInvIDs map[uint]bool
 	if inventoryIDFilter != nil {
 		var ids []uint
-		if err := s.db.Table("product_virtual_inventory_bindings").
-			Joins("JOIN products ON products.id = product_virtual_inventory_bindings.product_id").
-			Where("products.auto_delivery = ? AND products.deleted_at IS NULL", true).
-			Pluck("virtual_inventory_id", &ids).Error; err == nil && len(ids) > 0 {
-			allowedInvIDs = make(map[uint]bool)
+		if err := db.Table("(?) AS inventory_filter", inventoryIDFilter).
+			Select("DISTINCT inventory_filter.virtual_inventory_id").
+			Pluck("inventory_filter.virtual_inventory_id", &ids).Error; err != nil {
+			return fmt.Errorf("failed to resolve inventory filter: %w", err)
+		}
+		if len(ids) > 0 {
+			allowedInvIDs = make(map[uint]bool, len(ids))
 			for _, id := range ids {
 				allowedInvIDs[id] = true
 			}
@@ -1308,7 +1577,7 @@ func (s *VirtualInventoryService) executeScriptDelivery(orderID uint, orderNo st
 		}
 
 		var inventory models.VirtualInventory
-		if err := s.db.First(&inventory, item.InventoryID).Error; err != nil {
+		if err := db.First(&inventory, item.InventoryID).Error; err != nil {
 			return fmt.Errorf("inventory %d not found: %w", item.InventoryID, err)
 		}
 
@@ -1321,7 +1590,8 @@ func (s *VirtualInventoryService) executeScriptDelivery(orderID uint, orderNo st
 			return fmt.Errorf("script for inventory %d returned %d items, expected %d", item.InventoryID, len(result.Items), item.Quantity)
 		}
 
-		// 直接创建 sold 记录
+		// 直接批量创建 sold 记录
+		soldStocks := make([]models.VirtualProductStock, 0, item.Quantity)
 		for i := 0; i < item.Quantity; i++ {
 			stock := models.VirtualProductStock{
 				VirtualInventoryID: item.InventoryID,
@@ -1336,7 +1606,10 @@ func (s *VirtualInventoryService) executeScriptDelivery(orderID uint, orderNo st
 			if result.Items[i].Remark != "" {
 				stock.Remark = result.Items[i].Remark
 			}
-			if err := s.db.Create(&stock).Error; err != nil {
+			soldStocks = append(soldStocks, stock)
+		}
+		if len(soldStocks) > 0 {
+			if err := db.CreateInBatches(&soldStocks, 200).Error; err != nil {
 				return fmt.Errorf("failed to create sold stock: %w", err)
 			}
 		}
@@ -1349,6 +1622,12 @@ func (s *VirtualInventoryService) executeScriptDelivery(orderID uint, orderNo st
 // 脚本类型的库存项直接删除（无论content是否已填充），静态库存项恢复为可用
 func (s *VirtualInventoryService) ReleaseStock(orderNo string) error {
 	return s.db.Transaction(func(tx *gorm.DB) error {
+		// 查询所有预留项（用于日志）
+		var reservedStocks []models.VirtualProductStock
+		tx.Select("id, virtual_inventory_id").
+			Where("order_no = ? AND status = ?", orderNo, models.VirtualStockStatusReserved).
+			Find(&reservedStocks)
+
 		// 找出属于脚本类型库存的预留项并删除
 		scriptInvSubQuery := tx.Table("virtual_inventories").
 			Select("id").
@@ -1361,12 +1640,25 @@ func (s *VirtualInventoryService) ReleaseStock(orderNo string) error {
 		}
 
 		// 将静态库存项恢复为可用
-		return tx.Model(&models.VirtualProductStock{}).
+		if err := tx.Model(&models.VirtualProductStock{}).
 			Where("order_no = ? AND status = ?", orderNo, models.VirtualStockStatusReserved).
 			Updates(map[string]interface{}{
 				"status":   models.VirtualStockStatusAvailable,
 				"order_no": "",
-			}).Error
+			}).Error; err != nil {
+			return err
+		}
+
+		// 按虚拟库存ID分组记录日志
+		invCounts := make(map[uint]int)
+		for _, stock := range reservedStocks {
+			invCounts[stock.VirtualInventoryID]++
+		}
+		for invID, count := range invCounts {
+			s.createVirtualInventoryLog(tx, invID, models.InventoryLogTypeRelease, count, orderNo, "", "system", "Release stock on order cancellation")
+		}
+
+		return nil
 	})
 }
 
@@ -1389,7 +1681,13 @@ func (s *VirtualInventoryService) ManualReserveStock(stockID uint, remark string
 		updates["remark"] = remark
 	}
 
-	return s.db.Model(&stock).Updates(updates).Error
+	if err := s.db.Model(&stock).Updates(updates).Error; err != nil {
+		return err
+	}
+
+	s.createVirtualInventoryLog(s.db, stock.VirtualInventoryID, models.InventoryLogTypeReserve, 1, "MANUAL-RESERVE", "", "admin", "Manual reserve stock")
+
+	return nil
 }
 
 // ManualReleaseStock 手动释放单个库存项
@@ -1403,10 +1701,16 @@ func (s *VirtualInventoryService) ManualReleaseStock(stockID uint) error {
 		return errors.New("stock item is not reserved")
 	}
 
-	return s.db.Model(&stock).Updates(map[string]interface{}{
+	if err := s.db.Model(&stock).Updates(map[string]interface{}{
 		"status":   models.VirtualStockStatusAvailable,
 		"order_no": "",
-	}).Error
+	}).Error; err != nil {
+		return err
+	}
+
+	s.createVirtualInventoryLog(s.db, stock.VirtualInventoryID, models.InventoryLogTypeRelease, 1, "", "", "admin", "Manual release stock")
+
+	return nil
 }
 
 // GetStockByOrderID 获取订单的虚拟产品库存
@@ -1477,14 +1781,13 @@ func (s *VirtualInventoryService) GetStockStatsForProduct(productID uint) (map[s
 	}
 
 	for _, binding := range bindings {
-		invStats, err := s.GetStockStats(binding.VirtualInventoryID)
-		if err != nil {
+		if binding.VirtualInventory == nil {
 			continue
 		}
-		stats["total"] += invStats["total"]
-		stats["available"] += invStats["available"]
-		stats["reserved"] += invStats["reserved"]
-		stats["sold"] += invStats["sold"]
+		stats["total"] += binding.VirtualInventory.Total
+		stats["available"] += binding.VirtualInventory.Available
+		stats["reserved"] += binding.VirtualInventory.Reserved
+		stats["sold"] += binding.VirtualInventory.Sold
 	}
 
 	return stats, nil
@@ -1805,7 +2108,7 @@ func (s *VirtualInventoryService) TestDeliveryScript(script string, config map[s
 	testOrder := &models.Order{
 		OrderNo:     "TEST-ORDER-001",
 		Status:      models.OrderStatusPendingPayment,
-		TotalAmount: 99.99,
+		TotalAmount: 9999,
 		Currency:    "CNY",
 	}
 

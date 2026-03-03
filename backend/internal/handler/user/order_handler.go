@@ -11,15 +11,16 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"auralogic/internal/config"
 	"auralogic/internal/middleware"
 	"auralogic/internal/models"
 	"auralogic/internal/pkg/bizerr"
 	"auralogic/internal/pkg/cache"
+	"auralogic/internal/pkg/money"
 	"auralogic/internal/pkg/response"
 	"auralogic/internal/pkg/validator"
 	"auralogic/internal/service"
+	"github.com/gin-gonic/gin"
 )
 
 type OrderHandler struct {
@@ -223,7 +224,7 @@ func (h *OrderHandler) GetOrder(c *gin.Context) {
 		"form_submitted_at":           order.FormSubmittedAt,
 		"user_email":                  order.UserEmail,
 		"email_notifications_enabled": order.EmailNotificationsEnabled,
-		"total_amount":                order.TotalAmount,
+		"total_amount_minor":          order.TotalAmount,
 		"currency":                    order.Currency,
 		"remark":                      order.Remark,
 		"created_at":                  order.CreatedAt,
@@ -369,6 +370,13 @@ func (h *OrderHandler) GetVirtualProducts(c *gin.Context) {
 		return
 	}
 
+	// 根据配置决定是否向用户展示虚拟产品备注
+	if !h.cfg.Order.ShowVirtualStockRemark {
+		for i := range stocks {
+			stocks[i].Remark = ""
+		}
+	}
+
 	response.Success(c, gin.H{
 		"stocks": stocks,
 	})
@@ -394,15 +402,9 @@ func currencySymbol(code string) string {
 }
 
 // formatAmount 格式化金额
-func formatAmount(amount float64, currency string) string {
+func formatAmount(amount int64, currency string) string {
 	sym := currencySymbol(currency)
-	// JPY/KRW 等无小数货币
-	switch strings.ToUpper(currency) {
-	case "JPY", "KRW", "VND", "IDR":
-		return fmt.Sprintf("%s%.0f", sym, amount)
-	default:
-		return fmt.Sprintf("%s%.2f", sym, amount)
-	}
+	return sym + money.MinorToString(amount)
 }
 
 // invoiceItem 账单行项目
@@ -441,9 +443,9 @@ type invoiceData struct {
 	TotalAmount    string
 	Currency       string
 	// 系统
-	AppName        string
-	PrintBtnText   string
-	CloseBtnText   string
+	AppName      string
+	PrintBtnText string
+	CloseBtnText string
 }
 
 // DownloadInvoice 生成并返回订单账单 HTML

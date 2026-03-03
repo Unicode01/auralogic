@@ -1,6 +1,7 @@
 package models
 
 import (
+	"encoding/json"
 	"time"
 
 	"gorm.io/gorm"
@@ -86,13 +87,13 @@ type Order struct {
 	EmailNotificationsEnabled bool   `gorm:"default:true" json:"email_notifications_enabled"`
 
 	// 优惠码
-	PromoCodeID  *uint   `gorm:"index" json:"promo_code_id,omitempty"`
-	PromoCodeStr string  `gorm:"type:varchar(50)" json:"promo_code,omitempty"`
-	DiscountAmount float64 `gorm:"type:decimal(10,2);default:0" json:"discount_amount"`
+	PromoCodeID    *uint  `gorm:"index" json:"promo_code_id,omitempty"`
+	PromoCodeStr   string `gorm:"type:varchar(50)" json:"promo_code,omitempty"`
+	DiscountAmount int64  `gorm:"type:bigint;default:0" json:"-"`
 
 	// 金额
-	TotalAmount float64 `gorm:"type:decimal(10,2);default:0" json:"total_amount"`
-	Currency    string  `gorm:"type:varchar(10);default:'CNY'" json:"currency"`
+	TotalAmount int64  `gorm:"type:bigint;default:0" json:"-"`
+	Currency    string `gorm:"type:varchar(10);default:'CNY'" json:"currency"`
 
 	// 备注
 	Remark      string `gorm:"type:text" json:"remark,omitempty"`
@@ -117,6 +118,19 @@ type Order struct {
 // TableName 指定表名
 func (Order) TableName() string {
 	return "orders"
+}
+
+func (o Order) MarshalJSON() ([]byte, error) {
+	type Alias Order
+	return json.Marshal(&struct {
+		Alias
+		TotalAmountMinor    int64 `json:"total_amount_minor"`
+		DiscountAmountMinor int64 `json:"discount_amount_minor"`
+	}{
+		Alias:               Alias(o),
+		TotalAmountMinor:    o.TotalAmount,
+		DiscountAmountMinor: o.DiscountAmount,
+	})
 }
 
 // MaskSensitiveInfo 打码敏感Info

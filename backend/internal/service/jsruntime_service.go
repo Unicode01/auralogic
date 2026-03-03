@@ -11,17 +11,18 @@ import (
 	"image/color"
 	"io"
 	"log"
+	"math"
 	"net"
 	"net/http"
 	"net/netip"
 	"net/url"
-	"os"
-	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"auralogic/internal/models"
+	"auralogic/internal/pkg/money"
 
 	"github.com/dop251/goja"
 	"github.com/google/uuid"
@@ -29,15 +30,16 @@ import (
 	"gorm.io/gorm"
 )
 
-// paymentStorageDir 付款方式存储目录
-const paymentStorageDir = "storage/payments"
-
 // Block SSRF to internal networks from payment scripts by default.
 // If a deployment needs access to internal services, it should be implemented
 // explicitly with allowlists rather than enabling broad network access here.
 func newPaymentHTTPClient() *http.Client {
 	transport := &http.Transport{
-		Proxy: http.ProxyFromEnvironment,
+		Proxy:               http.ProxyFromEnvironment,
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 20,
+		IdleConnTimeout:     90 * time.Second,
+		TLSHandshakeTimeout: 10 * time.Second,
 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 			host, port, err := net.SplitHostPort(addr)
 			if err != nil {
@@ -138,78 +140,35 @@ func isBlockedIP(ip netip.Addr) bool {
 		ip.IsUnspecified()
 }
 
-// paymentStorageMutex 文件操作锁（按付款方式ID隔离）
-var (
-	paymentStorageLocks = make(map[uint]*sync.RWMutex)
-	paymentLocksLock    sync.Mutex
-)
-
-// getPaymentStorageLock 获取付款方式的存储锁
-func getPaymentStorageLock(paymentMethodID uint) *sync.RWMutex {
-	paymentLocksLock.Lock()
-	defer paymentLocksLock.Unlock()
-
-	if lock, ok := paymentStorageLocks[paymentMethodID]; ok {
-		return lock
-	}
-	lock := &sync.RWMutex{}
-	paymentStorageLocks[paymentMethodID] = lock
-	return lock
-}
-
-// getStorageFilePath 获取付款方式的存储文件路径
-func getStorageFilePath(paymentMethodID uint) string {
-	return filepath.Join(paymentStorageDir, fmt.Sprintf("%d.json", paymentMethodID))
-}
-
-// readPaymentStorageUnsafe 读取付款方式存储（调用者必须持有锁）
-func readPaymentStorageUnsafe(paymentMethodID uint) (map[string]string, error) {
-	filePath := getStorageFilePath(paymentMethodID)
-	data, err := os.ReadFile(filePath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return make(map[string]string), nil
-		}
-		return nil, err
-	}
-
-	var storage map[string]string
-	if err := json.Unmarshal(data, &storage); err != nil {
-		return make(map[string]string), nil
-	}
-	return storage, nil
-}
-
-// writePaymentStorageUnsafe 写入付款方式存储（调用者必须持有写锁）
-func writePaymentStorageUnsafe(paymentMethodID uint, storage map[string]string) error {
-	// 确保目录存在
-	if err := os.MkdirAll(paymentStorageDir, 0755); err != nil {
-		return err
-	}
-
-	data, err := json.MarshalIndent(storage, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	filePath := getStorageFilePath(paymentMethodID)
-
-	// 先写入临时文件，再原子重命名，防止写入中断导致数据损坏
-	tempPath := filePath + ".tmp"
-	if err := os.WriteFile(tempPath, data, 0644); err != nil {
-		return err
-	}
-	return os.Rename(tempPath, filePath)
-}
-
 // JSRuntimeService JS运行时服务
 type JSRuntimeService struct {
-	db *gorm.DB
+	db              *gorm.DB
+	moneyMinorUnits bool
 }
 
 // NewJSRuntimeService 创建JS运行时服务
 func NewJSRuntimeService(db *gorm.DB) *JSRuntimeService {
-	return &JSRuntimeService{db: db}
+	svc := &JSRuntimeService{db: db}
+	svc.moneyMinorUnits = svc.detectMoneyMinorUnits()
+	svc.ensurePaymentStorageMigrated()
+	return svc
+}
+
+func (s *JSRuntimeService) detectMoneyMinorUnits() bool {
+	if s == nil || s.db == nil {
+		return true
+	}
+	if !s.db.Migrator().HasTable("system_migrations") {
+		return false
+	}
+
+	var count int64
+	if err := s.db.Table("system_migrations").
+		Where("name = ?", "money_minor_units_v1").
+		Count(&count).Error; err != nil {
+		return true
+	}
+	return count > 0
 }
 
 // JSContext JS执行上下文
@@ -218,6 +177,25 @@ type JSContext struct {
 	OrderID         uint
 	Order           *models.Order
 	DB              *gorm.DB
+	TestStorage     map[string]string
+}
+
+func (s *JSRuntimeService) newJSContext(pmID uint, order *models.Order) *JSContext {
+	ctx := &JSContext{
+		PaymentMethodID: pmID,
+		OrderID:         0,
+		Order:           order,
+		DB:              s.db,
+	}
+	if order != nil {
+		ctx.OrderID = order.ID
+	}
+	// Payment method ID=0 is used by script test path (not persisted).
+	// Keep storage in-memory to avoid polluting DB with PM=0 rows.
+	if pmID == 0 {
+		ctx.TestStorage = make(map[string]string)
+	}
+	return ctx
 }
 
 // PaymentCardResult 付款卡片结果
@@ -236,12 +214,7 @@ func (s *JSRuntimeService) ExecutePaymentCard(pm *models.PaymentMethod, order *m
 	}
 
 	vm := goja.New()
-	ctx := &JSContext{
-		PaymentMethodID: pm.ID,
-		OrderID:         order.ID,
-		Order:           order,
-		DB:              s.db,
-	}
+	ctx := s.newJSContext(pm.ID, order)
 
 	// 设置超时
 	timer := time.AfterFunc(5*time.Second, func() {
@@ -253,7 +226,11 @@ func (s *JSRuntimeService) ExecutePaymentCard(pm *models.PaymentMethod, order *m
 	s.registerAPIs(vm, ctx, pm)
 
 	// 执行脚本
-	_, err := vm.RunString(pm.Script)
+	program, err := getOrCompileJSProgram("payment_method", pm.Script)
+	if err != nil {
+		return nil, fmt.Errorf("script compile error: %w", err)
+	}
+	_, err = vm.RunProgram(program)
 	if err != nil {
 		return nil, fmt.Errorf("script execution error: %w", err)
 	}
@@ -282,10 +259,10 @@ func (s *JSRuntimeService) generateDefaultCard(pm *models.PaymentMethod, order *
 	html := fmt.Sprintf(`
 		<div class="text-sm text-muted-foreground">
 			<p>%s</p>
-			<p class="mt-2">Amount: <span class="font-bold text-primary">%s %.2f</span></p>
+			<p class="mt-2">Amount: <span class="font-bold text-primary">%s %s</span></p>
 			<p class="mt-1">Order No: <code class="bg-muted px-1 rounded">%s</code></p>
 		</div>
-	`, pm.Description, order.Currency, order.TotalAmount, order.OrderNo)
+	`, pm.Description, order.Currency, money.MinorToString(order.TotalAmount), order.OrderNo)
 
 	return &PaymentCardResult{
 		HTML:        html,
@@ -320,7 +297,7 @@ func (s *JSRuntimeService) registerAPIs(vm *goja.Runtime, ctx *JSContext, pm *mo
 	// 工具API
 	utils := vm.NewObject()
 	auralogic.Set("utils", utils)
-	utils.Set("formatPrice", s.createFormatPrice(vm))
+	utils.Set("formatPrice", s.createFormatPrice(vm, ctx))
 	utils.Set("formatDate", s.createFormatDate(vm))
 	utils.Set("generateId", s.createGenerateId(vm))
 	utils.Set("md5", s.createMD5(vm))
@@ -349,24 +326,32 @@ func (s *JSRuntimeService) registerAPIs(vm *goja.Runtime, ctx *JSContext, pm *mo
 	system.Set("getPaymentMethodInfo", s.createGetPaymentMethodInfo(vm, pm))
 }
 
-// Storage APIs - 本地文件存储（按付款方式隔离）
+// Storage APIs - 按付款方式隔离的持久化 KV 存储
 func (s *JSRuntimeService) createStorageGet(vm *goja.Runtime, ctx *JSContext) func(call goja.FunctionCall) goja.Value {
 	return func(call goja.FunctionCall) goja.Value {
 		if len(call.Arguments) < 1 {
 			return goja.Undefined()
 		}
 		key := call.Arguments[0].String()
+		if ctx != nil && ctx.PaymentMethodID == 0 {
+			if ctx.TestStorage == nil {
+				return goja.Undefined()
+			}
+			if val, ok := ctx.TestStorage[key]; ok {
+				return vm.ToValue(val)
+			}
+			return goja.Undefined()
+		}
 
 		lock := getPaymentStorageLock(ctx.PaymentMethodID)
 		lock.RLock()
 		defer lock.RUnlock()
 
-		storage, err := readPaymentStorageUnsafe(ctx.PaymentMethodID)
+		value, exists, err := s.storageGetValue(ctx.PaymentMethodID, key)
 		if err != nil {
 			return goja.Undefined()
 		}
-
-		if value, exists := storage[key]; exists {
+		if exists {
 			return vm.ToValue(value)
 		}
 		return goja.Undefined()
@@ -380,15 +365,19 @@ func (s *JSRuntimeService) createStorageSet(vm *goja.Runtime, ctx *JSContext) fu
 		}
 		key := call.Arguments[0].String()
 		value := call.Arguments[1].String()
+		if ctx != nil && ctx.PaymentMethodID == 0 {
+			if ctx.TestStorage == nil {
+				ctx.TestStorage = make(map[string]string)
+			}
+			ctx.TestStorage[key] = value
+			return vm.ToValue(true)
+		}
 
 		lock := getPaymentStorageLock(ctx.PaymentMethodID)
 		lock.Lock()
 		defer lock.Unlock()
 
-		storage, _ := readPaymentStorageUnsafe(ctx.PaymentMethodID)
-		storage[key] = value
-
-		if err := writePaymentStorageUnsafe(ctx.PaymentMethodID, storage); err != nil {
+		if err := s.storageSetValue(ctx.PaymentMethodID, key, value); err != nil {
 			return vm.ToValue(false)
 		}
 		return vm.ToValue(true)
@@ -401,15 +390,19 @@ func (s *JSRuntimeService) createStorageDelete(vm *goja.Runtime, ctx *JSContext)
 			return vm.ToValue(false)
 		}
 		key := call.Arguments[0].String()
+		if ctx != nil && ctx.PaymentMethodID == 0 {
+			if ctx.TestStorage == nil {
+				return vm.ToValue(true)
+			}
+			delete(ctx.TestStorage, key)
+			return vm.ToValue(true)
+		}
 
 		lock := getPaymentStorageLock(ctx.PaymentMethodID)
 		lock.Lock()
 		defer lock.Unlock()
 
-		storage, _ := readPaymentStorageUnsafe(ctx.PaymentMethodID)
-		delete(storage, key)
-
-		if err := writePaymentStorageUnsafe(ctx.PaymentMethodID, storage); err != nil {
+		if err := s.storageDeleteKey(ctx.PaymentMethodID, key); err != nil {
 			return vm.ToValue(false)
 		}
 		return vm.ToValue(true)
@@ -419,18 +412,22 @@ func (s *JSRuntimeService) createStorageDelete(vm *goja.Runtime, ctx *JSContext)
 // createStorageList 列出当前付款方式的所有存储键
 func (s *JSRuntimeService) createStorageList(vm *goja.Runtime, ctx *JSContext) func(call goja.FunctionCall) goja.Value {
 	return func(call goja.FunctionCall) goja.Value {
+		if ctx != nil && ctx.PaymentMethodID == 0 {
+			keys := make([]string, 0, len(ctx.TestStorage))
+			for k := range ctx.TestStorage {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			return vm.ToValue(keys)
+		}
+
 		lock := getPaymentStorageLock(ctx.PaymentMethodID)
 		lock.RLock()
 		defer lock.RUnlock()
 
-		storage, err := readPaymentStorageUnsafe(ctx.PaymentMethodID)
+		keys, err := s.storageListKeys(ctx.PaymentMethodID)
 		if err != nil {
 			return vm.ToValue([]string{})
-		}
-
-		keys := make([]string, 0, len(storage))
-		for key := range storage {
-			keys = append(keys, key)
 		}
 		return vm.ToValue(keys)
 	}
@@ -439,12 +436,16 @@ func (s *JSRuntimeService) createStorageList(vm *goja.Runtime, ctx *JSContext) f
 // createStorageClear 清除当前付款方式的所有存储
 func (s *JSRuntimeService) createStorageClear(vm *goja.Runtime, ctx *JSContext) func(call goja.FunctionCall) goja.Value {
 	return func(call goja.FunctionCall) goja.Value {
+		if ctx != nil && ctx.PaymentMethodID == 0 {
+			ctx.TestStorage = make(map[string]string)
+			return vm.ToValue(true)
+		}
+
 		lock := getPaymentStorageLock(ctx.PaymentMethodID)
 		lock.Lock()
 		defer lock.Unlock()
 
-		filePath := getStorageFilePath(ctx.PaymentMethodID)
-		if err := os.Remove(filePath); err != nil && !os.IsNotExist(err) {
+		if err := s.storageClearAll(ctx.PaymentMethodID); err != nil {
 			return vm.ToValue(false)
 		}
 		return vm.ToValue(true)
@@ -482,15 +483,50 @@ func (s *JSRuntimeService) createOrderUpdatePaymentData(vm *goja.Runtime, ctx *J
 }
 
 // Utils APIs
-func (s *JSRuntimeService) createFormatPrice(vm *goja.Runtime) func(call goja.FunctionCall) goja.Value {
+func (s *JSRuntimeService) createFormatPrice(vm *goja.Runtime, ctx *JSContext) func(call goja.FunctionCall) goja.Value {
 	return func(call goja.FunctionCall) goja.Value {
 		if len(call.Arguments) < 1 {
 			return vm.ToValue("")
 		}
-		amount := call.Arguments[0].ToFloat()
+		amountArg := call.Arguments[0].Export()
+		orderTotalMinor, orderDiscountMinor, hasOrderAmount := s.contextOrderAmountsMinor(ctx)
 		currency := "CNY"
 		if len(call.Arguments) > 1 {
 			currency = call.Arguments[1].String()
+		}
+		var amountMinor int64
+		switch v := amountArg.(type) {
+		case int64:
+			amountMinor = resolveScriptIntegerAmount(v, hasOrderAmount, orderTotalMinor, orderDiscountMinor)
+		case int32:
+			amountMinor = resolveScriptIntegerAmount(int64(v), hasOrderAmount, orderTotalMinor, orderDiscountMinor)
+		case int:
+			amountMinor = resolveScriptIntegerAmount(int64(v), hasOrderAmount, orderTotalMinor, orderDiscountMinor)
+		case uint64:
+			amountMinor = resolveScriptIntegerAmount(int64(v), hasOrderAmount, orderTotalMinor, orderDiscountMinor)
+		case uint32:
+			amountMinor = resolveScriptIntegerAmount(int64(v), hasOrderAmount, orderTotalMinor, orderDiscountMinor)
+		case uint:
+			amountMinor = resolveScriptIntegerAmount(int64(v), hasOrderAmount, orderTotalMinor, orderDiscountMinor)
+		case float64:
+			// Backward compatibility: legacy scripts usually pass major-unit amounts
+			// through order.total_amount. New scripts should pass int minor units.
+			if matchedMinor, matched := resolveScriptFloatAmount(v, hasOrderAmount, orderTotalMinor, orderDiscountMinor); matched {
+				amountMinor = matchedMinor
+			} else {
+				amountMinor = int64(math.Round(v * float64(money.CurrencyScale)))
+			}
+		case float32:
+			floatVal := float64(v)
+			if matchedMinor, matched := resolveScriptFloatAmount(floatVal, hasOrderAmount, orderTotalMinor, orderDiscountMinor); matched {
+				amountMinor = matchedMinor
+			} else {
+				amountMinor = int64(math.Round(floatVal * float64(money.CurrencyScale)))
+			}
+		case string:
+			amountMinor = parseScriptAmountToMinor(v, hasOrderAmount, orderTotalMinor, orderDiscountMinor)
+		default:
+			amountMinor = resolveScriptIntegerAmount(call.Arguments[0].ToInteger(), hasOrderAmount, orderTotalMinor, orderDiscountMinor)
 		}
 
 		symbols := map[string]string{
@@ -500,8 +536,98 @@ func (s *JSRuntimeService) createFormatPrice(vm *goja.Runtime) func(call goja.Fu
 		if symbol == "" {
 			symbol = currency + " "
 		}
-		return vm.ToValue(fmt.Sprintf("%s%.2f", symbol, amount))
+		return vm.ToValue(symbol + money.MinorToString(amountMinor))
 	}
+}
+
+func (s *JSRuntimeService) contextOrderAmountsMinor(ctx *JSContext) (int64, int64, bool) {
+	if ctx == nil || ctx.Order == nil {
+		return 0, 0, false
+	}
+
+	totalMinor := ctx.Order.TotalAmount
+	discountMinor := ctx.Order.DiscountAmount
+	if !s.moneyMinorUnits {
+		totalMinor = ctx.Order.TotalAmount * money.CurrencyScale
+		discountMinor = ctx.Order.DiscountAmount * money.CurrencyScale
+	}
+	return totalMinor, discountMinor, true
+}
+
+func resolveScriptFloatAmount(raw float64, hasOrderAmount bool, orderTotalMinor, orderDiscountMinor int64) (int64, bool) {
+	if !hasOrderAmount {
+		return 0, false
+	}
+	if matchedMinor, matched := matchFloatToOrderAmount(raw, orderTotalMinor); matched {
+		return matchedMinor, true
+	}
+	if matchedMinor, matched := matchFloatToOrderAmount(raw, orderDiscountMinor); matched {
+		return matchedMinor, true
+	}
+	return 0, false
+}
+
+func matchFloatToOrderAmount(raw float64, orderMinor int64) (int64, bool) {
+	const epsilon = 1e-9
+
+	// Explicit minor-unit match (e.g. formatPrice(order.total_amount_minor)).
+	if math.Abs(raw-float64(orderMinor)) < epsilon {
+		return orderMinor, true
+	}
+
+	// Legacy major-unit match (e.g. formatPrice(order.total_amount)).
+	orderMajor := float64(orderMinor) / float64(money.CurrencyScale)
+	if math.Abs(raw-orderMajor) < epsilon {
+		return int64(math.Round(raw * float64(money.CurrencyScale))), true
+	}
+	return 0, false
+}
+
+func resolveScriptIntegerAmount(raw int64, hasOrderAmount bool, orderTotalMinor, orderDiscountMinor int64) int64 {
+	if !hasOrderAmount {
+		return raw
+	}
+
+	// Prefer explicit minor-unit fields when matched.
+	if raw == orderTotalMinor || raw == orderDiscountMinor {
+		return raw
+	}
+
+	// Backward compatibility for legacy major-unit fields (whole numbers).
+	if isIntegerMajorAlias(raw, orderTotalMinor) || isIntegerMajorAlias(raw, orderDiscountMinor) {
+		return raw * money.CurrencyScale
+	}
+
+	// Default to minor units for int inputs on the new API contract.
+	return raw
+}
+
+func isIntegerMajorAlias(raw, orderMinor int64) bool {
+	if orderMinor%money.CurrencyScale != 0 {
+		return false
+	}
+	return raw == orderMinor/money.CurrencyScale
+}
+
+func parseScriptAmountToMinor(raw string, hasOrderAmount bool, orderTotalMinor, orderDiscountMinor int64) int64 {
+	v := strings.TrimSpace(raw)
+	if v == "" {
+		return 0
+	}
+
+	if strings.Contains(v, ".") {
+		major, err := strconv.ParseFloat(v, 64)
+		if err != nil {
+			return 0
+		}
+		return int64(math.Round(major * float64(money.CurrencyScale)))
+	}
+
+	minor, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		return 0
+	}
+	return resolveScriptIntegerAmount(minor, hasOrderAmount, orderTotalMinor, orderDiscountMinor)
 }
 
 // Config API
@@ -673,7 +799,7 @@ func (s *JSRuntimeService) doHTTPRequest(vm *goja.Runtime, method, urlStr string
 		})
 	}
 
-	client := newPaymentHTTPClient()
+	client := getPaymentHTTPClient()
 
 	// 准备请求体
 	var reqBody io.Reader
@@ -793,13 +919,24 @@ func (s *JSRuntimeService) doHTTPRequest(vm *goja.Runtime, method, urlStr string
 
 // Helper functions
 func (s *JSRuntimeService) orderToJS(order *models.Order) map[string]interface{} {
+	totalAmountMinor := order.TotalAmount
+	discountAmountMinor := order.DiscountAmount
+	if !s.moneyMinorUnits {
+		totalAmountMinor = order.TotalAmount * money.CurrencyScale
+		discountAmountMinor = order.DiscountAmount * money.CurrencyScale
+	}
+
 	return map[string]interface{}{
-		"id":           order.ID,
-		"order_no":     order.OrderNo,
-		"status":       order.Status,
-		"total_amount": order.TotalAmount,
-		"currency":     order.Currency,
-		"created_at":   order.CreatedAt.Format(time.RFC3339),
+		"id":                    order.ID,
+		"order_no":              order.OrderNo,
+		"status":                order.Status,
+		"total_amount_minor":    totalAmountMinor,
+		"discount_amount_minor": discountAmountMinor,
+		// Legacy aliases for old built-in/custom scripts that still read major-unit fields.
+		"total_amount":    float64(totalAmountMinor) / float64(money.CurrencyScale),
+		"discount_amount": float64(discountAmountMinor) / float64(money.CurrencyScale),
+		"currency":        order.Currency,
+		"created_at":      order.CreatedAt.Format(time.RFC3339),
 	}
 }
 
@@ -866,12 +1003,7 @@ func (s *JSRuntimeService) CheckPaymentStatus(pm *models.PaymentMethod, order *m
 	}
 
 	vm := goja.New()
-	ctx := &JSContext{
-		PaymentMethodID: pm.ID,
-		OrderID:         order.ID,
-		Order:           order,
-		DB:              s.db,
-	}
+	ctx := s.newJSContext(pm.ID, order)
 
 	// 设置超时
 	timer := time.AfterFunc(10*time.Second, func() {
@@ -883,7 +1015,11 @@ func (s *JSRuntimeService) CheckPaymentStatus(pm *models.PaymentMethod, order *m
 	s.registerAPIs(vm, ctx, pm)
 
 	// 执行脚本
-	_, err := vm.RunString(pm.Script)
+	program, err := getOrCompileJSProgram("payment_method", pm.Script)
+	if err != nil {
+		return nil, fmt.Errorf("script compile error: %w", err)
+	}
+	_, err = vm.RunProgram(program)
 	if err != nil {
 		return nil, fmt.Errorf("script execution error: %w", err)
 	}
@@ -961,20 +1097,20 @@ func (s *JSRuntimeService) ExecuteRefund(pm *models.PaymentMethod, order *models
 	}
 
 	vm := goja.New()
-	ctx := &JSContext{
-		PaymentMethodID: pm.ID,
-		OrderID:         order.ID,
-		Order:           order,
-		DB:              s.db,
-	}
+	ctx := s.newJSContext(pm.ID, order)
 
-	time.AfterFunc(10*time.Second, func() {
+	timer := time.AfterFunc(10*time.Second, func() {
 		vm.Interrupt("execution timeout")
 	})
+	defer timer.Stop()
 
 	s.registerAPIs(vm, ctx, pm)
 
-	_, err := vm.RunString(pm.Script)
+	program, err := getOrCompileJSProgram("payment_method", pm.Script)
+	if err != nil {
+		return nil, fmt.Errorf("script compile error: %w", err)
+	}
+	_, err = vm.RunProgram(program)
 	if err != nil {
 		return nil, fmt.Errorf("script execution error: %w", err)
 	}
@@ -1053,12 +1189,12 @@ func (s *JSRuntimeService) createOrderGetItems(vm *goja.Runtime, ctx *JSContext)
 // createOrderGetUser 获取订单用户信息
 func (s *JSRuntimeService) createOrderGetUser(vm *goja.Runtime, ctx *JSContext) func(call goja.FunctionCall) goja.Value {
 	return func(call goja.FunctionCall) goja.Value {
-		if ctx.Order == nil {
+		if ctx.Order == nil || ctx.Order.UserID == nil {
 			return goja.Undefined()
 		}
 
 		var user models.User
-		if err := s.db.First(&user, ctx.Order.UserID).Error; err != nil {
+		if err := s.db.First(&user, *ctx.Order.UserID).Error; err != nil {
 			return goja.Undefined()
 		}
 

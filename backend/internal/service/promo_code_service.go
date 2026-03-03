@@ -83,7 +83,7 @@ func (s *PromoCodeService) Delete(id uint) error {
 }
 
 // ValidateCode 验证优惠码是否可用于指定商品
-func (s *PromoCodeService) ValidateCode(code string, productIDs []uint, orderAmount float64) (*models.PromoCode, float64, error) {
+func (s *PromoCodeService) ValidateCode(code string, productIDs []uint, orderAmount int64) (*models.PromoCode, int64, error) {
 	code = strings.ToUpper(strings.TrimSpace(code))
 	promoCode, err := s.repo.FindByCode(code)
 	if err != nil {

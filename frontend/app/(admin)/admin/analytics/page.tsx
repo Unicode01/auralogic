@@ -78,7 +78,6 @@ export default function AnalyticsPage() {
   })
 
   if (!isSuper) {
-    router.push('/admin/orders')
     return null
   }
 

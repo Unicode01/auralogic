@@ -366,6 +366,7 @@ export default function SettingsPage() {
   const [captchaProvider, setCaptchaProvider] = useState('none')
   const [smsProvider, setSmsProvider] = useState('aliyun')
   const [invoiceEnabled, setInvoiceEnabled] = useState(false)
+  const [showVirtualStockRemark, setShowVirtualStockRemark] = useState(false)
   const [invoiceTemplateType, setInvoiceTemplateType] = useState('builtin')
   const [invoiceCustomTemplate, setInvoiceCustomTemplate] = useState('')
   const queryClient = useQueryClient()
@@ -382,11 +383,34 @@ export default function SettingsPage() {
 
   const updateMutation = useMutation({
     mutationFn: updateSettings,
-    onSuccess: () => {
-      toast.success(t.admin.settingsSaved)
+    onSuccess: (res: any) => {
+      const maintenanceMessages: string[] = []
+      if (typeof res?.data?.payment_card_cache_cleared === 'number') {
+        maintenanceMessages.push(`${t.admin.paymentCacheCleared}: ${res.data.payment_card_cache_cleared}`)
+      }
+      if (typeof res?.data?.js_program_cache_cleared === 'number') {
+        maintenanceMessages.push(`${t.admin.jsProgramCacheCleared}: ${res.data.js_program_cache_cleared}`)
+      }
+      if (typeof res?.data?.permission_cache_cleared === 'number') {
+        maintenanceMessages.push(`${t.admin.permissionCacheCleared}: ${res.data.permission_cache_cleared}`)
+      }
+      if (typeof res?.data?.runtime_redis_cache_cleared === 'number') {
+        maintenanceMessages.push(`${t.admin.runtimeRedisCacheCleared}: ${res.data.runtime_redis_cache_cleared}`)
+      }
+
+      if (maintenanceMessages.length > 0) {
+        toast.success(maintenanceMessages.join(' | '))
+      } else {
+        toast.success(t.admin.settingsSaved)
+      }
       queryClient.invalidateQueries({ queryKey: ['settings'] })
       queryClient.invalidateQueries({ queryKey: ['publicConfig'] })
-      try { localStorage.removeItem('auralogic-page-inject') } catch {}
+      try {
+        localStorage.removeItem('auralogic-page-inject')
+        localStorage.removeItem('auth_branding_cache')
+        localStorage.removeItem('auralogic_app_name')
+        localStorage.removeItem('auralogic_primary_color')
+      } catch {}
     },
     onError: (error: any) => {
       toast.error(error.message || t.admin.saveFailed)
@@ -531,6 +555,9 @@ export default function SettingsPage() {
       setInvoiceEnabled(!!settingsData.order.invoice.enabled)
       setInvoiceTemplateType(settingsData.order.invoice.template_type || 'builtin')
       setInvoiceCustomTemplate(settingsData.order.invoice.custom_template || '')
+    }
+    if (settingsData?.order) {
+      setShowVirtualStockRemark(!!settingsData.order.show_virtual_stock_remark)
     }
   }, [settingsData])
 
@@ -2025,44 +2052,53 @@ export default function SettingsPage() {
                 >
                   <div>
                     <Label htmlFor="log_level">{t.admin.logLevel}</Label>
-                    <select
-                      id="log_level"
+                    <Select
                       name="log_level"
                       defaultValue={settingsData?.log?.level || 'info'}
-                      className="mt-1.5 w-full rounded-md border border-input bg-background px-3 py-2"
                     >
-                      <option value="debug">Debug</option>
-                      <option value="info">Info</option>
-                      <option value="warn">Warn</option>
-                      <option value="error">Error</option>
-                    </select>
+                      <SelectTrigger id="log_level" className="mt-1.5">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="debug">Debug</SelectItem>
+                        <SelectItem value="info">Info</SelectItem>
+                        <SelectItem value="warn">Warn</SelectItem>
+                        <SelectItem value="error">Error</SelectItem>
+                      </SelectContent>
+                    </Select>
                   </div>
 
                   <div>
                     <Label htmlFor="log_format">{t.admin.logFormat}</Label>
-                    <select
-                      id="log_format"
+                    <Select
                       name="log_format"
                       defaultValue={settingsData?.log?.format || 'json'}
-                      className="mt-1.5 w-full rounded-md border border-input bg-background px-3 py-2"
                     >
-                      <option value="json">JSON</option>
-                      <option value="text">Text</option>
-                    </select>
+                      <SelectTrigger id="log_format" className="mt-1.5">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="json">JSON</SelectItem>
+                        <SelectItem value="text">Text</SelectItem>
+                      </SelectContent>
+                    </Select>
                   </div>
 
                   <div>
                     <Label htmlFor="log_output">{t.admin.logOutput}</Label>
-                    <select
-                      id="log_output"
+                    <Select
                       name="log_output"
                       defaultValue={settingsData?.log?.output || 'stdout'}
-                      className="mt-1.5 w-full rounded-md border border-input bg-background px-3 py-2"
                     >
-                      <option value="stdout">{t.admin.stdout}</option>
-                      <option value="file">{t.admin.file}</option>
-                      <option value="both">{t.admin.both}</option>
-                    </select>
+                      <SelectTrigger id="log_output" className="mt-1.5">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="stdout">{t.admin.stdout}</SelectItem>
+                        <SelectItem value="file">{t.admin.file}</SelectItem>
+                        <SelectItem value="both">{t.admin.both}</SelectItem>
+                      </SelectContent>
+                    </Select>
                   </div>
 
                   <div>
@@ -2239,6 +2275,90 @@ export default function SettingsPage() {
                 <p className="text-xs text-muted-foreground">
                   {t.admin.redisConfigHint}
                 </p>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>{t.admin.cacheMaintenance}</CardTitle>
+                <CardDescription>{t.admin.cacheMaintenanceDesc}</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault()
+                    const formData = new FormData(e.currentTarget)
+                    handleSubmit('maintenance', {
+                      _submitted: true,
+                      clear_payment_card_cache: formData.get('clear_payment_card_cache') === 'on',
+                      clear_js_program_cache: formData.get('clear_js_program_cache') === 'on',
+                      clear_permission_cache: formData.get('clear_permission_cache') === 'on',
+                      clear_runtime_redis_cache: formData.get('clear_runtime_redis_cache') === 'on',
+                    })
+                  }}
+                  className="space-y-4"
+                >
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <Label htmlFor="clear_payment_card_cache">{t.admin.clearPaymentCardCache}</Label>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        {t.admin.clearPaymentCardCacheHint}
+                      </p>
+                    </div>
+                    <Switch
+                      id="clear_payment_card_cache"
+                      name="clear_payment_card_cache"
+                      defaultChecked={false}
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <Label htmlFor="clear_js_program_cache">{t.admin.clearJsProgramCache}</Label>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        {t.admin.clearJsProgramCacheHint}
+                      </p>
+                    </div>
+                    <Switch
+                      id="clear_js_program_cache"
+                      name="clear_js_program_cache"
+                      defaultChecked={false}
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <Label htmlFor="clear_permission_cache">{t.admin.clearPermissionCache}</Label>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        {t.admin.clearPermissionCacheHint}
+                      </p>
+                    </div>
+                    <Switch
+                      id="clear_permission_cache"
+                      name="clear_permission_cache"
+                      defaultChecked={false}
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <Label htmlFor="clear_runtime_redis_cache">{t.admin.clearRuntimeRedisCache}</Label>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        {t.admin.clearRuntimeRedisCacheHint}
+                      </p>
+                    </div>
+                    <Switch
+                      id="clear_runtime_redis_cache"
+                      name="clear_runtime_redis_cache"
+                      defaultChecked={false}
+                    />
+                  </div>
+
+                  <Button type="submit" disabled={updateMutation.isPending}>
+                    <Save className="mr-2 h-4 w-4" />
+                    {t.admin.executeCacheMaintenance}
+                  </Button>
+                </form>
               </CardContent>
             </Card>
           </div>
@@ -2601,6 +2721,7 @@ export default function SettingsPage() {
                     max_item_quantity: parseInt(formData.get('max_item_quantity') as string) || 9999,
                     currency: formData.get('currency'),
                     virtual_delivery_order: formData.get('virtual_delivery_order'),
+                    show_virtual_stock_remark: showVirtualStockRemark,
                     stock_display: {
                       mode: formData.get('stock_display_mode'),
                       low_stock_threshold: parseInt(formData.get('low_stock_threshold') as string) || 10,
@@ -2638,24 +2759,27 @@ export default function SettingsPage() {
 
                 <div>
                   <Label htmlFor="currency">{t.admin.currency}</Label>
-                  <select
-                    id="currency"
+                  <Select
                     name="currency"
                     defaultValue={settingsData?.order?.currency || 'CNY'}
-                    className="mt-1.5 w-full rounded-md border border-input bg-background px-3 py-2"
                   >
-                    <option value="CNY">{t.admin.currencyCNY}</option>
-                    <option value="USD">{t.admin.currencyUSD}</option>
-                    <option value="EUR">{t.admin.currencyEUR}</option>
-                    <option value="JPY">{t.admin.currencyJPY}</option>
-                    <option value="GBP">{t.admin.currencyGBP}</option>
-                    <option value="KRW">{t.admin.currencyKRW}</option>
-                    <option value="HKD">{t.admin.currencyHKD}</option>
-                    <option value="TWD">{t.admin.currencyTWD}</option>
-                    <option value="SGD">{t.admin.currencySGD}</option>
-                    <option value="AUD">{t.admin.currencyAUD}</option>
-                    <option value="CAD">{t.admin.currencyCAD}</option>
-                  </select>
+                    <SelectTrigger id="currency" className="mt-1.5">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="CNY">{t.admin.currencyCNY}</SelectItem>
+                      <SelectItem value="USD">{t.admin.currencyUSD}</SelectItem>
+                      <SelectItem value="EUR">{t.admin.currencyEUR}</SelectItem>
+                      <SelectItem value="JPY">{t.admin.currencyJPY}</SelectItem>
+                      <SelectItem value="GBP">{t.admin.currencyGBP}</SelectItem>
+                      <SelectItem value="KRW">{t.admin.currencyKRW}</SelectItem>
+                      <SelectItem value="HKD">{t.admin.currencyHKD}</SelectItem>
+                      <SelectItem value="TWD">{t.admin.currencyTWD}</SelectItem>
+                      <SelectItem value="SGD">{t.admin.currencySGD}</SelectItem>
+                      <SelectItem value="AUD">{t.admin.currencyAUD}</SelectItem>
+                      <SelectItem value="CAD">{t.admin.currencyCAD}</SelectItem>
+                    </SelectContent>
+                  </Select>
                   <p className="text-xs text-muted-foreground mt-1">
                     {t.admin.currencyHint}
                   </p>
@@ -2710,19 +2834,32 @@ export default function SettingsPage() {
                   <h4 className="font-medium mb-3">{t.admin.virtualDeliveryOrderTitle}</h4>
                   <div>
                     <Label htmlFor="virtual_delivery_order">{t.admin.virtualDeliveryOrder}</Label>
-                    <select
-                      id="virtual_delivery_order"
+                    <Select
                       name="virtual_delivery_order"
                       defaultValue={settingsData?.order?.virtual_delivery_order || 'random'}
-                      className="mt-1.5 w-full rounded-md border border-input bg-background px-3 py-2"
                     >
-                      <option value="random">{t.admin.virtualDeliveryRandom}</option>
-                      <option value="newest">{t.admin.virtualDeliveryNewest}</option>
-                      <option value="oldest">{t.admin.virtualDeliveryOldest}</option>
-                    </select>
+                      <SelectTrigger id="virtual_delivery_order" className="mt-1.5">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="random">{t.admin.virtualDeliveryRandom}</SelectItem>
+                        <SelectItem value="newest">{t.admin.virtualDeliveryNewest}</SelectItem>
+                        <SelectItem value="oldest">{t.admin.virtualDeliveryOldest}</SelectItem>
+                      </SelectContent>
+                    </Select>
                     <p className="text-xs text-muted-foreground mt-1">
                       {t.admin.virtualDeliveryOrderHint}
                     </p>
+                  </div>
+                  <div className="flex items-center justify-between mt-4">
+                    <div>
+                      <Label>{t.admin.showVirtualStockRemark}</Label>
+                      <p className="text-xs text-muted-foreground">{t.admin.showVirtualStockRemarkHint}</p>
+                    </div>
+                    <Switch
+                      checked={showVirtualStockRemark}
+                      onCheckedChange={setShowVirtualStockRemark}
+                    />
                   </div>
                 </div>
 
@@ -2731,16 +2868,19 @@ export default function SettingsPage() {
                   <div className="space-y-4">
                     <div>
                       <Label htmlFor="stock_display_mode">{t.admin.stockDisplayMode}</Label>
-                      <select
-                        id="stock_display_mode"
+                      <Select
                         name="stock_display_mode"
                         defaultValue={settingsData?.order?.stock_display?.mode || 'exact'}
-                        className="mt-1.5 w-full rounded-md border border-input bg-background px-3 py-2"
                       >
-                        <option value="exact">{t.admin.stockDisplayModeExact}</option>
-                        <option value="level">{t.admin.stockDisplayModeLevel}</option>
-                        <option value="hidden">{t.admin.stockDisplayModeHidden}</option>
-                      </select>
+                        <SelectTrigger id="stock_display_mode" className="mt-1.5">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="exact">{t.admin.stockDisplayModeExact}</SelectItem>
+                          <SelectItem value="level">{t.admin.stockDisplayModeLevel}</SelectItem>
+                          <SelectItem value="hidden">{t.admin.stockDisplayModeHidden}</SelectItem>
+                        </SelectContent>
+                      </Select>
                       <p className="text-xs text-muted-foreground mt-1">
                         {settingsData?.order?.stock_display?.mode === 'level'
                           ? t.admin.stockDisplayModeLevelDesc
