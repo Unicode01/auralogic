@@ -14,23 +14,6 @@ export function formatDate(date: string | Date, formatStr = 'yyyy-MM-dd HH:mm') 
   return format(dateObj, formatStr, { locale: zhCN })
 }
 
-// 格式化相对时间
-export function formatRelativeTime(date: string | Date) {
-  const dateObj = typeof date === 'string' ? parseISO(date) : date
-  const now = new Date()
-  const diff = now.getTime() - dateObj.getTime()
-
-  const minutes = Math.floor(diff / 60000)
-  const hours = Math.floor(diff / 3600000)
-  const days = Math.floor(diff / 86400000)
-
-  if (minutes < 1) return '刚刚'
-  if (minutes < 60) return `${minutes}分钟前`
-  if (hours < 24) return `${hours}小时前`
-  if (days < 7) return `${days}天前`
-  return formatDate(dateObj, 'yyyy-MM-dd')
-}
-
 // 复制到剪贴板
 export async function copyToClipboard(text: string) {
   try {
@@ -39,30 +22,6 @@ export async function copyToClipboard(text: string) {
   } catch {
     return false
   }
-}
-
-// 下载文件
-export function downloadFile(blob: Blob, filename: string) {
-  const url = URL.createObjectURL(blob)
-  const link = document.createElement('a')
-  link.href = url
-  link.download = filename
-  link.click()
-  URL.revokeObjectURL(url)
-}
-
-// 手机号打码
-export function maskPhone(phone: string) {
-  if (!phone || phone.length < 7) return phone
-  return phone.replace(/(\d{3})\d{4}(\d{4})/, '$1****$2')
-}
-
-// 邮箱打码
-export function maskEmail(email: string) {
-  if (!email) return email
-  const [local, domain] = email.split('@')
-  if (!domain) return email
-  return `***@${domain}`
 }
 
 // 货币符号映射
@@ -84,6 +43,60 @@ const currencySymbols: Record<string, string> = {
 export function formatCurrency(amount: number | undefined, currency: string = 'CNY') {
   if (amount === undefined || amount === null) return '-'
   const symbol = currencySymbols[currency] || currency + ' '
-  return `${symbol}${amount.toFixed(2)}`
+  return `${symbol}${(amount / 100).toFixed(2)}`
+}
+
+function pow10BigInt(scale: number): bigint {
+  return BigInt(10) ** BigInt(scale)
+}
+
+// Parse major-unit decimal into integer minor units with half-up rounding.
+// Returns null for invalid formats or values outside JS safe integer range.
+export function parseMajorToMinor(amountMajor: number | string, scale: number = 2): number | null {
+  if (!Number.isInteger(scale) || scale < 0 || scale > 9) {
+    return null
+  }
+
+  const raw = typeof amountMajor === 'number'
+    ? (Number.isFinite(amountMajor) ? amountMajor.toString() : '')
+    : amountMajor.trim()
+
+  const match = raw.match(/^([+-]?)(\d+)(?:\.(\d*))?$/)
+  if (!match) return null
+
+  const sign = match[1] === '-' ? -1n : 1n
+  const intPart = match[2]
+  const fracPartRaw = match[3] ?? ''
+
+  const unit = pow10BigInt(scale)
+  const padded = fracPartRaw.padEnd(scale + 1, '0')
+  const keptFrac = padded.slice(0, scale)
+  const roundingDigit = padded.charCodeAt(scale) - 48
+
+  let minor = BigInt(intPart) * unit
+  if (scale > 0 && keptFrac.length > 0) {
+    minor += BigInt(keptFrac)
+  }
+  if (roundingDigit >= 5) {
+    minor += 1n
+  }
+
+  minor *= sign
+
+  const maxSafe = BigInt(Number.MAX_SAFE_INTEGER)
+  const minSafe = BigInt(Number.MIN_SAFE_INTEGER)
+  if (minor > maxSafe || minor < minSafe) {
+    return null
+  }
+
+  return Number(minor)
+}
+
+export function majorToMinor(amountMajor: number | string): number {
+  return parseMajorToMinor(amountMajor) ?? 0
+}
+
+export function minorToMajor(amountMinor: number): number {
+  return amountMinor / 100
 }
 

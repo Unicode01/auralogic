@@ -4,10 +4,10 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"auralogic/internal/models"
 	"auralogic/internal/pkg/response"
 	"auralogic/internal/service"
+	"github.com/gin-gonic/gin"
 )
 
 type PromoCodeHandler struct {
@@ -20,33 +20,33 @@ func NewPromoCodeHandler(promoCodeService *service.PromoCodeService) *PromoCodeH
 
 // CreatePromoCodeRequest 创建优惠码请求
 type CreatePromoCodeRequest struct {
-	Code           string              `json:"code" binding:"required"`
-	Name           string              `json:"name" binding:"required"`
-	Description    string              `json:"description"`
-	DiscountType   models.DiscountType `json:"discount_type" binding:"required"`
-	DiscountValue  float64             `json:"discount_value" binding:"required,gt=0"`
-	MaxDiscount    float64             `json:"max_discount"`
-	MinOrderAmount float64             `json:"min_order_amount"`
-	TotalQuantity  int                 `json:"total_quantity"`
-	ProductIDs     []uint              `json:"product_ids"`
-	ProductScope   string              `json:"product_scope"`
-	Status         string              `json:"status"`
-	ExpiresAt      *string             `json:"expires_at"`
+	Code                string              `json:"code" binding:"required"`
+	Name                string              `json:"name" binding:"required"`
+	Description         string              `json:"description"`
+	DiscountType        models.DiscountType `json:"discount_type" binding:"required"`
+	DiscountValueMinor  int64               `json:"discount_value_minor" binding:"required,gt=0"`
+	MaxDiscountMinor    int64               `json:"max_discount_minor"`
+	MinOrderAmountMinor int64               `json:"min_order_amount_minor"`
+	TotalQuantity       int                 `json:"total_quantity"`
+	ProductIDs          []uint              `json:"product_ids"`
+	ProductScope        string              `json:"product_scope"`
+	Status              string              `json:"status"`
+	ExpiresAt           *string             `json:"expires_at"`
 }
 
 // UpdatePromoCodeRequest 更新优惠码请求（不需要code字段）
 type UpdatePromoCodeRequest struct {
-	Name           string              `json:"name" binding:"required"`
-	Description    string              `json:"description"`
-	DiscountType   models.DiscountType `json:"discount_type" binding:"required"`
-	DiscountValue  float64             `json:"discount_value" binding:"required,gt=0"`
-	MaxDiscount    float64             `json:"max_discount"`
-	MinOrderAmount float64             `json:"min_order_amount"`
-	TotalQuantity  int                 `json:"total_quantity"`
-	ProductIDs     []uint              `json:"product_ids"`
-	ProductScope   string              `json:"product_scope"`
-	Status         string              `json:"status"`
-	ExpiresAt      *string             `json:"expires_at"`
+	Name                string              `json:"name" binding:"required"`
+	Description         string              `json:"description"`
+	DiscountType        models.DiscountType `json:"discount_type" binding:"required"`
+	DiscountValueMinor  int64               `json:"discount_value_minor" binding:"required,gt=0"`
+	MaxDiscountMinor    int64               `json:"max_discount_minor"`
+	MinOrderAmountMinor int64               `json:"min_order_amount_minor"`
+	TotalQuantity       int                 `json:"total_quantity"`
+	ProductIDs          []uint              `json:"product_ids"`
+	ProductScope        string              `json:"product_scope"`
+	Status              string              `json:"status"`
+	ExpiresAt           *string             `json:"expires_at"`
 }
 
 // CreatePromoCode 创建优惠码
@@ -62,9 +62,9 @@ func (h *PromoCodeHandler) CreatePromoCode(c *gin.Context) {
 		Name:           req.Name,
 		Description:    req.Description,
 		DiscountType:   req.DiscountType,
-		DiscountValue:  req.DiscountValue,
-		MaxDiscount:    req.MaxDiscount,
-		MinOrderAmount: req.MinOrderAmount,
+		DiscountValue:  req.DiscountValueMinor,
+		MaxDiscount:    req.MaxDiscountMinor,
+		MinOrderAmount: req.MinOrderAmountMinor,
 		TotalQuantity:  req.TotalQuantity,
 		ProductIDs:     req.ProductIDs,
 		ProductScope:   req.ProductScope,
@@ -136,9 +136,9 @@ func (h *PromoCodeHandler) UpdatePromoCode(c *gin.Context) {
 		Name:           req.Name,
 		Description:    req.Description,
 		DiscountType:   req.DiscountType,
-		DiscountValue:  req.DiscountValue,
-		MaxDiscount:    req.MaxDiscount,
-		MinOrderAmount: req.MinOrderAmount,
+		DiscountValue:  req.DiscountValueMinor,
+		MaxDiscount:    req.MaxDiscountMinor,
+		MinOrderAmount: req.MinOrderAmountMinor,
 		TotalQuantity:  req.TotalQuantity,
 		ProductIDs:     req.ProductIDs,
 		ProductScope:   req.ProductScope,

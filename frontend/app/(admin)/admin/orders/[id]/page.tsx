@@ -39,7 +39,7 @@ import Link from 'next/link'
 import { useToast } from '@/hooks/use-toast'
 import { useEffect } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { formatDate } from '@/lib/utils'
+import { formatDate, formatCurrency, minorToMajor, parseMajorToMinor } from '@/lib/utils'
 
 export default function AdminOrderDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
@@ -220,7 +220,7 @@ export default function AdminOrderDetailPage({ params }: { params: Promise<{ id:
   })
 
   const updatePriceMutation = useMutation({
-    mutationFn: (price: number) => updateOrderPrice(orderId, price),
+    mutationFn: (amountMinor: number) => updateOrderPrice(orderId, amountMinor),
     onSuccess: () => {
       toast.success(t.order.priceUpdated)
       queryClient.invalidateQueries({ queryKey: ['adminOrderDetail', orderId] })
@@ -296,7 +296,8 @@ export default function AdminOrderDetailPage({ params }: { params: Promise<{ id:
         receiver_postcode: order.receiver_postcode || order.receiverPostcode || '',
       })
       // 初始化新价格为当前订单总价
-      setNewPrice(order.total_amount?.toString() || order.totalAmount?.toString() || '')
+      const amountMinor = order.total_amount_minor ?? 0
+      setNewPrice(minorToMajor(amountMinor).toString())
     }
   }, [data])
 
@@ -462,7 +463,7 @@ export default function AdminOrderDetailPage({ params }: { params: Promise<{ id:
                   <div className="space-y-2">
                     <Label>{t.order.currentAmount}</Label>
                     <div className="text-lg font-semibold">
-                      {order.currency || 'CNY'} {order.total_amount || order.totalAmount || 0}
+                      {formatCurrency(order.total_amount_minor ?? 0, order.currency || 'CNY')}
                     </div>
                   </div>
                   <div className="space-y-2">
@@ -483,12 +484,12 @@ export default function AdminOrderDetailPage({ params }: { params: Promise<{ id:
                   </Button>
                   <Button
                     onClick={() => {
-                      const price = parseFloat(newPrice)
-                      if (isNaN(price) || price < 0) {
+                      const nextPriceMinor = parseMajorToMinor(newPrice)
+                      if (nextPriceMinor === null || nextPriceMinor < 0) {
                         toast.error(t.order.invalidPrice)
                         return
                       }
-                      updatePriceMutation.mutate(price)
+                      updatePriceMutation.mutate(nextPriceMinor)
                     }}
                     disabled={!newPrice || updatePriceMutation.isPending}
                   >
@@ -887,8 +888,14 @@ export default function AdminOrderDetailPage({ params }: { params: Promise<{ id:
         </div>
       </div>
 
-      <OrderDetail order={order} serials={serials} virtualStocks={virtualStocks} isVirtualOnly={isVirtualOnly} paymentCard={paymentCard} />
+      <OrderDetail
+        order={order}
+        serials={serials}
+        virtualStocks={virtualStocks}
+        isVirtualOnly={isVirtualOnly}
+        paymentCard={paymentCard}
+        showVirtualStockRemark
+      />
     </div>
   )
 }
-

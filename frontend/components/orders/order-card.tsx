@@ -156,7 +156,7 @@ export function OrderCard({ order }: OrderCardProps) {
         <div className="flex items-center justify-between pt-2 border-t">
           <span className="text-sm text-muted-foreground">{t.order.amountLabel}</span>
           <span className="text-sm font-semibold text-foreground">
-            {formatCurrency(order.totalAmount || order.total_amount, order.currency)}
+            {formatCurrency(order.total_amount_minor ?? 0, order.currency)}
           </span>
         </div>
 

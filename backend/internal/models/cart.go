@@ -21,10 +21,10 @@ type CartItem struct {
 	Product   *Product `gorm:"foreignKey:ProductID" json:"product,omitempty"`
 
 	// 商品信息快照
-	SKU        string  `gorm:"size:100" json:"sku"`
-	Name       string  `gorm:"size:255" json:"name"`
-	Price      float64 `json:"price"`
-	ImageURL   string  `gorm:"size:500" json:"image_url"`
+	SKU         string      `gorm:"size:100" json:"sku"`
+	Name        string      `gorm:"size:255" json:"name"`
+	Price       int64       `gorm:"type:bigint;not null;default:0" json:"price_minor"`
+	ImageURL    string      `gorm:"size:500" json:"image_url"`
 	ProductType ProductType `gorm:"size:20" json:"product_type"`
 
 	// 购买数量

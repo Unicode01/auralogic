@@ -1,4 +1,4 @@
-# 虚拟库存 JS 发货脚本文档
+﻿# 虚拟库存 JS 发货脚本文档
 
 本文档基于当前代码实现，说明 `type=script` 的虚拟库存发货机制。
 
@@ -109,7 +109,7 @@ function onDeliver(order, config) {
 
 与后台“脚本 API 参考”一致，`onDeliver(order, config)` 参数如下：
 
-- `order`: `id/order_no/status/total_amount/currency/quantity/created_at`
+- `order`: `id/order_no/status/total_amount_minor/currency/quantity/created_at`
 - `config`: 来自 `script_config` 的 JSON 对象（解析失败则为空对象）
 
 ## 7. 网络与安全限制
@@ -146,4 +146,5 @@ function onDeliver(order, config) {
 - `backend/internal/service/order_service.go`
   - 创建订单时写入 `order.VirtualInventoryBindings`
   - `MarkAsPaid` / `DeliverVirtualStock` 发货触发
+
 

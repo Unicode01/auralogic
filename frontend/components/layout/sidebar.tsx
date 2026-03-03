@@ -130,10 +130,10 @@ export function Sidebar() {
         <h2 className="text-lg font-bold">{t.admin.adminPanel}</h2>
       </div>
 
-      <nav className="space-y-1 px-3 flex-1">
+      <nav className="space-y-1 px-3 flex-1 overflow-y-auto">
         {visibleMenuItems.map((item) => {
           const Icon = item.icon
-          const isActive = pathname === item.href
+          const isActive = pathname === item.href || pathname.startsWith(item.href + '/')
 
           return (
             <Link

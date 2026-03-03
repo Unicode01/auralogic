@@ -3,10 +3,10 @@ package admin
 import (
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"auralogic/internal/config"
 	"auralogic/internal/models"
 	"auralogic/internal/pkg/response"
+	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
 
@@ -33,32 +33,32 @@ func (h *DashboardHandler) GetStatistics(c *gin.Context) {
 
 		// Order统计
 		Orders struct {
-			Total          int64   `json:"total"`
-			Today          int64   `json:"today"`
-			ThisMonth      int64   `json:"this_month"`
-			LastMonth      int64   `json:"last_month"`
-			Pending        int64   `json:"pending"`
-			Shipped        int64   `json:"shipped"`
-			Completed      int64   `json:"completed"`
-			MonthlyGrowth  float64 `json:"monthly_growth"`
+			Total         int64   `json:"total"`
+			Today         int64   `json:"today"`
+			ThisMonth     int64   `json:"this_month"`
+			LastMonth     int64   `json:"last_month"`
+			Pending       int64   `json:"pending"`
+			Shipped       int64   `json:"shipped"`
+			Completed     int64   `json:"completed"`
+			MonthlyGrowth float64 `json:"monthly_growth"`
 		} `json:"orders"`
 
 		// 销售额统计
 		Sales struct {
-			ThisMonth     float64 `json:"this_month"`
-			LastMonth     float64 `json:"last_month"`
-			Today         float64 `json:"today"`
+			ThisMonth     int64   `json:"this_month"`
+			LastMonth     int64   `json:"last_month"`
+			Today         int64   `json:"today"`
 			MonthlyGrowth float64 `json:"monthly_growth"`
 			Currency      string  `json:"currency"`
 		} `json:"sales"`
 
 		// User统计
 		Users struct {
-			Total       int64   `json:"total"`
-			Active      int64   `json:"active"`
-			Today       int64   `json:"today"`
-			ThisMonth   int64   `json:"this_month"`
-			LastMonth   int64   `json:"last_month"`
+			Total         int64   `json:"total"`
+			Active        int64   `json:"active"`
+			Today         int64   `json:"today"`
+			ThisMonth     int64   `json:"this_month"`
+			LastMonth     int64   `json:"last_month"`
 			MonthlyGrowth float64 `json:"monthly_growth"`
 		} `json:"users"`
 
@@ -110,7 +110,7 @@ func (h *DashboardHandler) GetStatistics(c *gin.Context) {
 
 	// 本月销售额
 	var thisMonthSales struct {
-		Total float64
+		Total int64
 	}
 	h.db.Model(&models.Order{}).
 		Select("COALESCE(SUM(total_amount), 0) as total").
@@ -120,7 +120,7 @@ func (h *DashboardHandler) GetStatistics(c *gin.Context) {
 
 	// 上月销售额
 	var lastMonthSales struct {
-		Total float64
+		Total int64
 	}
 	h.db.Model(&models.Order{}).
 		Select("COALESCE(SUM(total_amount), 0) as total").
@@ -130,7 +130,7 @@ func (h *DashboardHandler) GetStatistics(c *gin.Context) {
 
 	// 今日销售额
 	var todaySales struct {
-		Total float64
+		Total int64
 	}
 	h.db.Model(&models.Order{}).
 		Select("COALESCE(SUM(total_amount), 0) as total").
@@ -140,7 +140,7 @@ func (h *DashboardHandler) GetStatistics(c *gin.Context) {
 
 	// 计算销售额月增长率
 	if stats.Sales.LastMonth > 0 {
-		stats.Sales.MonthlyGrowth = (stats.Sales.ThisMonth - stats.Sales.LastMonth) / stats.Sales.LastMonth * 100
+		stats.Sales.MonthlyGrowth = float64(stats.Sales.ThisMonth-stats.Sales.LastMonth) / float64(stats.Sales.LastMonth) * 100
 	}
 
 	// 货币单位
@@ -188,7 +188,7 @@ func (h *DashboardHandler) GetStatistics(c *gin.Context) {
 // GetRecentActivities get最近活动
 func (h *DashboardHandler) GetRecentActivities(c *gin.Context) {
 	var activities []models.OperationLog
-	
+
 	h.db.Model(&models.OperationLog{}).
 		Preload("User").
 		Order("created_at DESC").
@@ -197,4 +197,3 @@ func (h *DashboardHandler) GetRecentActivities(c *gin.Context) {
 
 	response.Success(c, activities)
 }
-

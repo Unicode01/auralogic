@@ -24,6 +24,7 @@ import { ProductVirtualVariantInventory, VirtualVariantInventoryBinding } from '
 import toast from 'react-hot-toast'
 import { ArrowLeft, Save, Plus, Trash2, Upload, Loader2, Image as ImageIcon, Database, FileText, RefreshCw, Eye, Pencil } from 'lucide-react'
 import Link from 'next/link'
+import { minorToMajor, parseMajorToMinor } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
 import {
   Table,
@@ -322,8 +323,8 @@ interface ProductForm {
   short_description: string
   category: string
   tags: string[]
-  price: number
-  original_price: number
+  price: string
+  original_price: string
   stock: number
   max_purchase_limit: number
   images: Array<{ url: string; alt: string; is_primary: boolean }>
@@ -358,8 +359,8 @@ export default function ProductEditPage() {
     short_description: '',
     category: '',
     tags: [],
-    price: 0,
-    original_price: 0,
+    price: '',
+    original_price: '',
     stock: 0,
     max_purchase_limit: 0,
     images: [],
@@ -425,8 +426,8 @@ export default function ProductEditPage() {
         short_description: product.short_description || product.shortDescription || '',
         category: product.category || '',
         tags: product.tags || [],
-        price: product.price ?? 0,
-        original_price: product.original_price ?? product.originalPrice ?? 0,
+        price: minorToMajor(product.price_minor ?? 0).toString(),
+        original_price: minorToMajor(product.original_price_minor ?? 0).toString(),
         stock: product.stock ?? 0,
         max_purchase_limit: product.max_purchase_limit ?? product.maxPurchaseLimit ?? 0,
         images: product.images || [],
@@ -766,8 +767,13 @@ export default function ProductEditPage() {
       return
     }
 
-    // 验证价格
-    if (form.price < 0) {
+    const priceMinor = parseMajorToMinor(form.price)
+    if (priceMinor === null || priceMinor < 0) {
+      toast.error(t.admin.priceMustBePositive)
+      return
+    }
+    const originalPriceMinor = parseMajorToMinor(form.original_price || '0')
+    if (originalPriceMinor === null || originalPriceMinor < 0) {
       toast.error(t.admin.priceMustBePositive)
       return
     }
@@ -791,7 +797,11 @@ export default function ProductEditPage() {
     }
 
     // 提交数据（不包含variant_inventory_bindings，因为绑定会在创建/更新商品后单独处理）
-    const submitData = { ...form }
+    const submitData = {
+      ...form,
+      price_minor: priceMinor,
+      original_price_minor: originalPriceMinor,
+    }
     delete (submitData as any).variant_inventory_bindings
     delete (submitData as any).virtual_variant_inventory_bindings
     delete (submitData as any).variant_mode
@@ -1149,7 +1159,7 @@ export default function ProductEditPage() {
                   step="0.01"
                   min="0"
                   value={form.price}
-                  onChange={(e) => setForm({ ...form, price: parseFloat(e.target.value) || 0 })}
+                  onChange={(e) => setForm({ ...form, price: e.target.value })}
                   required
                 />
               </div>
@@ -1161,7 +1171,7 @@ export default function ProductEditPage() {
                   step="0.01"
                   min="0"
                   value={form.original_price}
-                  onChange={(e) => setForm({ ...form, original_price: parseFloat(e.target.value) || 0 })}
+                  onChange={(e) => setForm({ ...form, original_price: e.target.value })}
                 />
               </div>
             </div>

@@ -36,9 +36,10 @@ interface OrderDetailProps {
   isVirtualOnly?: boolean
   paymentCard?: ReactNode
   shippingForm?: ReactNode
+  showVirtualStockRemark?: boolean
 }
 
-export function OrderDetail({ order, serials, virtualStocks, isVirtualOnly = false, paymentCard, shippingForm }: OrderDetailProps) {
+export function OrderDetail({ order, serials, virtualStocks, isVirtualOnly = false, paymentCard, shippingForm, showVirtualStockRemark = false }: OrderDetailProps) {
   const { locale } = useLocale()
   const t = getTranslations(locale)
   const isDraft = order.status === 'draft'
@@ -109,7 +110,7 @@ export function OrderDetail({ order, serials, virtualStocks, isVirtualOnly = fal
             <div>
               <dt className="text-muted-foreground">{t.order.orderAmount}</dt>
               <dd className="font-semibold text-foreground">
-                {formatCurrency(order.totalAmount || order.total_amount, order.currency)}
+                {formatCurrency(order.total_amount_minor ?? 0, order.currency)}
               </dd>
             </div>
             {(order.formSubmittedAt || order.form_submitted_at) && (
@@ -248,7 +249,7 @@ export function OrderDetail({ order, serials, virtualStocks, isVirtualOnly = fal
                         </div>
                       </div>
                     </div>
-                    {stock.remark && (
+                    {showVirtualStockRemark && stock.remark && (
                       <p className="text-sm text-muted-foreground">{stock.remark}</p>
                     )}
                     {stock.delivered_at && (

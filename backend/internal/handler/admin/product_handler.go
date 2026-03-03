@@ -3,12 +3,12 @@ package admin
 import (
 	"strconv"
 
-	"github.com/gin-gonic/gin"
 	"auralogic/internal/database"
 	"auralogic/internal/models"
 	"auralogic/internal/pkg/logger"
 	"auralogic/internal/pkg/response"
 	"auralogic/internal/service"
+	"github.com/gin-gonic/gin"
 )
 
 type ProductHandler struct {
@@ -25,26 +25,26 @@ func NewProductHandler(productService *service.ProductService, virtualInventoryS
 
 // CreateProductRequest CreateProduct请求
 type CreateProductRequest struct {
-	SKU              string                    `json:"sku" binding:"required"`
-	Name             string                    `json:"name" binding:"required"`
-	ProductCode      string                    `json:"product_code"` // 产品码（用于生成防伪序列号）
-	ProductType      models.ProductType        `json:"product_type"` // 商品类型：physical(实物) 或 virtual(虚拟)
-	Description      string                    `json:"description"`
-	ShortDescription string                    `json:"short_description"`
-	Category         string                    `json:"category"`
-	Tags             []string                  `json:"tags"`
-	Price            float64                   `json:"price" binding:"gte=0"`
-	OriginalPrice    float64                   `json:"original_price"`
-	Stock            int                       `json:"stock" binding:"gte=0"`
-	MaxPurchaseLimit int                       `json:"max_purchase_limit" binding:"gte=0"` // 购买限制
-	Images           []models.ProductImage     `json:"images"`
-	Attributes       []models.ProductAttribute `json:"attributes"`
-	Status           models.ProductStatus      `json:"status"`
-	SortOrder        int                       `json:"sort_order"`
-	IsFeatured       bool                      `json:"is_featured"`
-	IsRecommended    bool                      `json:"is_recommended"`
-	Remark           string                    `json:"remark"`
-	AutoDelivery     bool                      `json:"auto_delivery"` // 虚拟商品自动发货
+	SKU                string                    `json:"sku" binding:"required"`
+	Name               string                    `json:"name" binding:"required"`
+	ProductCode        string                    `json:"product_code"` // 产品码（用于生成防伪序列号）
+	ProductType        models.ProductType        `json:"product_type"` // 商品类型：physical(实物) 或 virtual(虚拟)
+	Description        string                    `json:"description"`
+	ShortDescription   string                    `json:"short_description"`
+	Category           string                    `json:"category"`
+	Tags               []string                  `json:"tags"`
+	PriceMinor         int64                     `json:"price_minor" binding:"gte=0"`
+	OriginalPriceMinor int64                     `json:"original_price_minor"`
+	Stock              int                       `json:"stock" binding:"gte=0"`
+	MaxPurchaseLimit   int                       `json:"max_purchase_limit" binding:"gte=0"` // 购买限制
+	Images             []models.ProductImage     `json:"images"`
+	Attributes         []models.ProductAttribute `json:"attributes"`
+	Status             models.ProductStatus      `json:"status"`
+	SortOrder          int                       `json:"sort_order"`
+	IsFeatured         bool                      `json:"is_featured"`
+	IsRecommended      bool                      `json:"is_recommended"`
+	Remark             string                    `json:"remark"`
+	AutoDelivery       bool                      `json:"auto_delivery"` // 虚拟商品自动发货
 }
 
 // CreateProduct CreateProduct
@@ -64,8 +64,8 @@ func (h *ProductHandler) CreateProduct(c *gin.Context) {
 		ShortDescription: req.ShortDescription,
 		Category:         req.Category,
 		Tags:             req.Tags,
-		Price:            req.Price,
-		OriginalPrice:    req.OriginalPrice,
+		Price:            req.PriceMinor,
+		OriginalPrice:    req.OriginalPriceMinor,
 		Stock:            req.Stock,
 		MaxPurchaseLimit: req.MaxPurchaseLimit,
 		Images:           req.Images,
@@ -95,26 +95,26 @@ func (h *ProductHandler) CreateProduct(c *gin.Context) {
 
 // UpdateProductRequest UpdateProduct请求
 type UpdateProductRequest struct {
-	SKU              string                    `json:"sku"`
-	Name             string                    `json:"name"`
-	ProductCode      string                    `json:"product_code"` // 产品码（用于生成防伪序列号）
-	ProductType      models.ProductType        `json:"product_type"` // 商品类型：physical(实物) 或 virtual(虚拟)
-	Description      string                    `json:"description"`
-	ShortDescription string                    `json:"short_description"`
-	Category         string                    `json:"category"`
-	Tags             []string                  `json:"tags"`
-	Price            float64                   `json:"price"`
-	OriginalPrice    float64                   `json:"original_price"`
-	Stock            int                       `json:"stock"`
-	MaxPurchaseLimit int                       `json:"max_purchase_limit"`
-	Images           []models.ProductImage     `json:"images"`
-	Attributes       []models.ProductAttribute `json:"attributes"`
-	Status           models.ProductStatus      `json:"status"`
-	SortOrder        int                       `json:"sort_order"`
-	IsFeatured       bool                      `json:"is_featured"`
-	IsRecommended    bool                      `json:"is_recommended"`
-	Remark           string                    `json:"remark"`
-	AutoDelivery     bool                      `json:"auto_delivery"` // 虚拟商品自动发货
+	SKU                string                    `json:"sku"`
+	Name               string                    `json:"name"`
+	ProductCode        string                    `json:"product_code"` // 产品码（用于生成防伪序列号）
+	ProductType        models.ProductType        `json:"product_type"` // 商品类型：physical(实物) 或 virtual(虚拟)
+	Description        string                    `json:"description"`
+	ShortDescription   string                    `json:"short_description"`
+	Category           string                    `json:"category"`
+	Tags               []string                  `json:"tags"`
+	PriceMinor         int64                     `json:"price_minor"`
+	OriginalPriceMinor int64                     `json:"original_price_minor"`
+	Stock              int                       `json:"stock"`
+	MaxPurchaseLimit   int                       `json:"max_purchase_limit"`
+	Images             []models.ProductImage     `json:"images"`
+	Attributes         []models.ProductAttribute `json:"attributes"`
+	Status             models.ProductStatus      `json:"status"`
+	SortOrder          int                       `json:"sort_order"`
+	IsFeatured         bool                      `json:"is_featured"`
+	IsRecommended      bool                      `json:"is_recommended"`
+	Remark             string                    `json:"remark"`
+	AutoDelivery       bool                      `json:"auto_delivery"` // 虚拟商品自动发货
 }
 
 // UpdateProduct UpdateProduct
@@ -140,8 +140,8 @@ func (h *ProductHandler) UpdateProduct(c *gin.Context) {
 		ShortDescription: req.ShortDescription,
 		Category:         req.Category,
 		Tags:             req.Tags,
-		Price:            req.Price,
-		OriginalPrice:    req.OriginalPrice,
+		Price:            req.PriceMinor,
+		OriginalPrice:    req.OriginalPriceMinor,
 		Stock:            req.Stock,
 		MaxPurchaseLimit: req.MaxPurchaseLimit,
 		Images:           req.Images,
@@ -212,32 +212,32 @@ func (h *ProductHandler) GetProduct(c *gin.Context) {
 
 	// 构建响应：ProductInfo + 简化的绑定关系
 	productResponse := map[string]interface{}{
-		"id":                 product.ID,
-		"sku":                product.SKU,
-		"name":               product.Name,
-		"product_code":       product.ProductCode,
-		"product_type":       product.ProductType,
-		"description":        product.Description,
-		"short_description":  product.ShortDescription,
-		"category":           product.Category,
-		"tags":               product.Tags,
-		"price":              product.Price,
-		"original_price":     product.OriginalPrice,
-		"stock":              product.Stock,
-		"max_purchase_limit": product.MaxPurchaseLimit,
-		"images":             product.Images,
-		"attributes":         product.Attributes,
-		"status":             product.Status,
-		"sort_order":         product.SortOrder,
-		"is_featured":        product.IsFeatured,
-		"is_recommended":     product.IsRecommended,
-		"remark":             product.Remark,
-		"auto_delivery":      product.AutoDelivery,
-		"inventory_mode":     product.InventoryMode,
-		"view_count":         product.ViewCount,
-		"sale_count":         product.SaleCount,
-		"created_at":         product.CreatedAt,
-		"updated_at":         product.UpdatedAt,
+		"id":                   product.ID,
+		"sku":                  product.SKU,
+		"name":                 product.Name,
+		"product_code":         product.ProductCode,
+		"product_type":         product.ProductType,
+		"description":          product.Description,
+		"short_description":    product.ShortDescription,
+		"category":             product.Category,
+		"tags":                 product.Tags,
+		"price_minor":          product.Price,
+		"original_price_minor": product.OriginalPrice,
+		"stock":                product.Stock,
+		"max_purchase_limit":   product.MaxPurchaseLimit,
+		"images":               product.Images,
+		"attributes":           product.Attributes,
+		"status":               product.Status,
+		"sort_order":           product.SortOrder,
+		"is_featured":          product.IsFeatured,
+		"is_recommended":       product.IsRecommended,
+		"remark":               product.Remark,
+		"auto_delivery":        product.AutoDelivery,
+		"inventory_mode":       product.InventoryMode,
+		"view_count":           product.ViewCount,
+		"sale_count":           product.SaleCount,
+		"created_at":           product.CreatedAt,
+		"updated_at":           product.UpdatedAt,
 	}
 
 	// 简化的绑定关系：只返回必要的映射Info，不包含完整的Inventory对象

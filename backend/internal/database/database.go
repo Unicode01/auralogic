@@ -139,6 +139,8 @@ func AutoMigrate() error {
 		&models.ProductVirtualInventoryBinding{},
 		&models.CartItem{},
 		&models.PaymentMethod{},
+		&models.PaymentMethodStorageEntry{},
+		&models.VirtualInventoryStorageEntry{},
 		&models.OrderPaymentMethod{},
 		&models.PaymentPollingTask{},
 		&models.Ticket{},
@@ -175,6 +177,11 @@ func AutoMigrate() error {
 	// Migration: allow reusing product SKU after soft-delete by enforcing uniqueness only for active products.
 	if err := migrateProductActiveUniqueIndexes(); err != nil {
 		log.Printf("Warning: failed to migrate products active-only unique index: %v", err)
+	}
+
+	// Migration: convert legacy decimal money values into minor-unit int64 values.
+	if err := migrateMoneyToMinorUnits(); err != nil {
+		log.Printf("Warning: failed to migrate money values to minor units: %v", err)
 	}
 
 	return nil
@@ -323,6 +330,71 @@ func migrateVirtualInventoryBindingsHash() error {
 
 	log.Printf("Successfully migrated %d virtual inventory bindings", len(bindings))
 	return nil
+}
+
+func migrateMoneyToMinorUnits() error {
+	if DB == nil {
+		return nil
+	}
+
+	// A tiny migration registry table to guarantee idempotency.
+	if err := DB.Exec(`
+CREATE TABLE IF NOT EXISTS system_migrations (
+	name VARCHAR(100) PRIMARY KEY,
+	executed_at TIMESTAMP
+)`).Error; err != nil {
+		return err
+	}
+
+	const migrationName = "money_minor_units_v1"
+	var count int64
+	if err := DB.Table("system_migrations").Where("name = ?", migrationName).Count(&count).Error; err != nil {
+		return err
+	}
+	if count > 0 {
+		return nil
+	}
+
+	return DB.Transaction(func(tx *gorm.DB) error {
+		// Product prices.
+		if err := tx.Exec(`UPDATE products SET
+price = ROUND(COALESCE(price, 0) * 100),
+original_price = ROUND(COALESCE(original_price, 0) * 100)`).Error; err != nil {
+			return err
+		}
+
+		// Order amounts.
+		if err := tx.Exec(`UPDATE orders SET
+total_amount = ROUND(COALESCE(total_amount, 0) * 100),
+discount_amount = ROUND(COALESCE(discount_amount, 0) * 100)`).Error; err != nil {
+			return err
+		}
+
+		// Cart prices.
+		if err := tx.Exec(`UPDATE cart_items SET
+price = ROUND(COALESCE(price, 0) * 100)`).Error; err != nil {
+			return err
+		}
+
+		// Promo code amounts.
+		if err := tx.Exec(`UPDATE promo_codes SET
+discount_value = CASE
+  WHEN discount_type = 'percentage' THEN ROUND(COALESCE(discount_value, 0) * 100)
+  ELSE ROUND(COALESCE(discount_value, 0) * 100)
+END,
+max_discount = ROUND(COALESCE(max_discount, 0) * 100),
+min_order_amount = ROUND(COALESCE(min_order_amount, 0) * 100)`).Error; err != nil {
+			return err
+		}
+
+		if err := tx.Exec(
+			"INSERT INTO system_migrations(name, executed_at) VALUES(?, ?)",
+			migrationName, time.Now().UTC(),
+		).Error; err != nil {
+			return err
+		}
+		return nil
+	})
 }
 
 // migrateAPIKeySecretToHash 将现有API密钥从明文迁移到哈希存储

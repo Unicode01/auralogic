@@ -6,10 +6,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"auralogic/internal/config"
 	"auralogic/internal/models"
 	"auralogic/internal/pkg/response"
+	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
 
@@ -109,11 +109,11 @@ func (h *AnalyticsHandler) GetUserAnalytics(c *gin.Context) {
 
 		// Top users by order count
 		TopUsers []struct {
-			ID         uint    `json:"id"`
-			Name       string  `json:"name"`
-			Email      string  `json:"email"`
-			OrderCount int64   `json:"order_count"`
-			TotalSpent float64 `json:"total_spent"`
+			ID         uint   `json:"id"`
+			Name       string `json:"name"`
+			Email      string `json:"email"`
+			OrderCount int64  `json:"order_count"`
+			TotalSpent int64  `json:"total_spent"`
 		} `json:"top_users"`
 	}
 
@@ -200,7 +200,7 @@ func (h *AnalyticsHandler) GetOrderAnalytics(c *gin.Context) {
 			ThisMonth     int64   `json:"this_month"`
 			LastMonth     int64   `json:"last_month"`
 			MonthlyGrowth float64 `json:"monthly_growth"`
-			AvgOrderValue float64 `json:"avg_order_value"`
+			AvgOrderValue int64   `json:"avg_order_value"`
 			Currency      string  `json:"currency"`
 		} `json:"overview"`
 
@@ -242,12 +242,12 @@ func (h *AnalyticsHandler) GetOrderAnalytics(c *gin.Context) {
 
 		// Top products by sale_count
 		TopProducts []struct {
-			ID        uint    `json:"id"`
-			SKU       string  `json:"sku"`
-			Name      string  `json:"name"`
-			SaleCount int     `json:"sale_count"`
-			Price     float64 `json:"price"`
-			Category  string  `json:"category"`
+			ID        uint   `json:"id"`
+			SKU       string `json:"sku"`
+			Name      string `json:"name"`
+			SaleCount int    `json:"sale_count"`
+			Price     int64  `json:"price_minor"`
+			Category  string `json:"category"`
 		} `json:"top_products"`
 	}
 
@@ -259,13 +259,18 @@ func (h *AnalyticsHandler) GetOrderAnalytics(c *gin.Context) {
 		result.Overview.MonthlyGrowth = float64(result.Overview.ThisMonth-result.Overview.LastMonth) / float64(result.Overview.LastMonth) * 100
 	}
 
-	// Average order value (paid orders only)
-	var avgResult struct{ Avg float64 }
+	// Average order value (paid orders only, integer-safe via sum/count).
+	var avgResult struct {
+		Sum   int64
+		Count int64
+	}
 	h.db.Model(&models.Order{}).
-		Select("COALESCE(AVG(total_amount), 0) as avg").
+		Select("COALESCE(SUM(total_amount), 0) as sum, COUNT(*) as count").
 		Where("status IN ? AND total_amount > 0", paidStatuses).
 		Scan(&avgResult)
-	result.Overview.AvgOrderValue = avgResult.Avg
+	if avgResult.Count > 0 {
+		result.Overview.AvgOrderValue = (avgResult.Sum + avgResult.Count/2) / avgResult.Count
+	}
 	result.Overview.Currency = h.cfg.Order.Currency
 	if result.Overview.Currency == "" {
 		result.Overview.Currency = "CNY"
@@ -317,14 +322,14 @@ func (h *AnalyticsHandler) GetOrderAnalytics(c *gin.Context) {
 	}
 	ranges := []struct {
 		label string
-		min   float64
-		max   float64
+		min   int64
+		max   int64
 	}{
-		{"0-100", 0, 100},
-		{"100-500", 100, 500},
-		{"500-1000", 500, 1000},
-		{"1000-5000", 1000, 5000},
-		{"5000+", 5000, -1},
+		{"0-100", 0, 10000},
+		{"100-500", 10000, 50000},
+		{"500-1000", 50000, 100000},
+		{"1000-5000", 100000, 500000},
+		{"5000+", 500000, -1},
 	}
 	for _, r := range ranges {
 		var count int64
@@ -341,7 +346,7 @@ func (h *AnalyticsHandler) GetOrderAnalytics(c *gin.Context) {
 
 	// Top products by sale_count
 	h.db.Model(&models.Product{}).
-		Select("id, sku, name, sale_count, price, category").
+		Select("id, sku, name, sale_count, price as price_minor, category").
 		Where("sale_count > 0").
 		Order("sale_count DESC").
 		Limit(10).
@@ -375,47 +380,47 @@ func (h *AnalyticsHandler) GetRevenueAnalytics(c *gin.Context) {
 	var result struct {
 		// Overview
 		Overview struct {
-			TotalRevenue    float64 `json:"total_revenue"`
-			ThisMonth       float64 `json:"this_month"`
-			LastMonth       float64 `json:"last_month"`
+			TotalRevenue    int64   `json:"total_revenue"`
+			ThisMonth       int64   `json:"this_month"`
+			LastMonth       int64   `json:"last_month"`
 			MonthlyGrowth   float64 `json:"monthly_growth"`
-			TodayRevenue    float64 `json:"today_revenue"`
-			AvgOrderValue   float64 `json:"avg_order_value"`
+			TodayRevenue    int64   `json:"today_revenue"`
+			AvgOrderValue   int64   `json:"avg_order_value"`
 			TotalPaidOrders int64   `json:"total_paid_orders"`
 			Currency        string  `json:"currency"`
 		} `json:"overview"`
 
 		// Daily revenue trend (last 30 days)
 		DailyTrend []struct {
-			Date    string  `json:"date"`
-			Revenue float64 `json:"revenue"`
-			Count   int64   `json:"count"`
+			Date    string `json:"date"`
+			Revenue int64  `json:"revenue"`
+			Count   int64  `json:"count"`
 		} `json:"daily_trend"`
 
 		// Monthly revenue trend (last 12 months)
 		MonthlyTrend []struct {
-			Month   string  `json:"month"`
-			Revenue float64 `json:"revenue"`
-			Count   int64   `json:"count"`
+			Month   string `json:"month"`
+			Revenue int64  `json:"revenue"`
+			Count   int64  `json:"count"`
 		} `json:"monthly_trend"`
 
 		// Revenue by source
 		RevenueBySource []struct {
-			Source  string  `json:"source"`
-			Revenue float64 `json:"revenue"`
-			Count   int64   `json:"count"`
+			Source  string `json:"source"`
+			Revenue int64  `json:"revenue"`
+			Count   int64  `json:"count"`
 		} `json:"revenue_by_source"`
 
 		// Revenue by country
 		RevenueByCountry []struct {
-			Country string  `json:"country"`
-			Revenue float64 `json:"revenue"`
-			Count   int64   `json:"count"`
+			Country string `json:"country"`
+			Revenue int64  `json:"revenue"`
+			Count   int64  `json:"count"`
 		} `json:"revenue_by_country"`
 	}
 
 	// Overview - total revenue
-	var totalRev struct{ Total float64 }
+	var totalRev struct{ Total int64 }
 	h.db.Model(&models.Order{}).
 		Select("COALESCE(SUM(total_amount), 0) as total").
 		Where("status IN ?", paidStatuses).
@@ -423,7 +428,7 @@ func (h *AnalyticsHandler) GetRevenueAnalytics(c *gin.Context) {
 	result.Overview.TotalRevenue = totalRev.Total
 
 	// This month
-	var thisMonthRev struct{ Total float64 }
+	var thisMonthRev struct{ Total int64 }
 	h.db.Model(&models.Order{}).
 		Select("COALESCE(SUM(total_amount), 0) as total").
 		Where("status IN ? AND created_at >= ?", paidStatuses, monthStart).
@@ -431,7 +436,7 @@ func (h *AnalyticsHandler) GetRevenueAnalytics(c *gin.Context) {
 	result.Overview.ThisMonth = thisMonthRev.Total
 
 	// Last month
-	var lastMonthRev struct{ Total float64 }
+	var lastMonthRev struct{ Total int64 }
 	h.db.Model(&models.Order{}).
 		Select("COALESCE(SUM(total_amount), 0) as total").
 		Where("status IN ? AND created_at >= ? AND created_at < ?", paidStatuses, lastMonthStart, monthStart).
@@ -439,28 +444,30 @@ func (h *AnalyticsHandler) GetRevenueAnalytics(c *gin.Context) {
 	result.Overview.LastMonth = lastMonthRev.Total
 
 	if result.Overview.LastMonth > 0 {
-		result.Overview.MonthlyGrowth = (result.Overview.ThisMonth - result.Overview.LastMonth) / result.Overview.LastMonth * 100
+		result.Overview.MonthlyGrowth = float64(result.Overview.ThisMonth-result.Overview.LastMonth) / float64(result.Overview.LastMonth) * 100
 	}
 
 	// Today
 	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-	var todayRev struct{ Total float64 }
+	var todayRev struct{ Total int64 }
 	h.db.Model(&models.Order{}).
 		Select("COALESCE(SUM(total_amount), 0) as total").
 		Where("status IN ? AND created_at >= ?", paidStatuses, todayStart).
 		Scan(&todayRev)
 	result.Overview.TodayRevenue = todayRev.Total
 
-	// Average and count
+	// Average and count (integer-safe via sum/count).
 	var paidStats struct {
-		Avg   float64
+		Sum   int64
 		Count int64
 	}
 	h.db.Model(&models.Order{}).
-		Select("COALESCE(AVG(total_amount), 0) as avg, COUNT(*) as count").
+		Select("COALESCE(SUM(total_amount), 0) as sum, COUNT(*) as count").
 		Where("status IN ? AND total_amount > 0", paidStatuses).
 		Scan(&paidStats)
-	result.Overview.AvgOrderValue = paidStats.Avg
+	if paidStats.Count > 0 {
+		result.Overview.AvgOrderValue = (paidStats.Sum + paidStats.Count/2) / paidStats.Count
+	}
 	result.Overview.TotalPaidOrders = paidStats.Count
 	result.Overview.Currency = currency
 

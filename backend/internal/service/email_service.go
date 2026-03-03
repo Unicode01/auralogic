@@ -12,6 +12,7 @@ import (
 
 	"auralogic/internal/config"
 	"auralogic/internal/models"
+	"auralogic/internal/pkg/money"
 	"auralogic/internal/pkg/cache"
 	"github.com/go-redis/redis/v8"
 	"gopkg.in/gomail.v2"
@@ -597,7 +598,7 @@ func (s *EmailService) SendOrderPaidEmail(order *models.Order, isVirtualOnly boo
 
 	data := map[string]interface{}{
 		"OrderNo":       order.OrderNo,
-		"TotalAmount":   fmt.Sprintf("%.2f", order.TotalAmount),
+		"TotalAmount":   money.MinorToString(order.TotalAmount),
 		"Currency":      order.Currency,
 		"IsVirtualOnly": isVirtualOnly,
 		"AppURL":        s.appURL,

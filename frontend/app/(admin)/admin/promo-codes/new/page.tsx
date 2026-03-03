@@ -23,15 +23,16 @@ import Link from 'next/link'
 import { useLocale } from '@/hooks/use-locale'
 import { getTranslations } from '@/lib/i18n'
 import { usePageTitle } from '@/hooks/use-page-title'
+import { parseMajorToMinor } from '@/lib/utils'
 
 interface PromoCodeForm {
   code: string
   name: string
   description: string
   discount_type: 'percentage' | 'fixed'
-  discount_value: number
-  max_discount: number
-  min_order_amount: number
+  discount_value: string
+  max_discount: string
+  min_order_amount: string
   total_quantity: number
   status: string
   expires_at: string
@@ -50,9 +51,9 @@ export default function CreatePromoCodePage() {
     name: '',
     description: '',
     discount_type: 'percentage',
-    discount_value: 0,
-    max_discount: 0,
-    min_order_amount: 0,
+    discount_value: '',
+    max_discount: '',
+    min_order_amount: '',
     total_quantity: 0,
     status: 'active',
     expires_at: '',
@@ -71,19 +72,29 @@ export default function CreatePromoCodePage() {
 
   const saveMutation = useMutation({
     mutationFn: async (data: PromoCodeForm) => {
+      const discountValueMinor = parseMajorToMinor(data.discount_value)
+      const minOrderAmountMinor = parseMajorToMinor(data.min_order_amount || '0')
+      if (discountValueMinor === null || minOrderAmountMinor === null) {
+        throw new Error(t.order.invalidPrice)
+      }
+
       const submitData: any = {
         code: data.code,
         name: data.name,
         description: data.description || undefined,
         discount_type: data.discount_type,
-        discount_value: data.discount_value,
-        min_order_amount: data.min_order_amount,
+        discount_value_minor: discountValueMinor,
+        min_order_amount_minor: minOrderAmountMinor,
         total_quantity: data.total_quantity,
         status: data.status,
       }
 
-      if (data.discount_type === 'percentage' && data.max_discount > 0) {
-        submitData.max_discount = data.max_discount
+      const maxDiscountMinor = parseMajorToMinor(data.max_discount || '0')
+      if (maxDiscountMinor === null) {
+        throw new Error(t.order.invalidPrice)
+      }
+      if (data.discount_type === 'percentage') {
+        submitData.max_discount_minor = maxDiscountMinor > 0 ? maxDiscountMinor : 0
       }
 
       if (data.expires_at) {
@@ -121,12 +132,13 @@ export default function CreatePromoCodePage() {
       return
     }
 
-    if (form.discount_value <= 0) {
+    const discountValueMinor = parseMajorToMinor(form.discount_value)
+    if (discountValueMinor === null || discountValueMinor <= 0) {
       toast.error(`${t.promoCode.discountValue} must be greater than 0`)
       return
     }
 
-    if (form.discount_type === 'percentage' && form.discount_value > 100) {
+    if (form.discount_type === 'percentage' && discountValueMinor > 10000) {
       toast.error(`${t.promoCode.discountValue} cannot exceed 100%`)
       return
     }
@@ -248,7 +260,7 @@ export default function CreatePromoCodePage() {
                   step="0.01"
                   min="0.01"
                   value={form.discount_value}
-                  onChange={(e) => setForm({ ...form, discount_value: parseFloat(e.target.value) || 0 })}
+                  onChange={(e) => setForm({ ...form, discount_value: e.target.value })}
                   required
                 />
                 <p className="text-xs text-muted-foreground">
@@ -266,7 +278,7 @@ export default function CreatePromoCodePage() {
                   step="0.01"
                   min="0"
                   value={form.max_discount}
-                  onChange={(e) => setForm({ ...form, max_discount: parseFloat(e.target.value) || 0 })}
+                  onChange={(e) => setForm({ ...form, max_discount: e.target.value })}
                   className="w-64"
                 />
                 <p className="text-xs text-muted-foreground">
@@ -284,7 +296,7 @@ export default function CreatePromoCodePage() {
                   step="0.01"
                   min="0"
                   value={form.min_order_amount}
-                  onChange={(e) => setForm({ ...form, min_order_amount: parseFloat(e.target.value) || 0 })}
+                  onChange={(e) => setForm({ ...form, min_order_amount: e.target.value })}
                 />
                 <p className="text-xs text-muted-foreground">
                   {t.promoCode.minOrderAmountHint}

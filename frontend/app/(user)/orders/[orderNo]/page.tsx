@@ -139,6 +139,7 @@ function OrderDetailContent({ orderNo }: { orderNo: string }) {
   const isPendingPayment = order.status === 'pending_payment'
   const virtualStocks = virtualStocksData?.data?.stocks || []
   const invoiceEnabled = !!publicConfig?.data?.invoice_enabled
+  const showVirtualStockRemark = !!publicConfig?.data?.show_virtual_stock_remark
 
   const handleFormSuccess = () => {
     setFormToken(null)
@@ -245,6 +246,7 @@ function OrderDetailContent({ orderNo }: { orderNo: string }) {
         order={order}
         virtualStocks={virtualStocks}
         isVirtualOnly={isVirtualOnly}
+        showVirtualStockRemark={showVirtualStockRemark}
         paymentCard={isPendingPayment ? <PaymentMethodCard orderNo={orderNo} onPaymentSelected={() => { setPaymentMethodSelected(true); refetch() }} /> : undefined}
         shippingForm={shippingFormNode}
       />

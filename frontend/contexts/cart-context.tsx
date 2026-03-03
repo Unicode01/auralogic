@@ -39,7 +39,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
   })
 
   const items = cartData?.data?.items || []
-  const totalPrice = cartData?.data?.total_price || 0
+  const totalPrice = cartData?.data?.total_price_minor || 0
 
   const { data: publicConfig } = useQuery({
     queryKey: ['publicConfig'],

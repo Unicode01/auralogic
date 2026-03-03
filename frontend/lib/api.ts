@@ -153,11 +153,6 @@ export async function deleteProductBinding(productId: number, bindingId: number)
   return apiClient.delete(`/api/admin/products/${productId}/inventory-bindings/${bindingId}`)
 }
 
-// 批量删除商品的所有库存绑定
-export async function deleteAllProductBindings(productId: number) {
-  return apiClient.delete(`/api/admin/products/${productId}/inventory-bindings`)
-}
-
 // 替换商品的所有库存绑定（先删除所有，再批量创建）
 export async function replaceProductBindings(productId: number, bindings: any[]) {
   return apiClient.put(`/api/admin/products/${productId}/inventory-bindings/replace`, {
@@ -200,6 +195,7 @@ export async function getLowStockList() {
 export async function getInventoryLogs(params?: {
   page?: number
   limit?: number
+  source?: string
   inventory_id?: number
   type?: string
   order_no?: string
@@ -209,6 +205,7 @@ export async function getInventoryLogs(params?: {
   const query = new URLSearchParams()
   if (params?.page) query.append('page', params.page.toString())
   if (params?.limit) query.append('limit', params.limit.toString())
+  if (params?.source) query.append('source', params.source)
   if (params?.inventory_id) query.append('inventory_id', params.inventory_id.toString())
   if (params?.type) query.append('type', params.type)
   if (params?.order_no) query.append('order_no', params.order_no)
@@ -409,9 +406,6 @@ export async function getOrderVirtualProducts(orderNo: string) {
   return apiClient.get(`/api/user/orders/${orderNo}/virtual-products`)
 }
 
-export async function getOrderInvoice(orderNo: string) {
-  return apiClient.get(`/api/user/orders/${orderNo}/invoice`, { responseType: 'text' })
-}
 
 export async function getInvoiceToken(orderNo: string) {
   return apiClient.get(`/api/user/orders/${orderNo}/invoice-token`)
@@ -472,7 +466,8 @@ export interface CartItem {
   product_id: number
   sku: string
   name: string
-  price: number
+  // Minor units (e.g. cents)
+  price_minor: number
   image_url: string
   product_type: string
   quantity: number
@@ -484,7 +479,8 @@ export interface CartItem {
 
 export interface CartResponse {
   items: CartItem[]
-  total_price: number
+  // Minor units (e.g. cents)
+  total_price_minor: number
   total_quantity: number
   item_count: number
 }
@@ -636,9 +632,6 @@ export async function adminRefundOrder(id: number, reason?: string) {
   return apiClient.post(`/api/admin/orders/${id}/refund`, { reason })
 }
 
-export async function completeAllShippedOrders() {
-  return apiClient.post('/api/admin/orders/batch/complete-shipped')
-}
 
 export async function batchUpdateOrders(orderIds: number[], action: string) {
   return apiClient.post('/api/admin/orders/batch/update', { order_ids: orderIds, action })
@@ -660,8 +653,8 @@ export async function adminDeliverVirtualStock(id: number) {
   return apiClient.post(`/api/admin/orders/${id}/deliver-virtual`)
 }
 
-export async function updateOrderPrice(id: number, totalAmount: number) {
-  return apiClient.put(`/api/admin/orders/${id}/price`, { total_amount: totalAmount })
+export async function updateOrderPrice(id: number, totalAmountMinor: number) {
+  return apiClient.put(`/api/admin/orders/${id}/price`, { total_amount_minor: totalAmountMinor })
 }
 
 // 用户管理
@@ -1011,11 +1004,6 @@ export async function getVirtualInventoryStockList(virtualInventoryId: number, p
 // Alias for getVirtualInventoryStockList
 export const getVirtualInventoryStocks = getVirtualInventoryStockList
 
-// Get virtual inventory stock stats
-export async function getVirtualInventoryStockStats(virtualInventoryId: number) {
-  return apiClient.get(`/api/admin/virtual-inventories/${virtualInventoryId}/stats`)
-}
-
 // Delete virtual inventory stock item
 export async function deleteVirtualInventoryStock(virtualInventoryId: number, stockId: number) {
   return apiClient.delete(`/api/admin/virtual-inventories/${virtualInventoryId}/stocks/${stockId}`)
@@ -1029,11 +1017,6 @@ export async function reserveVirtualInventoryStock(virtualInventoryId: number, s
 // Release virtual inventory stock item (manual)
 export async function releaseVirtualInventoryStock(virtualInventoryId: number, stockId: number) {
   return apiClient.post(`/api/admin/virtual-inventories/${virtualInventoryId}/stocks/${stockId}/release`)
-}
-
-// Get products bound to virtual inventory
-export async function getVirtualInventoryProducts(virtualInventoryId: number) {
-  return apiClient.get(`/api/admin/virtual-inventories/${virtualInventoryId}/products`)
 }
 
 // Test delivery script
@@ -1058,14 +1041,7 @@ export async function createProductVirtualInventoryBinding(productId: number, da
   return apiClient.post(`/api/admin/products/${productId}/virtual-inventory-bindings`, data)
 }
 
-// Update product virtual inventory binding
-export async function updateProductVirtualInventoryBinding(productId: number, bindingId: number, data: {
-  is_random?: boolean
-  priority?: number
-  notes?: string
-}) {
-  return apiClient.put(`/api/admin/products/${productId}/virtual-inventory-bindings/${bindingId}`, data)
-}
+
 
 // Delete product virtual inventory binding
 export async function deleteProductVirtualInventoryBinding(productId: number, bindingId: number) {
@@ -1125,10 +1101,7 @@ export async function resetLandingPage() {
   return apiClient.post('/api/admin/settings/landing-page/reset')
 }
 
-// 页面访问分析
-export async function getPageViewAnalytics() {
-  return apiClient.get('/api/admin/analytics/pageviews')
-}
+
 
 // 公开配置（无需登录）
 export async function getPublicConfig() {
@@ -1212,9 +1185,6 @@ export async function getOrderPaymentInfo(orderNo: string) {
   return apiClient.get(`/api/user/orders/${orderNo}/payment-info`)
 }
 
-export async function getOrderPaymentCard(orderNo: string, paymentMethodId: number) {
-  return apiClient.get(`/api/user/orders/${orderNo}/payment-card`, { params: { payment_method_id: paymentMethodId } })
-}
 
 export async function selectOrderPaymentMethod(orderNo: string, paymentMethodId: number) {
   return apiClient.post(`/api/user/orders/${orderNo}/select-payment`, { payment_method_id: paymentMethodId })
@@ -1317,9 +1287,7 @@ export async function getTicketSharedOrders(ticketId: number) {
   return apiClient.get(`/api/user/tickets/${ticketId}/shared-orders`)
 }
 
-export async function revokeTicketOrderAccess(ticketId: number, orderId: number) {
-  return apiClient.delete(`/api/user/tickets/${ticketId}/shared-orders/${orderId}`)
-}
+
 
 // 管理端工单 API
 export async function getAdminTickets(params?: {
@@ -1428,9 +1396,12 @@ export async function createPromoCode(data: {
   name: string
   description?: string
   discount_type: 'percentage' | 'fixed'
-  discount_value: number
-  max_discount?: number
-  min_order_amount?: number
+  // fixed: minor units, percentage: basis points (10000 = 100%)
+  discount_value_minor: number
+  // minor units
+  max_discount_minor?: number
+  // minor units
+  min_order_amount_minor?: number
   total_quantity?: number
   product_ids?: number[]
   status?: string
@@ -1445,9 +1416,12 @@ export async function updatePromoCode(id: number, data: {
   name?: string
   description?: string
   discount_type?: 'percentage' | 'fixed'
-  discount_value?: number
-  max_discount?: number
-  min_order_amount?: number
+  // fixed: minor units, percentage: basis points (10000 = 100%)
+  discount_value_minor?: number
+  // minor units
+  max_discount_minor?: number
+  // minor units
+  min_order_amount_minor?: number
   total_quantity?: number
   product_ids?: number[]
   status?: string
@@ -1465,7 +1439,8 @@ export async function deletePromoCode(id: number) {
 export async function validatePromoCode(data: {
   code: string
   product_ids?: number[]
-  amount?: number
+  // minor units
+  amount_minor?: number
 }) {
   return apiClient.post('/api/user/promo-codes/validate', data)
 }

@@ -62,6 +62,7 @@ export default function LogsPage() {
     end_date: '',
   })
   const [inventoryFilters, setInventoryFilters] = useState({
+    source: '',
     type: '',
     inventory_id: '',
     order_no: '',
@@ -102,7 +103,7 @@ export default function LogsPage() {
     queryKey: ['inventoryLogs', inventoryPage, inventoryFilters],
     queryFn: () => getInventoryLogs({
       ...inventoryFilters,
-      inventory_id: inventoryFilters.inventory_id ? parseInt(inventoryFilters.inventory_id) : undefined,
+      inventory_id: inventoryFilters.inventory_id ? (parseInt(inventoryFilters.inventory_id) || undefined) : undefined,
       page: inventoryPage,
       limit: 20
     }),
@@ -199,7 +200,7 @@ export default function LogsPage() {
       header: 'ID',
       accessorKey: 'id',
       cell: ({ row }: { row: { original: any } }) => (
-        <span className="text-xs text-gray-500">#{row.original.id}</span>
+        <span className="text-xs text-muted-foreground">#{row.original.id}</span>
       ),
     },
     {
@@ -223,7 +224,7 @@ export default function LogsPage() {
         row.original.event_type ? (
           <Badge variant="secondary">{row.original.event_type}</Badge>
         ) : (
-          <span className="text-gray-400">-</span>
+          <span className="text-muted-foreground">-</span>
         ),
     },
     {
@@ -255,7 +256,7 @@ export default function LogsPage() {
     {
       header: t.admin.sentTime,
       cell: ({ row }: { row: { original: any } }) =>
-        row.original.sent_at ? formatDate(row.original.sent_at) : <span className="text-gray-400">-</span>,
+        row.original.sent_at ? formatDate(row.original.sent_at) : <span className="text-muted-foreground">-</span>,
     },
   ]
 
@@ -274,9 +275,9 @@ export default function LogsPage() {
               <FileText className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{statistics.data.operation_log_count.today}</div>
+              <div className="text-2xl font-bold">{statistics.data.operation_log_count?.today ?? 0}</div>
               <p className="text-xs text-muted-foreground">
-                {t.admin.thisWeek}: {statistics.data.operation_log_count.week}
+                {t.admin.thisWeek}: {statistics.data.operation_log_count?.week ?? 0}
               </p>
             </CardContent>
           </Card>
@@ -286,9 +287,9 @@ export default function LogsPage() {
               <Mail className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{statistics.data.email_log_count.today}</div>
+              <div className="text-2xl font-bold">{statistics.data.email_log_count?.today ?? 0}</div>
               <p className="text-xs text-muted-foreground">
-                {t.admin.thisWeek}: {statistics.data.email_log_count.week}
+                {t.admin.thisWeek}: {statistics.data.email_log_count?.week ?? 0}
               </p>
             </CardContent>
           </Card>
@@ -299,7 +300,7 @@ export default function LogsPage() {
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold text-yellow-600">
-                {statistics.data.email_log_count.pending}
+                {statistics.data.email_log_count?.pending ?? 0}
               </div>
               <p className="text-xs text-muted-foreground">{t.admin.pendingQueue}</p>
             </CardContent>
@@ -311,7 +312,7 @@ export default function LogsPage() {
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold text-red-600">
-                {statistics.data.email_log_count.failed}
+                {statistics.data.email_log_count?.failed ?? 0}
               </div>
               <p className="text-xs text-muted-foreground">{t.admin.needRetry}</p>
             </CardContent>
@@ -578,7 +579,25 @@ export default function LogsPage() {
               <CardTitle className="text-base">{t.admin.filterConditions}</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="grid gap-4 md:grid-cols-5">
+              <div className="grid gap-4 md:grid-cols-6">
+                <div>
+                  <Label htmlFor="inv_source">{t.admin.inventorySource}</Label>
+                  <Select
+                    value={inventoryFilters.source || 'all'}
+                    onValueChange={(value) =>
+                      setInventoryFilters({ ...inventoryFilters, source: value === 'all' ? '' : value })
+                    }
+                  >
+                    <SelectTrigger id="inv_source">
+                      <SelectValue placeholder={t.admin.all} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">{t.admin.all}</SelectItem>
+                      <SelectItem value="physical">{t.admin.physicalInventory}</SelectItem>
+                      <SelectItem value="virtual">{t.admin.virtualInventory}</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
                 <div>
                   <Label htmlFor="inv_type">{t.admin.operationType}</Label>
                   <Select
@@ -597,6 +616,9 @@ export default function LogsPage() {
                       <SelectItem value="reserve">{t.admin.reserve}</SelectItem>
                       <SelectItem value="release">{t.admin.release}</SelectItem>
                       <SelectItem value="adjust">{t.admin.adjust}</SelectItem>
+                      <SelectItem value="import">{t.admin.stockImport}</SelectItem>
+                      <SelectItem value="deliver">{t.admin.stockDeliver}</SelectItem>
+                      <SelectItem value="delete">{t.admin.stockDelete}</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -639,6 +661,7 @@ export default function LogsPage() {
                     variant="outline"
                     onClick={() => {
                       setInventoryFilters({
+                        source: '',
                         type: '',
                         inventory_id: '',
                         order_no: '',
@@ -660,7 +683,7 @@ export default function LogsPage() {
               {
                 header: 'ID',
                 accessorKey: 'id',
-                cell: ({ row }: any) => <span className="text-xs text-gray-500">#{row.original.id}</span>,
+                cell: ({ row }: any) => <span className="text-xs text-muted-foreground">#{row.original.id}</span>,
               },
               {
                 header: t.admin.inventoryIdLabel,
@@ -677,6 +700,9 @@ export default function LogsPage() {
                     reserve: { label: t.admin.reserve, color: 'secondary' },
                     release: { label: t.admin.release, color: 'secondary' },
                     adjust: { label: t.admin.adjust, color: 'default' },
+                    import: { label: t.admin.stockImport, color: 'default' },
+                    deliver: { label: t.admin.stockDeliver, color: 'default' },
+                    delete: { label: t.admin.stockDelete, color: 'destructive' },
                   }
                   const config = typeMap[row.original.type] || { label: row.original.type, color: 'secondary' }
                   return <Badge variant={config.color}>{config.label}</Badge>
@@ -694,15 +720,24 @@ export default function LogsPage() {
               {
                 header: t.admin.beforeChange,
                 accessorKey: 'before_stock',
+                cell: ({ row }: any) => row.original.source === 'virtual' ? <span className="text-muted-foreground">-</span> : row.original.before_stock,
               },
               {
                 header: t.admin.afterChange,
                 accessorKey: 'after_stock',
+                cell: ({ row }: any) => row.original.source === 'virtual' ? <span className="text-muted-foreground">-</span> : row.original.after_stock,
+              },
+              {
+                header: t.admin.batchNo,
+                accessorKey: 'batch_no',
+                cell: ({ row }: any) => row.original.batch_no ? (
+                  <code className="text-xs bg-muted px-2 py-1 rounded">{row.original.batch_no}</code>
+                ) : <span className="text-muted-foreground">-</span>,
               },
               {
                 header: t.admin.orderNoLabel,
                 accessorKey: 'order_no',
-                cell: ({ row }: any) => row.original.order_no || <span className="text-gray-400">-</span>,
+                cell: ({ row }: any) => row.original.order_no || <span className="text-muted-foreground">-</span>,
               },
               {
                 header: t.admin.operator,
@@ -817,7 +852,7 @@ export default function LogsPage() {
               {
                 header: 'ID',
                 accessorKey: 'id',
-                cell: ({ row }: any) => <span className="text-xs text-gray-500">#{row.original.id}</span>,
+                cell: ({ row }: any) => <span className="text-xs text-muted-foreground">#{row.original.id}</span>,
               },
               {
                 header: t.admin.smsPhone,
@@ -838,7 +873,7 @@ export default function LogsPage() {
                   row.original.event_type ? (
                     <Badge variant="secondary">{row.original.event_type}</Badge>
                   ) : (
-                    <span className="text-gray-400">-</span>
+                    <span className="text-muted-foreground">-</span>
                   ),
               },
               {

@@ -401,7 +401,10 @@ function AdminOrdersContent() {
     {
       header: t.admin.createdAt,
       cell: ({ row }: { row: { original: any } }) => {
-        const date = new Date(row.original.createdAt || row.original.created_at)
+        const raw = row.original.createdAt || row.original.created_at
+        if (!raw) return <span className="text-sm">-</span>
+        const date = new Date(raw)
+        if (isNaN(date.getTime())) return <span className="text-sm">-</span>
         return <span className="text-sm">{date.toLocaleDateString(locale === 'zh' ? 'zh-CN' : 'en-US')}</span>
       },
     },
@@ -456,22 +459,27 @@ function AdminOrdersContent() {
         onStatusChange={(newStatus) => {
           setStatus(newStatus)
           setPage(1)
+          setSelectedIds(new Set())
         }}
         onSearchChange={(newSearch) => {
           setSearch(newSearch)
           setPage(1)
+          setSelectedIds(new Set())
         }}
         onProductSearchChange={(newProductSearch) => {
           setProductSearch(newProductSearch)
           setPage(1)
+          setSelectedIds(new Set())
         }}
         onUserChange={(newUserId) => {
           setUserId(newUserId)
           setPage(1)
+          setSelectedIds(new Set())
         }}
         onCountryChange={(newCountry) => {
           setCountry(newCountry)
           setPage(1)
+          setSelectedIds(new Set())
         }}
       />
 

@@ -23,9 +23,8 @@ export interface Product {
   short_description?: string
   category?: string
   tags?: string[]
-  price: number
-  originalPrice?: number
-  original_price?: number
+  price_minor: number
+  original_price_minor: number
   stock: number
   images?: ProductImage[]
   attributes?: ProductAttribute[]
@@ -79,8 +78,8 @@ export interface CreateProductRequest {
   short_description?: string
   category?: string
   tags?: string[]
-  price: number
-  original_price?: number
+  price_minor: number
+  original_price_minor?: number
   stock: number
   images?: ProductImage[]
   attributes?: ProductAttribute[]

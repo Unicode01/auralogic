@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   getPaymentMethods,
@@ -97,11 +97,6 @@ export default function PaymentMethodsPage() {
   const configFlushRef = useRef<(() => string | null) | null>(null)
   const [dragIndex, setDragIndex] = useState<number | null>(null)
   const [overIndex, setOverIndex] = useState<number | null>(null)
-
-  // 页面加载时清除缓存并重新获取
-  useEffect(() => {
-    queryClient.removeQueries({ queryKey: ['paymentMethods'] })
-  }, [])
 
   // 表单状态
   const [formData, setFormData] = useState({
@@ -233,6 +228,9 @@ export default function PaymentMethodsPage() {
 
   const reorderMutation = useMutation({
     mutationFn: reorderPaymentMethods,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['paymentMethods'] })
+    },
     onError: (error: any) => {
       if (error.code === 40010 && error.data?.error_key) {
         toast.error(translateBizError(t, error.data.error_key, error.data.params, error.message))

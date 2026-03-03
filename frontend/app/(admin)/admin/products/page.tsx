@@ -54,12 +54,14 @@ export default function AdminProductsPage() {
   const t = getTranslations(locale)
   usePageTitle(t.pageTitle.adminProducts)
 
-  const statusConfig = {
+  const statusConfig: Record<string, { label: string; color: string }> = {
     draft: { label: t.admin.draft, color: 'bg-muted text-muted-foreground' },
     active: { label: t.admin.onSale, color: 'bg-green-500/20 text-green-700 dark:text-green-400' },
     inactive: { label: t.admin.offSale, color: 'bg-yellow-500/20 text-yellow-700 dark:text-yellow-400' },
     out_of_stock: { label: t.admin.outOfStock, color: 'bg-red-500/20 text-red-700 dark:text-red-400' },
   }
+
+  const defaultStatusConfig = { label: '-', color: 'bg-muted text-muted-foreground' }
 
   const { data, isLoading, refetch } = useQuery({
     queryKey: ['adminProducts', page, status, category, search],
@@ -160,10 +162,10 @@ export default function AdminProductsPage() {
         const product = row.original
         return (
           <div>
-            <div className="font-medium">{formatPrice(product.price, currency)}</div>
-            {product.original_price && product.original_price > product.price && (
+            <div className="font-medium">{formatPrice(product.price_minor, currency)}</div>
+            {product.original_price_minor > product.price_minor && (
               <div className="text-sm text-muted-foreground line-through">
-                {formatPrice(product.original_price, currency)}
+                {formatPrice(product.original_price_minor, currency)}
               </div>
             )}
           </div>
@@ -175,7 +177,7 @@ export default function AdminProductsPage() {
       cell: ({ row }: { row: { original: Product } }) => {
         const product = row.original
         const status = product.status
-        const config = statusConfig[status]
+        const config = statusConfig[status] || defaultStatusConfig
         return (
           <Badge
             className={`${config.color} cursor-pointer hover:opacity-80 transition-opacity`}

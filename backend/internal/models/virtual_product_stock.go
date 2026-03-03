@@ -38,7 +38,7 @@ type VirtualProductStock struct {
 	DeliveredBy *uint      `json:"delivered_by,omitempty"`
 
 	// 导入批次
-	BatchNo    string `gorm:"type:varchar(100);index" json:"batch_no,omitempty"` // 批次号，用于追踪导入批次
+	BatchNo    string `gorm:"type:varchar(100);index" json:"batch_no,omitempty"` // 批次记录，用于追踪导入批次
 	ImportedBy string `gorm:"type:varchar(100)" json:"imported_by,omitempty"`    // 导入人
 
 	CreatedAt time.Time      `json:"created_at"`

@@ -101,7 +101,18 @@ func (s *PaymentMethodService) Update(id uint, updates map[string]interface{}) e
 
 // Delete 删除付款方式
 func (s *PaymentMethodService) Delete(id uint) error {
-	return s.db.Delete(&models.PaymentMethod{}, id).Error
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("payment_method_id = ?", id).
+			Delete(&models.PaymentMethodStorageEntry{}).Error; err != nil {
+			return err
+		}
+		return tx.Delete(&models.PaymentMethod{}, id).Error
+	})
+	if err != nil {
+		return err
+	}
+	releasePaymentStorageLock(id)
+	return nil
 }
 
 // ToggleEnabled 切换启用状态
@@ -176,7 +187,7 @@ func (s *PaymentMethodService) GetCachedPaymentCard(orderID uint) (*PaymentCardR
 	}
 
 	// 检查缓存是否过期
-	if opm.CacheExpiresAt != nil && time.Now().After(*opm.CacheExpiresAt) {
+	if opm.CacheExpiresAt != nil && !time.Now().Before(*opm.CacheExpiresAt) {
 		// 缓存已过期，返回 nil
 		return nil, nil
 	}
@@ -274,7 +285,7 @@ func (s *PaymentMethodService) TestScript(script string, config map[string]inter
 	testOrder := &models.Order{
 		OrderNo:     "TEST-ORDER-001",
 		Status:      models.OrderStatusPendingPayment,
-		TotalAmount: 99.99,
+		TotalAmount: 9999,
 		Currency:    "CNY",
 	}
 

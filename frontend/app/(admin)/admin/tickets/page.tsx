@@ -138,7 +138,8 @@ export default function AdminTicketsPage() {
     queryKey: ['adminTicketMessages', selectedTicketId],
     queryFn: () => getAdminTicketMessages(selectedTicketId!),
     enabled: !!selectedTicketId,
-    refetchInterval: 2000, // 2秒轮询
+    refetchInterval: 5000,
+    refetchIntervalInBackground: false,
   })
 
   // 获取分享的订单
@@ -636,7 +637,7 @@ export default function AdminTicketsPage() {
                         <div>
                           <dt className="text-muted-foreground">{t.ticket.amount}</dt>
                           <dd className="font-semibold text-primary">
-                            {formatCurrency(order.total_amount, order.currency)}
+                            {formatCurrency(order.total_amount_minor ?? 0, order.currency)}
                           </dd>
                         </div>
                         <div>

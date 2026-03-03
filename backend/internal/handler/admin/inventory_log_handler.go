@@ -20,6 +20,7 @@ func NewInventoryLogHandler(db *gorm.DB) *InventoryLogHandler {
 // ListInventoryLogs getInventory日志列表
 func (h *InventoryLogHandler) ListInventoryLogs(c *gin.Context) {
 	page, limit := response.GetPagination(c)
+	source := c.Query("source")
 	inventoryID := c.Query("inventory_id")
 	logType := c.Query("type")
 	orderNo := c.Query("order_no")
@@ -30,6 +31,11 @@ func (h *InventoryLogHandler) ListInventoryLogs(c *gin.Context) {
 	var total int64
 
 	query := h.db.Model(&models.InventoryLog{})
+
+	// 来源筛选
+	if source != "" {
+		query = query.Where("source = ?", source)
+	}
 
 	// 过滤条件
 	if inventoryID != "" {
@@ -72,6 +78,8 @@ func (h *InventoryLogHandler) ListInventoryLogs(c *gin.Context) {
 
 // GetInventoryLogStatistics getInventory日志统计
 func (h *InventoryLogHandler) GetInventoryLogStatistics(c *gin.Context) {
+	source := c.Query("source")
+
 	var stats struct {
 		TotalLogs   int64 `json:"total_logs"`
 		InLogs      int64 `json:"in_logs"`
@@ -79,14 +87,25 @@ func (h *InventoryLogHandler) GetInventoryLogStatistics(c *gin.Context) {
 		ReserveLogs int64 `json:"reserve_logs"`
 		ReleaseLogs int64 `json:"release_logs"`
 		AdjustLogs  int64 `json:"adjust_logs"`
+		ImportLogs  int64 `json:"import_logs"`
+		DeliverLogs int64 `json:"deliver_logs"`
+		DeleteLogs  int64 `json:"delete_logs"`
 	}
 
-	h.db.Model(&models.InventoryLog{}).Count(&stats.TotalLogs)
+	baseQuery := h.db.Model(&models.InventoryLog{})
+	if source != "" {
+		baseQuery = baseQuery.Where("source = ?", source)
+	}
+
+	baseQuery.Count(&stats.TotalLogs)
 	h.db.Model(&models.InventoryLog{}).Where("type = ?", models.InventoryLogTypeIn).Count(&stats.InLogs)
 	h.db.Model(&models.InventoryLog{}).Where("type = ?", models.InventoryLogTypeOut).Count(&stats.OutLogs)
 	h.db.Model(&models.InventoryLog{}).Where("type = ?", models.InventoryLogTypeReserve).Count(&stats.ReserveLogs)
 	h.db.Model(&models.InventoryLog{}).Where("type = ?", models.InventoryLogTypeRelease).Count(&stats.ReleaseLogs)
 	h.db.Model(&models.InventoryLog{}).Where("type = ?", models.InventoryLogTypeAdjust).Count(&stats.AdjustLogs)
+	h.db.Model(&models.InventoryLog{}).Where("type = ?", models.InventoryLogTypeImport).Count(&stats.ImportLogs)
+	h.db.Model(&models.InventoryLog{}).Where("type = ?", models.InventoryLogTypeDeliver).Count(&stats.DeliverLogs)
+	h.db.Model(&models.InventoryLog{}).Where("type = ?", models.InventoryLogTypeDelete).Count(&stats.DeleteLogs)
 
 	response.Success(c, stats)
 }

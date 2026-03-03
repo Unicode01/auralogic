@@ -5,7 +5,6 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { getProduct, createOrder, getProductAvailableStock, addToCart, validatePromoCode, getPublicConfig } from '@/lib/api'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Separator } from '@/components/ui/separator'
 import { Star, Package, Eye, ShoppingCart, Loader2, ArrowLeft, Key, Minus, Plus, Tag } from 'lucide-react'
 import { useState, useRef, useCallback, useMemo } from 'react'
 import { Input } from '@/components/ui/input'
@@ -42,9 +41,9 @@ export default function ProductDetailPage() {
     promo_code_id: number
     name: string
     discount_type: string
-    discount_value: number
-    max_discount: number
-    min_order_amount: number
+    discount_value_minor: number
+    max_discount_minor: number
+    min_order_amount_minor: number
   } | null>(null)
 
   const { data, isLoading } = useQuery({
@@ -166,18 +165,18 @@ export default function ProductDetailPage() {
   }, [])
 
   // 实时计算优惠码折扣（基于当前数量和单价）
-  const subtotal = data?.data ? data.data.price * quantity : 0
+  const subtotal = data?.data ? (data.data.price_minor || 0) * quantity : 0
   const promoDiscount = useMemo(() => {
     if (!appliedPromo || subtotal <= 0) return 0
 
     if (appliedPromo.discount_type === 'percentage') {
-      let discount = subtotal * appliedPromo.discount_value / 100
-      if (appliedPromo.max_discount > 0 && discount > appliedPromo.max_discount) {
-        discount = appliedPromo.max_discount
+      let discount = subtotal * appliedPromo.discount_value_minor / 10000
+      if (appliedPromo.max_discount_minor > 0 && discount > appliedPromo.max_discount_minor) {
+        discount = appliedPromo.max_discount_minor
       }
       return Math.min(discount, subtotal)
     } else {
-      return Math.min(appliedPromo.discount_value, subtotal)
+      return Math.min(appliedPromo.discount_value_minor, subtotal)
     }
   }, [appliedPromo, subtotal])
 
@@ -220,9 +219,10 @@ export default function ProductDetailPage() {
     : images
 
   const isFeatured = product.is_featured || product.isFeatured
-  const hasDiscount = product.original_price && product.original_price > product.price
+  const hasDiscount = product.original_price_minor > product.price_minor
 
   const availableStock = stockData?.data?.available_stock ?? 0
+  const isUnlimitedStock = !!stockData?.data?.is_unlimited
   const isAvailable = availableStock > 0
   const productMaxPurchaseLimit = product.max_purchase_limit ?? product.maxPurchaseLimit ?? 0
   const maxSelectableQuantity = Math.min(
@@ -352,11 +352,11 @@ export default function ProductDetailPage() {
 
     setIsValidatingPromo(true)
     try {
-      const amount = product.price * quantity
+      const amountMinor = (product.price_minor || 0) * quantity
       const response = await validatePromoCode({
         code: promoCodeInput.trim(),
         product_ids: [productId],
-        amount,
+        amount_minor: amountMinor,
       })
 
       const data = response.data
@@ -365,14 +365,14 @@ export default function ProductDetailPage() {
         promo_code_id: data.promo_code_id,
         name: data.name,
         discount_type: data.discount_type,
-        discount_value: data.discount_value,
-        max_discount: data.max_discount || 0,
-        min_order_amount: data.min_order_amount || 0,
+        discount_value_minor: data.discount_value_minor,
+        max_discount_minor: data.max_discount_minor || 0,
+        min_order_amount_minor: data.min_order_amount_minor || 0,
       })
       toast.success(
         t.promoCode.promoCodeApplied
           .replace('{code}', data.promo_code)
-          .replace('{discount}', formatPrice(data.discount, currency))
+          .replace('{discount}', formatPrice(data.discount_minor, currency))
       )
     } catch (error: any) {
       const msg = error?.message || t.promoCode.invalidCode
@@ -497,7 +497,7 @@ export default function ProductDetailPage() {
         </div>
       </div>
 
-      <div className="flex gap-8">
+      <div className="flex gap-8 items-start">
         {/* Left: Image gallery (sticky) */}
         <div className="w-[520px] shrink-0 sticky top-4 self-start hidden md:block">
           <div className="space-y-3">
@@ -579,327 +579,342 @@ export default function ProductDetailPage() {
         </div>
 
         {/* Right: Product info */}
-        <div className="flex-1 min-w-0 space-y-4">
-          {/* Title + stats */}
-          <div>
-            <h2 className="text-2xl font-bold leading-tight mb-2">{product.name}</h2>
-            <div className="flex items-center gap-4 text-sm text-muted-foreground">
-              <span className="flex items-center gap-1.5">
-                <Eye className="w-3.5 h-3.5" />
-                {product.view_count || 0} {t.product.views}
-              </span>
-              <span className="flex items-center gap-1.5">
-                <ShoppingCart className="w-3.5 h-3.5" />
-                {product.sale_count || 0} {t.product.sales}
-              </span>
-            </div>
-          </div>
-
-          {/* Price card */}
-          <div className="rounded-xl bg-muted/50 border border-border p-4 space-y-2">
-            <div className="flex flex-col sm:flex-row sm:items-baseline gap-1 sm:gap-3">
-              <span className="text-3xl font-bold text-red-500">
-                {formatPrice(product.price, currency)}
-              </span>
-              {hasDiscount && (
-                <div className="flex items-center gap-2">
-                  <span className="text-base text-muted-foreground line-through">
-                    {formatPrice(product.original_price!, currency)}
+        <div className="flex-1 min-w-0 self-start">
+          <div className="space-y-4 md:space-y-5 md:sticky md:top-2">
+            {/* Summary card */}
+            <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
+              <div className="p-5 md:p-6 bg-gradient-to-br from-muted/50 via-background to-background border-b border-border/70">
+                <h2 className="text-2xl font-bold leading-tight mb-3">{product.name}</h2>
+                <div className="flex flex-wrap items-center gap-2.5 text-sm text-muted-foreground">
+                  <span className="flex items-center gap-1.5 rounded-full bg-muted/80 px-3 py-1">
+                    <Eye className="w-3.5 h-3.5" />
+                    {product.view_count || 0} {t.product.views}
                   </span>
-                  <Badge variant="destructive" className="text-xs">
-                    {t.product.save} {getCurrencySymbol(currency)}{(product.original_price! - product.price).toFixed(2)}
-                  </Badge>
-                </div>
-              )}
-            </div>
-            {appliedPromo && promoDiscount > 0 && (
-              <div className="flex items-baseline gap-3 pt-1 border-t border-border/50 mt-2">
-                <div className="flex items-center gap-2">
-                  <Tag className="h-3.5 w-3.5 text-green-600 dark:text-green-400" />
-                  <span className="text-sm text-muted-foreground line-through">
-                    {formatPrice(subtotal, currency)}
+                  <span className="flex items-center gap-1.5 rounded-full bg-muted/80 px-3 py-1">
+                    <ShoppingCart className="w-3.5 h-3.5" />
+                    {product.sale_count || 0} {t.product.sales}
                   </span>
                 </div>
-                <span className="text-2xl font-bold text-green-600 dark:text-green-400">
-                  {formatPrice(subtotal - promoDiscount, currency)}
-                </span>
-                <Badge variant="outline" className="text-xs text-green-600 dark:text-green-400 border-green-500/30">
-                  -{appliedPromo.discount_type === 'percentage'
-                    ? `${appliedPromo.discount_value}%`
-                    : formatPrice(appliedPromo.discount_value, currency)}
-                </Badge>
               </div>
-            )}
-            <div className="text-sm text-muted-foreground">
-              SKU: {product.sku}
-            </div>
-          </div>
 
-          {/* Virtual product notice */}
-          {isVirtual && (
-            <div className="rounded-xl bg-purple-500/10 border border-purple-500/20 p-4">
-              <div className="flex items-start gap-3">
-                <Key className="w-5 h-5 text-purple-500 mt-0.5 shrink-0" />
-                <div className="text-sm text-purple-700 dark:text-purple-300 leading-relaxed">
-                  {product.auto_delivery || product.autoDelivery
-                    ? t.product.virtualProductNoticeInstant
-                    : t.product.virtualProductNoticeManual}
+              <div className="p-5 md:p-6 space-y-4">
+                {/* Price card */}
+                <div className="rounded-xl bg-muted/40 border border-border p-4 space-y-2">
+                  <div className="flex flex-col sm:flex-row sm:items-baseline gap-1 sm:gap-3">
+                    <span className="text-3xl font-bold text-red-500">
+                      {formatPrice(product.price_minor, currency)}
+                    </span>
+                    {hasDiscount && (
+                      <div className="flex items-center gap-2">
+                        <span className="text-base text-muted-foreground line-through">
+                          {formatPrice(product.original_price_minor, currency)}
+                        </span>
+                        <Badge variant="destructive" className="text-xs">
+                          {t.product.save} {getCurrencySymbol(currency)}{((product.original_price_minor - product.price_minor) / 100).toFixed(2)}
+                        </Badge>
+                      </div>
+                    )}
+                  </div>
+                  {appliedPromo && promoDiscount > 0 && (
+                    <div className="flex items-baseline gap-3 pt-1 border-t border-border/50 mt-2">
+                      <div className="flex items-center gap-2">
+                        <Tag className="h-3.5 w-3.5 text-green-600 dark:text-green-400" />
+                        <span className="text-sm text-muted-foreground line-through">
+                          {formatPrice(subtotal, currency)}
+                        </span>
+                      </div>
+                      <span className="text-2xl font-bold text-green-600 dark:text-green-400">
+                        {formatPrice(subtotal - promoDiscount, currency)}
+                      </span>
+                      <Badge variant="outline" className="text-xs text-green-600 dark:text-green-400 border-green-500/30">
+                        -{appliedPromo.discount_type === 'percentage'
+                          ? `${(appliedPromo.discount_value_minor / 100).toFixed(2)}%`
+                          : formatPrice(appliedPromo.discount_value_minor, currency)}
+                      </Badge>
+                    </div>
+                  )}
+                  <div className="text-sm text-muted-foreground">
+                    SKU: {product.sku}
+                  </div>
+                </div>
+
+                {/* Virtual product notice */}
+                {isVirtual && (
+                  <div className="rounded-xl bg-purple-500/10 border border-purple-500/20 p-4">
+                    <div className="flex items-start gap-3">
+                      <Key className="w-5 h-5 text-purple-500 mt-0.5 shrink-0" />
+                      <div className="text-sm text-purple-700 dark:text-purple-300 leading-relaxed">
+                        {product.auto_delivery || product.autoDelivery
+                          ? t.product.virtualProductNoticeInstant
+                          : t.product.virtualProductNoticeManual}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Product meta */}
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {stockDisplayMode !== 'hidden' && !isUnlimitedStock && (
+                    <div className="rounded-xl border border-border p-3 space-y-1.5">
+                      <div className="text-xs text-muted-foreground">{t.product.stockLabel}</div>
+                      {getStockDisplay()}
+                    </div>
+                  )}
+                  {product.category && (
+                    <div className="rounded-xl border border-border p-3 space-y-1.5">
+                      <div className="text-xs text-muted-foreground">{t.product.categoryLabel}</div>
+                      <Badge variant="secondary" className="text-xs">{product.category}</Badge>
+                    </div>
+                  )}
+                  {productMaxPurchaseLimit > 0 && (
+                    <div className="rounded-xl border border-border p-3 space-y-1.5">
+                      <div className="text-xs text-muted-foreground">{t.product.purchaseLimitLabel}</div>
+                      <Badge variant="outline" className="text-xs text-orange-600 dark:text-orange-400 border-orange-300 dark:border-orange-700">
+                        {t.product.maxPurchaseLimit} {productMaxPurchaseLimit} {t.product.piecesUnit}
+                      </Badge>
+                    </div>
+                  )}
+                  {product.tags && product.tags.length > 0 && (
+                    <div className="rounded-xl border border-border p-3 space-y-2 sm:col-span-2">
+                      <div className="text-xs text-muted-foreground">{t.product.tagsLabel}</div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {product.tags.map((tag: string) => (
+                          <Badge key={tag} variant="secondary" className="text-xs">{tag}</Badge>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
-          )}
 
-          {/* Product meta */}
-          <div className="space-y-3">
-            {stockDisplayMode !== 'hidden' && (
-              <div className="flex items-center justify-between py-2 border-b border-border">
-                <span className="text-sm text-muted-foreground">{t.product.stockLabel}:</span>
-                {getStockDisplay()}
-              </div>
-            )}
-            {product.category && (
-              <div className="flex items-center justify-between py-2 border-b border-border">
-                <span className="text-sm text-muted-foreground">{t.product.categoryLabel}:</span>
-                <Badge variant="secondary" className="text-xs">{product.category}</Badge>
-              </div>
-            )}
-            {product.tags && product.tags.length > 0 && (
-              <div className="flex items-center justify-between py-2 border-b border-border">
-                <span className="text-sm text-muted-foreground shrink-0">{t.product.tagsLabel}:</span>
-                <div className="flex flex-wrap justify-end gap-1.5">
-                  {product.tags.map((tag: string) => (
-                    <Badge key={tag} variant="secondary" className="text-xs">{tag}</Badge>
-                  ))}
-                </div>
-              </div>
-            )}
-            {productMaxPurchaseLimit > 0 && (
-              <div className="flex items-center justify-between py-2 border-b border-border">
-                <span className="text-sm text-muted-foreground">{t.product.purchaseLimitLabel}:</span>
-                <Badge variant="outline" className="text-xs text-orange-600 dark:text-orange-400 border-orange-300 dark:border-orange-700">
-                  {t.product.maxPurchaseLimit} {productMaxPurchaseLimit} {t.product.piecesUnit}
-                </Badge>
-              </div>
-            )}
-          </div>
-
-          {/* Product description */}
-          {product.description && (
-            <div className="rounded-xl border border-border p-4">
-              <h3 className="font-semibold mb-3">{t.product.productDetailTitle}</h3>
-              <MarkdownMessage content={product.description} className="markdown-body text-sm" allowHtml />
-            </div>
-          )}
-
-          {/* Specs selection */}
-          {(selectableAttributes.length > 0 || hasBlindBoxAttributes) && (
-            <div className="rounded-xl border border-border p-4 space-y-4">
-              {/* Blind box */}
-              {hasBlindBoxAttributes && (
-                <div className="bg-purple-500/10 rounded-lg p-3">
-                  <div className="flex items-start gap-2">
-                    <div className="text-xl">🎲</div>
-                    <div className="flex-1">
-                      <div className="font-medium text-purple-600 dark:text-purple-400 mb-1 text-sm">{t.product.blindBoxAttribute}</div>
-                      <div className="text-xs text-purple-600/80 dark:text-purple-400/80">
-                        {(product.attributes || [])
-                          .filter((attr: any) => attr.mode === 'blind_box')
-                          .map((attr: any) => (
-                            <div key={attr.name} className="mb-1">
-                              <span className="font-medium">{attr.name}</span>: {attr.values.join('、')}
+            {/* Purchase card */}
+            <div className="rounded-2xl border border-border bg-card shadow-sm">
+              <div className="p-5 md:p-6 space-y-5">
+                {/* Specs selection */}
+                {(selectableAttributes.length > 0 || hasBlindBoxAttributes) && (
+                  <div className="space-y-4">
+                    {/* Blind box */}
+                    {hasBlindBoxAttributes && (
+                      <div className="bg-purple-500/10 rounded-lg p-3">
+                        <div className="flex items-start gap-2">
+                          <div className="text-xl">🎲</div>
+                          <div className="flex-1">
+                            <div className="font-medium text-purple-600 dark:text-purple-400 mb-1 text-sm">{t.product.blindBoxAttribute}</div>
+                            <div className="text-xs text-purple-600/80 dark:text-purple-400/80">
+                              {(product.attributes || [])
+                                .filter((attr: any) => attr.mode === 'blind_box')
+                                .map((attr: any) => (
+                                  <div key={attr.name} className="mb-1">
+                                    <span className="font-medium">{attr.name}</span>: {attr.values.join('、')}
+                                  </div>
+                                ))}
+                              <div className="mt-2 text-purple-500 dark:text-purple-400">
+                                {t.product.blindBoxRandomTip}
+                              </div>
                             </div>
-                          ))}
-                        <div className="mt-2 text-purple-500 dark:text-purple-400">
-                          {t.product.blindBoxRandomTip}
+                          </div>
                         </div>
                       </div>
+                    )}
+
+                    {/* Selectable specs */}
+                    {selectableAttributes.length > 0 && (
+                      <div className="space-y-4">
+                        <div className="text-sm font-semibold">
+                          {t.product.selectSpec} <span className="text-destructive">*</span>
+                        </div>
+                        {selectableAttributes.map((attr: any, index: number) => (
+                          <div key={index} className="space-y-2">
+                            <div className="text-sm text-muted-foreground">{attr.name}:</div>
+                            <div className="flex flex-wrap gap-2">
+                              {attr.values.map((value: string) => {
+                                const isSelected = selectedAttributes[attr.name] === value
+                                return (
+                                  <button
+                                    key={value}
+                                    onClick={() => handleAttributeChange(attr.name, value)}
+                                    className={`px-4 py-1.5 text-sm rounded-lg border transition-all ${isSelected
+                                      ? 'border-primary bg-primary text-primary-foreground font-medium'
+                                      : 'border-border hover:border-primary/50 text-foreground'
+                                      }`}
+                                  >
+                                    {value}
+                                  </button>
+                                )
+                              })}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Quantity */}
+                <div className="rounded-xl border border-border bg-muted/20 p-4 space-y-2">
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                    <span className="text-sm text-muted-foreground">
+                      {t.product.quantity}:
+                    </span>
+                    <div className="flex items-center">
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        className="h-9 w-9 rounded-r-none"
+                        onClick={() => handleQuantityChange(quantity - 1)}
+                        disabled={quantity <= 1}
+                      >
+                        <Minus className="h-3.5 w-3.5" />
+                      </Button>
+                      <Input
+                        type="number"
+                        value={quantity}
+                        onChange={(e) => {
+                          const val = parseInt(e.target.value)
+                          if (!isNaN(val)) {
+                            handleQuantityChange(val)
+                          }
+                        }}
+                        className="w-16 h-9 text-center rounded-none border-x-0 focus-visible:ring-0 focus-visible:ring-offset-0"
+                        min={1}
+                        max={maxSelectableQuantity}
+                      />
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        className="h-9 w-9 rounded-l-none"
+                        onClick={() => handleQuantityChange(quantity + 1)}
+                        disabled={quantity >= maxSelectableQuantity}
+                      >
+                        <Plus className="h-3.5 w-3.5" />
+                      </Button>
                     </div>
                   </div>
+                  {stockDisplayMode === 'exact' && !isUnlimitedStock && (
+                    <div className="text-xs text-muted-foreground">
+                      ({t.product.stockLabel}: {availableStock})
+                    </div>
+                  )}
                 </div>
-              )}
 
-              {/* Selectable specs */}
-              {selectableAttributes.length > 0 && (
-                <div className="space-y-4">
-                  <div className="text-sm font-semibold">
-                    {t.product.selectSpec} <span className="text-destructive">*</span>
+                {!allAttributesSelected && product.attributes && product.attributes.length > 0 && (
+                  <p className="text-xs text-amber-600 dark:text-amber-400">
+                    {t.product.pleaseSelectAllSpec}
+                  </p>
+                )}
+
+                {/* Promo code */}
+                <div className="rounded-xl border border-border p-4 space-y-3 bg-muted/10">
+                  <div className="flex items-center gap-2 text-sm font-medium">
+                    <Tag className="h-4 w-4" />
+                    {t.promoCode.enterPromoCode}
                   </div>
-                  {selectableAttributes.map((attr: any, index: number) => (
-                    <div key={index} className="space-y-2">
-                      <div className="text-sm text-muted-foreground">{attr.name}:</div>
-                      <div className="flex flex-wrap gap-2">
-                        {attr.values.map((value: string) => {
-                          const isSelected = selectedAttributes[attr.name] === value
-                          return (
-                            <button
-                              key={value}
-                              onClick={() => handleAttributeChange(attr.name, value)}
-                              className={`px-4 py-1.5 text-sm rounded-lg border transition-all ${isSelected
-                                ? 'border-primary bg-primary text-primary-foreground font-medium'
-                                : 'border-border hover:border-primary/50 text-foreground'
-                                }`}
-                            >
-                              {value}
-                            </button>
-                          )
-                        })}
+                  {!appliedPromo ? (
+                    <div className="flex gap-2">
+                      <Input
+                        value={promoCodeInput}
+                        onChange={(e) => setPromoCodeInput(e.target.value)}
+                        placeholder={t.promoCode.promoCodePlaceholder}
+                        className="flex-1"
+                        maxLength={50}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') handleApplyPromoCode()
+                        }}
+                      />
+                      <Button
+                        onClick={handleApplyPromoCode}
+                        disabled={!promoCodeInput.trim() || isValidatingPromo}
+                        size="default"
+                      >
+                        {isValidatingPromo ? t.promoCode.applying : t.promoCode.apply}
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between rounded-lg bg-green-500/10 dark:bg-green-500/20 border border-green-500/20 dark:border-green-500/30 p-3">
+                        <div>
+                          <div className="text-sm font-medium text-green-700 dark:text-green-400">
+                            {appliedPromo.name}
+                          </div>
+                          <div className="text-xs text-green-600 dark:text-green-500 mt-0.5">
+                            {t.promoCode.applied} &mdash; {appliedPromo.code}
+                          </div>
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="text-red-500 hover:text-red-600 hover:bg-red-500/10"
+                          onClick={handleRemovePromoCode}
+                        >
+                          {t.promoCode.remove}
+                        </Button>
+                      </div>
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-muted-foreground">{t.promoCode.discount}</span>
+                        <span className="text-green-600 dark:text-green-400 font-medium">
+                          -{formatPrice(promoDiscount, currency)}
+                        </span>
                       </div>
                     </div>
-                  ))}
+                  )}
                 </div>
-              )}
-            </div>
-          )}
 
-          {/* Quantity */}
-          <div className="flex items-center gap-4">
-            <span className="text-sm text-muted-foreground">
-              {t.product.quantity}:
-            </span>
-            <div className="flex items-center">
-              <Button
-                variant="outline"
-                size="icon"
-                className="h-9 w-9 rounded-r-none"
-                onClick={() => handleQuantityChange(quantity - 1)}
-                disabled={quantity <= 1}
-              >
-                <Minus className="h-3.5 w-3.5" />
-              </Button>
-              <Input
-                type="number"
-                value={quantity}
-                onChange={(e) => {
-                  const val = parseInt(e.target.value)
-                  if (!isNaN(val)) {
-                    handleQuantityChange(val)
-                  }
-                }}
-                className="w-16 h-9 text-center rounded-none border-x-0 focus-visible:ring-0 focus-visible:ring-offset-0"
-                min={1}
-                max={maxSelectableQuantity}
-              />
-              <Button
-                variant="outline"
-                size="icon"
-                className="h-9 w-9 rounded-l-none"
-                onClick={() => handleQuantityChange(quantity + 1)}
-                disabled={quantity >= maxSelectableQuantity}
-              >
-                <Plus className="h-3.5 w-3.5" />
-              </Button>
-            </div>
-            {stockDisplayMode === 'exact' && (
-              <span className="text-xs text-muted-foreground">
-                ({t.product.stockLabel}: {availableStock})
-              </span>
-            )}
-          </div>
-
-          {!allAttributesSelected && product.attributes && product.attributes.length > 0 && (
-            <p className="text-xs text-amber-600 dark:text-amber-400">
-              {t.product.pleaseSelectAllSpec}
-            </p>
-          )}
-
-          {/* 优惠码区域 */}
-          <div className="rounded-xl border border-border p-4 space-y-3">
-            <div className="flex items-center gap-2 text-sm font-medium">
-              <Tag className="h-4 w-4" />
-              {t.promoCode.enterPromoCode}
-            </div>
-            {!appliedPromo ? (
-              <div className="flex gap-2">
-                <Input
-                  value={promoCodeInput}
-                  onChange={(e) => setPromoCodeInput(e.target.value)}
-                  placeholder={t.promoCode.promoCodePlaceholder}
-                  className="flex-1"
-                  maxLength={50}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') handleApplyPromoCode()
-                  }}
-                />
-                <Button
-                  onClick={handleApplyPromoCode}
-                  disabled={!promoCodeInput.trim() || isValidatingPromo}
-                  size="default"
-                >
-                  {isValidatingPromo ? t.promoCode.applying : t.promoCode.apply}
-                </Button>
-              </div>
-            ) : (
-              <div className="space-y-2">
-                <div className="flex items-center justify-between rounded-lg bg-green-500/10 dark:bg-green-500/20 border border-green-500/20 dark:border-green-500/30 p-3">
-                  <div>
-                    <div className="text-sm font-medium text-green-700 dark:text-green-400">
-                      {appliedPromo.name}
-                    </div>
-                    <div className="text-xs text-green-600 dark:text-green-500 mt-0.5">
-                      {t.promoCode.applied} &mdash; {appliedPromo.code}
-                    </div>
-                  </div>
+                {/* Action buttons */}
+                <div className="flex flex-col sm:flex-row gap-3">
                   <Button
-                    variant="ghost"
-                    size="sm"
-                    className="text-red-500 hover:text-red-600 hover:bg-red-500/10"
-                    onClick={handleRemovePromoCode}
+                    variant="outline"
+                    className="flex-1 min-w-0 h-11"
+                    disabled={!isAvailable || !allAttributesSelected || isAddingToCart}
+                    onClick={handleAddToCart}
                   >
-                    {t.promoCode.remove}
+                    <span className="truncate inline-flex items-center">
+                      {isAddingToCart ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin shrink-0" />
+                          {t.product.addingToCart}
+                        </>
+                      ) : (
+                        <>
+                          <ShoppingCart className="mr-2 h-4 w-4 shrink-0" />
+                          {t.product.addToCart}
+                        </>
+                      )}
+                    </span>
+                  </Button>
+                  <Button
+                    className="flex-1 min-w-0 h-11"
+                    disabled={!isAvailable || !allAttributesSelected || createOrderMutation.isPending}
+                    onClick={handleBuyNow}
+                  >
+                    <span className="truncate inline-flex items-center">
+                      {createOrderMutation.isPending ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin shrink-0" />
+                          {t.product.creatingOrder}
+                        </>
+                      ) : !isAvailable ? (
+                        t.product.soldOut
+                      ) : !allAttributesSelected ? (
+                        t.product.pleaseSelectSpec
+                      ) : (
+                        t.product.buyNow
+                      )}
+                    </span>
                   </Button>
                 </div>
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-muted-foreground">{t.promoCode.discount}</span>
-                  <span className="text-green-600 dark:text-green-400 font-medium">
-                    -{formatPrice(promoDiscount, currency)}
-                  </span>
+              </div>
+            </div>
+
+            {/* Product description */}
+            {product.description && (
+              <div className="rounded-2xl border border-border bg-card shadow-sm">
+                <div className="p-5 md:p-6">
+                  <h3 className="font-semibold mb-3">{t.product.productDetailTitle}</h3>
+                  <MarkdownMessage content={product.description} className="markdown-body text-sm" allowHtml />
                 </div>
               </div>
             )}
-          </div>
-
-          {/* Action buttons */}
-          <div className="flex gap-3 pt-2">
-            <Button
-              variant="outline"
-              className="flex-1 min-w-0 h-11"
-              disabled={!isAvailable || !allAttributesSelected || isAddingToCart}
-              onClick={handleAddToCart}
-            >
-              <span className="truncate inline-flex items-center">
-                {isAddingToCart ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin shrink-0" />
-                    {t.product.addingToCart}
-                  </>
-                ) : (
-                  <>
-                    <ShoppingCart className="mr-2 h-4 w-4 shrink-0" />
-                    {t.product.addToCart}
-                  </>
-                )}
-              </span>
-            </Button>
-            <Button
-              className="flex-1 min-w-0 h-11"
-              disabled={!isAvailable || !allAttributesSelected || createOrderMutation.isPending}
-              onClick={handleBuyNow}
-            >
-              <span className="truncate inline-flex items-center">
-                {createOrderMutation.isPending ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin shrink-0" />
-                    {t.product.creatingOrder}
-                  </>
-                ) : !isAvailable ? (
-                  t.product.soldOut
-                ) : !allAttributesSelected ? (
-                  t.product.pleaseSelectSpec
-                ) : (
-                  t.product.buyNow
-                )}
-              </span>
-            </Button>
           </div>
         </div>
       </div>

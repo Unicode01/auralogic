@@ -5,7 +5,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/gin-gonic/gin"
 	"auralogic/internal/config"
 	"auralogic/internal/database"
 	"auralogic/internal/middleware"
@@ -15,6 +14,7 @@ import (
 	"auralogic/internal/pkg/response"
 	"auralogic/internal/pkg/validator"
 	"auralogic/internal/service"
+	"github.com/gin-gonic/gin"
 )
 
 type OrderHandler struct {
@@ -164,8 +164,8 @@ func (h *OrderHandler) GetOrder(c *gin.Context) {
 					"icon": pm.Icon,
 					"type": pm.Type,
 				},
-				"selected_at":   opm.CreatedAt,
-				"payment_data":  opm.PaymentData,
+				"selected_at":  opm.CreatedAt,
+				"payment_data": opm.PaymentData,
 			}
 		}
 	}
@@ -895,7 +895,7 @@ func (h *OrderHandler) BatchUpdateOrders(c *gin.Context) {
 
 // UpdateOrderPriceRequest 修改订单价格请求
 type UpdateOrderPriceRequest struct {
-	TotalAmount *float64 `json:"total_amount" binding:"required,min=0"`
+	TotalAmountMinor *int64 `json:"total_amount_minor" binding:"required,min=0"`
 }
 
 // UpdateOrderPrice 修改未付款订单价格
@@ -911,7 +911,6 @@ func (h *OrderHandler) UpdateOrderPrice(c *gin.Context) {
 		response.BadRequest(c, "Invalid request parameters")
 		return
 	}
-
 	// 获取订单
 	order, err := h.orderService.GetOrderByID(uint(orderID))
 	if err != nil {
@@ -929,7 +928,7 @@ func (h *OrderHandler) UpdateOrderPrice(c *gin.Context) {
 	oldAmount := order.TotalAmount
 
 	// 更新订单价格
-	order.TotalAmount = *req.TotalAmount
+	order.TotalAmount = *req.TotalAmountMinor
 
 	db := database.GetDB()
 	if err := db.Save(order).Error; err != nil {
@@ -939,15 +938,15 @@ func (h *OrderHandler) UpdateOrderPrice(c *gin.Context) {
 
 	// 记录操作日志
 	logger.LogOrderOperation(db, c, "update_price", order.ID, map[string]interface{}{
-		"order_no":         order.OrderNo,
-		"old_total_amount": oldAmount,
-		"new_total_amount": *req.TotalAmount,
+		"order_no":               order.OrderNo,
+		"old_total_amount_minor": oldAmount,
+		"new_total_amount_minor": *req.TotalAmountMinor,
 	})
 
 	response.Success(c, gin.H{
-		"order_no":     order.OrderNo,
-		"total_amount": order.TotalAmount,
-		"message":      "Order price updated",
+		"order_no":           order.OrderNo,
+		"total_amount_minor": order.TotalAmount,
+		"message":            "Order price updated",
 	})
 }
 
@@ -1081,7 +1080,7 @@ type CreateOrderForUserRequest struct {
 	Remark           string                   `json:"remark"`
 	AdminRemark      string                   `json:"admin_remark"`
 	Status           string                   `json:"status"`
-	TotalAmount      *float64                 `json:"total_amount"`
+	TotalAmountMinor *int64                   `json:"total_amount_minor"`
 	UserEmail        string                   `json:"user_email"`
 }
 
@@ -1110,6 +1109,10 @@ func (h *OrderHandler) CreateOrderForUser(c *gin.Context) {
 	req.Remark = validator.SanitizeText(req.Remark)
 	req.AdminRemark = validator.SanitizeText(req.AdminRemark)
 	req.UserEmail = validator.SanitizeInput(req.UserEmail)
+	if req.TotalAmountMinor != nil && *req.TotalAmountMinor < 0 {
+		response.BadRequest(c, "Total amount must be greater than or equal to 0")
+		return
+	}
 
 	order, err := h.orderService.CreateAdminOrder(service.AdminOrderRequest{
 		UserID:           req.UserID,
@@ -1127,7 +1130,7 @@ func (h *OrderHandler) CreateOrderForUser(c *gin.Context) {
 		Remark:           req.Remark,
 		AdminRemark:      req.AdminRemark,
 		Status:           req.Status,
-		TotalAmount:      req.TotalAmount,
+		TotalAmount:      req.TotalAmountMinor,
 		UserEmail:        req.UserEmail,
 	})
 	if err != nil {
@@ -1151,14 +1154,14 @@ func (h *OrderHandler) CreateOrderForUser(c *gin.Context) {
 
 	db := database.GetDB()
 	logDetails := map[string]interface{}{
-		"order_no":     order.OrderNo,
-		"user_id":      req.UserID,
-		"status":       order.Status,
-		"total_amount": order.TotalAmount,
+		"order_no":           order.OrderNo,
+		"user_id":            req.UserID,
+		"status":             order.Status,
+		"total_amount_minor": order.TotalAmount,
 	}
-	if req.TotalAmount != nil {
+	if req.TotalAmountMinor != nil {
 		logDetails["amount_override"] = true
-		logDetails["override_amount"] = *req.TotalAmount
+		logDetails["override_amount_minor"] = *req.TotalAmountMinor
 	}
 	logger.LogOrderOperation(db, c, "admin_create_order", order.ID, logDetails)
 

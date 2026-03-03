@@ -111,7 +111,7 @@ func (s *OrderService) CreateDraft(items []models.OrderItem, externalUserID, ext
 	}
 
 	// 计算订单总金额
-	var totalAmount float64
+	var totalAmount int64
 	for _, item := range items {
 		product, err := s.productRepo.FindBySKU(item.SKU)
 		if err != nil {
@@ -121,7 +121,7 @@ func (s *OrderService) CreateDraft(items []models.OrderItem, externalUserID, ext
 		if product.Status != models.ProductStatusActive {
 			return nil, ErrProductNotAvailable
 		}
-		totalAmount += product.Price * float64(item.Quantity)
+		totalAmount += product.Price * int64(item.Quantity)
 	}
 
 	// 获取货币单位
@@ -173,7 +173,7 @@ type AdminOrderRequest struct {
 	Remark           string
 	AdminRemark      string
 	Status           string
-	TotalAmount      *float64
+	TotalAmount      *int64
 	UserEmail        string
 }
 
@@ -182,7 +182,7 @@ type AdminOrderItem struct {
 	SKU                string                 `json:"sku"`
 	Name               string                 `json:"name"`
 	Quantity           int                    `json:"quantity"`
-	UnitPrice          float64                `json:"unit_price"`
+	UnitPrice          int64                  `json:"unit_price_minor"`
 	Attributes         map[string]interface{} `json:"attributes,omitempty"`
 	ProductType        string                 `json:"product_type,omitempty"`
 	VirtualInventoryID *uint                  `json:"virtual_inventory_id,omitempty"`
@@ -216,7 +216,7 @@ func (s *OrderService) CreateAdminOrder(req AdminOrderRequest) (*models.Order, e
 
 	// 构建订单商品并计算总金额
 	var orderItems []models.OrderItem
-	var totalAmount float64
+	var totalAmount int64
 	// 保存每个商品项指定的虚拟库存ID（管理员手动选择）
 	virtualInventoryIDs := make(map[int]*uint)
 	for idx, item := range req.Items {
@@ -267,7 +267,7 @@ func (s *OrderService) CreateAdminOrder(req AdminOrderRequest) (*models.Order, e
 			ProductType: productType,
 			ImageURL:    imageURL,
 		})
-		totalAmount += item.UnitPrice * float64(item.Quantity)
+		totalAmount += item.UnitPrice * int64(item.Quantity)
 		// 保存管理员指定的虚拟库存ID
 		if item.VirtualInventoryID != nil {
 			virtualInventoryIDs[idx] = item.VirtualInventoryID
@@ -803,11 +803,11 @@ func (s *OrderService) CreateUserOrder(userID uint, items []models.OrderItem, re
 	orderStatus := models.OrderStatusPendingPayment
 
 	// 计算订单总金额
-	var totalAmount float64
+	var totalAmount int64
 	for _, item := range items {
 		product, err := s.productRepo.FindBySKU(item.SKU)
 		if err == nil {
-			totalAmount += product.Price * float64(item.Quantity)
+			totalAmount += product.Price * int64(item.Quantity)
 		}
 	}
 
@@ -820,7 +820,7 @@ func (s *OrderService) CreateUserOrder(userID uint, items []models.OrderItem, re
 	// 处理优惠码
 	var promoCodeID *uint
 	var promoCodeStr string
-	var discountAmount float64
+	var discountAmount int64
 	if promoCode != "" && s.promoCodeRepo != nil {
 		promoCodeRepo := s.promoCodeRepo
 		pc, err := promoCodeRepo.FindByCode(strings.ToUpper(strings.TrimSpace(promoCode)))
@@ -1576,11 +1576,14 @@ func (s *OrderService) MarkAsPaid(orderID uint) error {
 			if canAuto {
 				// 所有库存都属于自动发货商品，执行自动发货
 				if err := s.virtualProductSvc.DeliverAutoDeliveryStock(order.ID, order.OrderNo, nil); err != nil {
-					return fmt.Errorf("Failed to deliver virtual product: %v", err)
+					// 自动发货失败回退到待发货，由管理员手动处理
+					fmt.Printf("Warning: Failed to auto deliver virtual order %s: %v\n", order.OrderNo, err)
+					order.Status = models.OrderStatusPending
+				} else {
+					order.Status = models.OrderStatusShipped
+					now := models.NowFunc()
+					order.ShippedAt = &now
 				}
-				order.Status = models.OrderStatusShipped
-				now := models.NowFunc()
-				order.ShippedAt = &now
 			} else {
 				// 存在非自动发货的库存，全部交给管理员手动发货
 				order.Status = models.OrderStatusPending
