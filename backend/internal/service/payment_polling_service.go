@@ -6,7 +6,9 @@ import (
 	"sync"
 	"time"
 
+	"auralogic/internal/config"
 	"auralogic/internal/models"
+	"auralogic/internal/pkg/bizerr"
 	"auralogic/internal/pkg/logger"
 	"gorm.io/gorm"
 )
@@ -14,6 +16,7 @@ import (
 // PollingTask 轮询任务
 type PollingTask struct {
 	OrderID         uint      `json:"order_id"`
+	UserID          uint      `json:"user_id"`
 	PaymentMethodID uint      `json:"payment_method_id"`
 	AddedAt         time.Time `json:"added_at"`
 	NextCheckAt     time.Time `json:"next_check_at"`  // 下次检查时间
@@ -58,16 +61,30 @@ type PaymentPollingService struct {
 	emailService        *EmailService
 	taskHeap            TaskHeap              // 时间轮：按下次检查时间排序的最小堆
 	taskMap             map[uint]*PollingTask // orderID -> task 快速查找
+	userTaskCounts      map[uint]int          // userID -> queue task count
 	mutex               sync.Mutex
 	stopChan            chan struct{}
 	wakeupChan          chan struct{} // 用于唤醒主循环
 	defaultInterval     int           // 默认检查间隔(秒)
 	maxRetries          int           // 最大重试次数
 	maxDuration         time.Duration // 最大轮询时长
+	maxTasksPerUser     int           // 每用户轮询任务上限
+	maxTasksGlobal      int           // 全局轮询任务上限
 }
 
 // NewPaymentPollingService 创建付款轮询服务
-func NewPaymentPollingService(db *gorm.DB, virtualInventorySvc *VirtualInventoryService, emailService *EmailService) *PaymentPollingService {
+func NewPaymentPollingService(db *gorm.DB, virtualInventorySvc *VirtualInventoryService, emailService *EmailService, cfg *config.Config) *PaymentPollingService {
+	maxTasksPerUser := 20
+	maxTasksGlobal := 2000
+	if cfg != nil {
+		if cfg.Order.MaxPaymentPollingTasksPerUser > 0 {
+			maxTasksPerUser = cfg.Order.MaxPaymentPollingTasksPerUser
+		}
+		if cfg.Order.MaxPaymentPollingTasksGlobal > 0 {
+			maxTasksGlobal = cfg.Order.MaxPaymentPollingTasksGlobal
+		}
+	}
+
 	return &PaymentPollingService{
 		db:                  db,
 		jsRuntime:           NewJSRuntimeService(db),
@@ -75,11 +92,14 @@ func NewPaymentPollingService(db *gorm.DB, virtualInventorySvc *VirtualInventory
 		emailService:        emailService,
 		taskHeap:            make(TaskHeap, 0),
 		taskMap:             make(map[uint]*PollingTask),
+		userTaskCounts:      make(map[uint]int),
 		stopChan:            make(chan struct{}),
 		wakeupChan:          make(chan struct{}, 1),
 		defaultInterval:     30,            // 默认30秒
 		maxRetries:          480,           // 最多重试480次
 		maxDuration:         4 * time.Hour, // 最长轮询4小时
+		maxTasksPerUser:     maxTasksPerUser,
+		maxTasksGlobal:      maxTasksGlobal,
 	}
 }
 
@@ -89,6 +109,8 @@ func (s *PaymentPollingService) Start() {
 		"default_interval": s.defaultInterval,
 		"max_retries":      s.maxRetries,
 		"max_duration":     s.maxDuration.String(),
+		"max_tasks_user":   s.maxTasksPerUser,
+		"max_tasks_global": s.maxTasksGlobal,
 		"algorithm":        "time_wheel",
 	})
 	// 从数据库恢复未完成的轮询任务
@@ -103,25 +125,49 @@ func (s *PaymentPollingService) Stop() {
 }
 
 // AddToQueue 添加订单到轮询队列
-func (s *PaymentPollingService) AddToQueue(orderID, paymentMethodID uint) {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
+func (s *PaymentPollingService) AddToQueue(orderID, paymentMethodID uint) error {
+	var order models.Order
+	if err := s.db.Select("id", "user_id", "status").First(&order, orderID).Error; err != nil {
+		return err
+	}
 
-	// 检查是否已在队列中
-	if _, exists := s.taskMap[orderID]; exists {
-		return
+	if order.Status != models.OrderStatusPendingPayment {
+		return bizerr.Newf(
+			"payment.pollingInvalidOrderStatus",
+			"Order status %s does not support payment polling",
+			order.Status,
+		).WithParams(map[string]interface{}{
+			"order_id": orderID,
+			"status":   order.Status,
+		})
+	}
+	queueUserID := uint(0)
+	if order.UserID != nil {
+		queueUserID = *order.UserID
 	}
 
 	// 获取付款方式的轮询间隔
 	interval := s.defaultInterval
 	var pm models.PaymentMethod
-	if err := s.db.First(&pm, paymentMethodID).Error; err == nil && pm.PollInterval > 0 {
+	if err := s.db.Select("id", "poll_interval").First(&pm, paymentMethodID).Error; err == nil && pm.PollInterval > 0 {
 		interval = pm.PollInterval
+	}
+
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	if _, exists := s.taskMap[orderID]; exists {
+		return nil
+	}
+
+	if err := s.checkQueueQuotaLocked(queueUserID); err != nil {
+		return err
 	}
 
 	now := time.Now()
 	task := &PollingTask{
 		OrderID:         orderID,
+		UserID:          queueUserID,
 		PaymentMethodID: paymentMethodID,
 		AddedAt:         now,
 		NextCheckAt:     now, // 立即检查一次
@@ -130,6 +176,7 @@ func (s *PaymentPollingService) AddToQueue(orderID, paymentMethodID uint) {
 	}
 
 	s.taskMap[orderID] = task
+	s.incrementUserTaskLocked(queueUserID)
 	heap.Push(&s.taskHeap, task)
 
 	// 保存到数据库（用于服务重启后恢复）
@@ -138,10 +185,63 @@ func (s *PaymentPollingService) AddToQueue(orderID, paymentMethodID uint) {
 	logger.LogPaymentOperation(s.db, "payment_polling_add", orderID, map[string]interface{}{
 		"payment_method_id": paymentMethodID,
 		"check_interval":    interval,
+		"user_id":           queueUserID,
+		"queue_size":        len(s.taskMap),
 	})
 
 	// 唤醒主循环
 	s.wakeup()
+	return nil
+}
+
+func (s *PaymentPollingService) checkQueueQuotaLocked(userID uint) error {
+	if s.maxTasksGlobal > 0 && len(s.taskMap) >= s.maxTasksGlobal {
+		return bizerr.Newf(
+			"payment.pollingGlobalQueueLimitExceeded",
+			"Payment polling queue has reached global limit (%d)",
+			s.maxTasksGlobal,
+		).WithParams(map[string]interface{}{
+			"current": len(s.taskMap),
+			"max":     s.maxTasksGlobal,
+		})
+	}
+
+	if userID > 0 && s.maxTasksPerUser > 0 {
+		current := s.userTaskCounts[userID]
+		if current >= s.maxTasksPerUser {
+			return bizerr.Newf(
+				"payment.pollingUserQueueLimitExceeded",
+				"You already have %d payment polling tasks, maximum is %d",
+				current,
+				s.maxTasksPerUser,
+			).WithParams(map[string]interface{}{
+				"user_id": userID,
+				"current": current,
+				"max":     s.maxTasksPerUser,
+			})
+		}
+	}
+
+	return nil
+}
+
+func (s *PaymentPollingService) incrementUserTaskLocked(userID uint) {
+	if userID == 0 {
+		return
+	}
+	s.userTaskCounts[userID]++
+}
+
+func (s *PaymentPollingService) decrementUserTaskLocked(userID uint) {
+	if userID == 0 {
+		return
+	}
+	current := s.userTaskCounts[userID]
+	if current <= 1 {
+		delete(s.userTaskCounts, userID)
+		return
+	}
+	s.userTaskCounts[userID] = current - 1
 }
 
 // RemoveFromQueue 从队列中移除订单
@@ -160,6 +260,7 @@ func (s *PaymentPollingService) removeFromQueueLocked(orderID uint) {
 	}
 
 	delete(s.taskMap, orderID)
+	s.decrementUserTaskLocked(task.UserID)
 	if task.index >= 0 && task.index < len(s.taskHeap) {
 		heap.Remove(&s.taskHeap, task.index)
 	}
@@ -550,6 +651,12 @@ func (s *PaymentPollingService) recoverTasks() {
 			continue
 		}
 
+		if order.UserID != nil {
+			task.UserID = *order.UserID
+		} else {
+			task.UserID = 0
+		}
+
 		// 获取最新的轮询间隔
 		var pm models.PaymentMethod
 		if err := s.db.First(&pm, task.PaymentMethodID).Error; err == nil && pm.PollInterval > 0 {
@@ -559,7 +666,14 @@ func (s *PaymentPollingService) recoverTasks() {
 		// 设置下次检查时间为立即
 		task.NextCheckAt = time.Now()
 
+		if err := s.checkQueueQuotaLocked(task.UserID); err != nil {
+			s.removeTaskFromDB(task.OrderID)
+			removedCount++
+			continue
+		}
+
 		s.taskMap[task.OrderID] = &task
+		s.incrementUserTaskLocked(task.UserID)
 		heap.Push(&s.taskHeap, &task)
 		recoveredCount++
 	}
@@ -603,6 +717,17 @@ func (s *PaymentPollingService) scanPendingPaymentOrders() int {
 			continue
 		}
 
+		queueUserID := uint(0)
+		if order.UserID != nil {
+			queueUserID = *order.UserID
+		}
+		if err := s.checkQueueQuotaLocked(queueUserID); err != nil {
+			if s.maxTasksGlobal > 0 && len(s.taskMap) >= s.maxTasksGlobal {
+				break
+			}
+			continue
+		}
+
 		// 获取付款方式的轮询间隔
 		interval := s.defaultInterval
 		var pm models.PaymentMethod
@@ -613,6 +738,7 @@ func (s *PaymentPollingService) scanPendingPaymentOrders() int {
 		// 添加到队列
 		task := &PollingTask{
 			OrderID:         op.OrderID,
+			UserID:          queueUserID,
 			PaymentMethodID: op.PaymentMethodID,
 			AddedAt:         now,
 			NextCheckAt:     now, // 立即检查
@@ -620,6 +746,7 @@ func (s *PaymentPollingService) scanPendingPaymentOrders() int {
 			RetryCount:      0,
 		}
 		s.taskMap[op.OrderID] = task
+		s.incrementUserTaskLocked(task.UserID)
 		heap.Push(&s.taskHeap, task)
 		s.saveTaskToDB(task)
 		addedCount++

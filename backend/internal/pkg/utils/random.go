@@ -4,8 +4,11 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
+	"sync/atomic"
 	"time"
 )
+
+var orderNoCounter uint32
 
 // GenerateToken generate随机Token
 func GenerateToken(length int) (string, error) {
@@ -19,10 +22,12 @@ func GenerateToken(length int) (string, error) {
 // GenerateOrderNo generateOrder号
 func GenerateOrderNo(prefix string) string {
 	now := time.Now()
-	return fmt.Sprintf("%s%s%06d",
+	seq := atomic.AddUint32(&orderNoCounter, 1) % 10000
+	return fmt.Sprintf("%s%s%06d%04d",
 		prefix,
 		now.Format("20060102150405"),
-		now.Nanosecond()/1000)
+		now.Nanosecond()/1000,
+		seq)
 }
 
 // GenerateAPIKey generateAPI密钥
@@ -33,4 +38,3 @@ func GenerateAPIKey(prefix string) (string, error) {
 	}
 	return prefix + "_" + token, nil
 }
-

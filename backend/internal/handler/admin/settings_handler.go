@@ -325,15 +325,18 @@ type UpdateSettingsRequest struct {
 	SMSRateLimit   *config.MessageRateLimit `json:"sms_rate_limit,omitempty"`
 
 	Order struct {
-		NoPrefix               string                    `json:"no_prefix"`
-		AutoCancelHours        int                       `json:"auto_cancel_hours"`
-		Currency               string                    `json:"currency"`
-		MaxOrderItems          int                       `json:"max_order_items"`
-		MaxItemQuantity        int                       `json:"max_item_quantity"`
-		VirtualDeliveryOrder   string                    `json:"virtual_delivery_order"`
-		ShowVirtualStockRemark *bool                     `json:"show_virtual_stock_remark"`
-		StockDisplay           config.StockDisplayConfig `json:"stock_display"`
-		Invoice                config.InvoiceConfig      `json:"invoice"`
+		NoPrefix                       string                    `json:"no_prefix"`
+		AutoCancelHours                int                       `json:"auto_cancel_hours"`
+		MaxPendingPaymentOrdersPerUser int                       `json:"max_pending_payment_orders_per_user"`
+		MaxPaymentPollingTasksPerUser  int                       `json:"max_payment_polling_tasks_per_user"`
+		MaxPaymentPollingTasksGlobal   int                       `json:"max_payment_polling_tasks_global"`
+		Currency                       string                    `json:"currency"`
+		MaxOrderItems                  int                       `json:"max_order_items"`
+		MaxItemQuantity                int                       `json:"max_item_quantity"`
+		VirtualDeliveryOrder           string                    `json:"virtual_delivery_order"`
+		ShowVirtualStockRemark         *bool                     `json:"show_virtual_stock_remark"`
+		StockDisplay                   config.StockDisplayConfig `json:"stock_display"`
+		Invoice                        config.InvoiceConfig      `json:"invoice"`
 	} `json:"order,omitempty"`
 
 	MagicLink struct {
@@ -550,13 +553,16 @@ func (h *SettingsHandler) UpdateSettings(c *gin.Context) {
 	}
 
 	// Update限流配置
-	if req.RateLimit.API > 0 {
+	if req.RateLimit.API > 0 || req.RateLimit.OrderCreate > 0 || req.RateLimit.PaymentInfo > 0 || req.RateLimit.PaymentSelect > 0 {
 		currentConfig["rate_limit"] = map[string]interface{}{
-			"enabled":       req.RateLimit.Enabled,
-			"api":           req.RateLimit.API,
-			"user_login":    req.RateLimit.UserLogin,
-			"user_request":  req.RateLimit.UserRequest,
-			"admin_request": req.RateLimit.AdminRequest,
+			"enabled":        req.RateLimit.Enabled,
+			"api":            req.RateLimit.API,
+			"user_login":     req.RateLimit.UserLogin,
+			"user_request":   req.RateLimit.UserRequest,
+			"admin_request":  req.RateLimit.AdminRequest,
+			"order_create":   req.RateLimit.OrderCreate,
+			"payment_info":   req.RateLimit.PaymentInfo,
+			"payment_select": req.RateLimit.PaymentSelect,
 		}
 	}
 
@@ -585,13 +591,16 @@ func (h *SettingsHandler) UpdateSettings(c *gin.Context) {
 			showVirtualStockRemark = *req.Order.ShowVirtualStockRemark
 		}
 		currentConfig["order"] = map[string]interface{}{
-			"no_prefix":                 req.Order.NoPrefix,
-			"auto_cancel_hours":         req.Order.AutoCancelHours,
-			"currency":                  req.Order.Currency,
-			"max_order_items":           req.Order.MaxOrderItems,
-			"max_item_quantity":         req.Order.MaxItemQuantity,
-			"virtual_delivery_order":    req.Order.VirtualDeliveryOrder,
-			"show_virtual_stock_remark": showVirtualStockRemark,
+			"no_prefix":                           req.Order.NoPrefix,
+			"auto_cancel_hours":                   req.Order.AutoCancelHours,
+			"max_pending_payment_orders_per_user": req.Order.MaxPendingPaymentOrdersPerUser,
+			"max_payment_polling_tasks_per_user":  req.Order.MaxPaymentPollingTasksPerUser,
+			"max_payment_polling_tasks_global":    req.Order.MaxPaymentPollingTasksGlobal,
+			"currency":                            req.Order.Currency,
+			"max_order_items":                     req.Order.MaxOrderItems,
+			"max_item_quantity":                   req.Order.MaxItemQuantity,
+			"virtual_delivery_order":              req.Order.VirtualDeliveryOrder,
+			"show_virtual_stock_remark":           showVirtualStockRemark,
 			"stock_display": map[string]interface{}{
 				"mode":                 req.Order.StockDisplay.Mode,
 				"low_stock_threshold":  req.Order.StockDisplay.LowStockThreshold,

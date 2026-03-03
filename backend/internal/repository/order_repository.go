@@ -81,6 +81,15 @@ func (r *OrderRepository) FindByUserID(userID uint, page, limit int, status stri
 	return orders, total, err
 }
 
+// CountByUserAndStatus returns the number of orders for a user with the specified status.
+func (r *OrderRepository) CountByUserAndStatus(userID uint, status models.OrderStatus) (int64, error) {
+	var total int64
+	err := r.db.Model(&models.Order{}).
+		Where("user_id = ? AND status = ?", userID, status).
+		Count(&total).Error
+	return total, err
+}
+
 // List 获取订单列表
 func (r *OrderRepository) List(page, limit int, status, search, country, productSearch string, promoCodeID *uint, promoCode string, userID *uint) ([]models.Order, int64, error) {
 	var orders []models.Order

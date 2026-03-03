@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { getUserPaymentMethods, getOrderPaymentInfo, selectOrderPaymentMethod, PaymentCardResult } from '@/lib/api'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
@@ -48,12 +48,32 @@ export function PaymentMethodCard({ orderNo, onPaymentSelected }: PaymentMethodC
   const [isChanging, setIsChanging] = useState(false)
 
   // 获取订单付款信息
-  const { data: paymentInfo, isLoading, refetch } = useQuery({
+  const { data: paymentInfo, isLoading, isError, error: paymentInfoError, refetch } = useQuery({
     queryKey: ['orderPaymentInfo', orderNo],
     queryFn: () => getOrderPaymentInfo(orderNo),
     refetchOnWindowFocus: false,
     staleTime: 1000 * 60 * 2,
   })
+  const paymentInfoErrorRef = useRef('')
+
+  useEffect(() => {
+    if (!paymentInfoError) {
+      paymentInfoErrorRef.current = ''
+      return
+    }
+    const error = paymentInfoError as any
+    const signature = `${error?.code ?? 'unknown'}:${error?.data?.error_key ?? ''}:${error?.message ?? ''}`
+    if (paymentInfoErrorRef.current === signature) {
+      return
+    }
+    paymentInfoErrorRef.current = signature
+
+    if (error.code === 40010 && error.data?.error_key) {
+      toast.error(translateBizError(t, error.data.error_key, error.data.params, error.message))
+      return
+    }
+    toast.error(error.message || t.order.operationFailed)
+  }, [paymentInfoError, t])
 
   // 获取可用付款方式列表（用于更换时）
   const { data: methodsData } = useQuery({
@@ -101,6 +121,19 @@ export function PaymentMethodCard({ orderNo, onPaymentSelected }: PaymentMethodC
       <Card>
         <CardContent className="py-8 flex items-center justify-center">
           <Loader2 className="h-6 w-6 animate-spin" />
+        </CardContent>
+      </Card>
+    )
+  }
+
+  if (isError) {
+    return (
+      <Card>
+        <CardContent className="py-8 flex flex-col items-center gap-3">
+          <p className="text-sm text-muted-foreground">{t.order.operationFailed}</p>
+          <Button variant="outline" size="sm" onClick={() => refetch()}>
+            {t.common.refresh}
+          </Button>
         </CardContent>
       </Card>
     )

@@ -1798,6 +1798,9 @@ export default function SettingsPage() {
                     user_login: parseInt(formData.get('user_login') as string),
                     user_request: parseInt(formData.get('user_request') as string),
                     admin_request: parseInt(formData.get('admin_request') as string),
+                    order_create: parseInt(formData.get('order_create') as string) || 30,
+                    payment_info: parseInt(formData.get('payment_info') as string) || 120,
+                    payment_select: parseInt(formData.get('payment_select') as string) || 60,
                   })
                 }}
                 className="space-y-4"
@@ -1858,6 +1861,51 @@ export default function SettingsPage() {
                     defaultValue={settingsData?.rate_limit?.admin_request || 2000}
                     className="mt-1.5"
                   />
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div>
+                    <Label htmlFor="order_create_limit">{t.admin.orderCreateLimit}</Label>
+                    <Input
+                      id="order_create_limit"
+                      name="order_create"
+                      type="number"
+                      min="1"
+                      defaultValue={settingsData?.rate_limit?.order_create || 30}
+                      className="mt-1.5"
+                    />
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {t.admin.orderCreateLimitHint}
+                    </p>
+                  </div>
+                  <div>
+                    <Label htmlFor="payment_info_limit">{t.admin.paymentInfoLimit}</Label>
+                    <Input
+                      id="payment_info_limit"
+                      name="payment_info"
+                      type="number"
+                      min="1"
+                      defaultValue={settingsData?.rate_limit?.payment_info || 120}
+                      className="mt-1.5"
+                    />
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {t.admin.paymentInfoLimitHint}
+                    </p>
+                  </div>
+                  <div>
+                    <Label htmlFor="payment_select_limit">{t.admin.paymentSelectLimit}</Label>
+                    <Input
+                      id="payment_select_limit"
+                      name="payment_select"
+                      type="number"
+                      min="1"
+                      defaultValue={settingsData?.rate_limit?.payment_select || 60}
+                      className="mt-1.5"
+                    />
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {t.admin.paymentSelectLimitHint}
+                    </p>
+                  </div>
                 </div>
 
                 <Button type="submit" disabled={updateMutation.isPending}>
@@ -2717,6 +2765,9 @@ export default function SettingsPage() {
                   handleSubmit('order', {
                     no_prefix: formData.get('no_prefix'),
                     auto_cancel_hours: parseInt(formData.get('auto_cancel_hours') as string),
+                    max_pending_payment_orders_per_user: parseInt(formData.get('max_pending_payment_orders_per_user') as string) || 10,
+                    max_payment_polling_tasks_per_user: parseInt(formData.get('max_payment_polling_tasks_per_user') as string) || 20,
+                    max_payment_polling_tasks_global: parseInt(formData.get('max_payment_polling_tasks_global') as string) || 2000,
                     max_order_items: parseInt(formData.get('max_order_items') as string) || 100,
                     max_item_quantity: parseInt(formData.get('max_item_quantity') as string) || 9999,
                     currency: formData.get('currency'),
@@ -2797,6 +2848,51 @@ export default function SettingsPage() {
                   <p className="text-xs text-muted-foreground mt-1">
                     {t.admin.autoCancelHoursHint}
                   </p>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div>
+                    <Label htmlFor="max_pending_payment_orders_per_user">{t.admin.maxPendingPaymentOrdersPerUser}</Label>
+                    <Input
+                      id="max_pending_payment_orders_per_user"
+                      name="max_pending_payment_orders_per_user"
+                      type="number"
+                      min="1"
+                      defaultValue={settingsData?.order?.max_pending_payment_orders_per_user || 10}
+                      className="mt-1.5"
+                    />
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {t.admin.maxPendingPaymentOrdersPerUserHint}
+                    </p>
+                  </div>
+                  <div>
+                    <Label htmlFor="max_payment_polling_tasks_per_user">{t.admin.maxPaymentPollingTasksPerUser}</Label>
+                    <Input
+                      id="max_payment_polling_tasks_per_user"
+                      name="max_payment_polling_tasks_per_user"
+                      type="number"
+                      min="1"
+                      defaultValue={settingsData?.order?.max_payment_polling_tasks_per_user || 20}
+                      className="mt-1.5"
+                    />
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {t.admin.maxPaymentPollingTasksPerUserHint}
+                    </p>
+                  </div>
+                  <div>
+                    <Label htmlFor="max_payment_polling_tasks_global">{t.admin.maxPaymentPollingTasksGlobal}</Label>
+                    <Input
+                      id="max_payment_polling_tasks_global"
+                      name="max_payment_polling_tasks_global"
+                      type="number"
+                      min="1"
+                      defaultValue={settingsData?.order?.max_payment_polling_tasks_global || 2000}
+                      className="mt-1.5"
+                    />
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {t.admin.maxPaymentPollingTasksGlobalHint}
+                    </p>
+                  </div>
                 </div>
 
                 <div className="grid grid-cols-2 gap-4">

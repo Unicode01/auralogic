@@ -99,7 +99,7 @@ func main() {
 	}
 
 	// 启动付款状态轮询服务
-	paymentPollingService := service.NewPaymentPollingService(db, virtualInventoryService, emailService)
+	paymentPollingService := service.NewPaymentPollingService(db, virtualInventoryService, emailService, cfg)
 	paymentPollingService.Start()
 	defer paymentPollingService.Stop()
 

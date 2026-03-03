@@ -1,7 +1,6 @@
 package router
 
 import (
-	"github.com/gin-gonic/gin"
 	"auralogic/internal/config"
 	adminHandler "auralogic/internal/handler/admin"
 	formHandler "auralogic/internal/handler/form"
@@ -9,6 +8,7 @@ import (
 	"auralogic/internal/middleware"
 	"auralogic/internal/repository"
 	"auralogic/internal/service"
+	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 	"time"
 )
@@ -124,6 +124,18 @@ func SetupRouter(
 	if cfg.RateLimit.Enabled && cfg.RateLimit.UserRequest > 0 {
 		userAPI.Use(middleware.RateLimitMiddleware(cfg.RateLimit.UserRequest, time.Minute))
 	}
+	orderCreateLimit := cfg.RateLimit.OrderCreate
+	if orderCreateLimit <= 0 {
+		orderCreateLimit = 30
+	}
+	paymentInfoLimit := cfg.RateLimit.PaymentInfo
+	if paymentInfoLimit <= 0 {
+		paymentInfoLimit = 120
+	}
+	paymentSelectLimit := cfg.RateLimit.PaymentSelect
+	if paymentSelectLimit <= 0 {
+		paymentSelectLimit = 60
+	}
 	{
 		// 认证
 		auth := userAPI.Group("/auth")
@@ -160,7 +172,7 @@ func SetupRouter(
 		orders := userAPI.Group("/orders")
 		orders.Use(middleware.AuthMiddleware())
 		{
-			orders.POST("", userOrderHandler.CreateOrder)
+			orders.POST("", middleware.RateLimitMiddleware(orderCreateLimit, time.Minute), userOrderHandler.CreateOrder)
 			orders.GET("", userOrderHandler.ListOrders)
 			orders.GET("/:order_no", userOrderHandler.GetOrder)
 			orders.GET("/:order_no/form-token", userOrderHandler.GetOrRefreshFormToken)
@@ -216,9 +228,9 @@ func SetupRouter(
 		paymentAuth := userAPI.Group("/orders")
 		paymentAuth.Use(middleware.AuthMiddleware())
 		{
-			paymentAuth.GET("/:order_no/payment-info", userPaymentMethodHandler.GetOrderPaymentInfo)
-			paymentAuth.GET("/:order_no/payment-card", userPaymentMethodHandler.GetPaymentCard)
-			paymentAuth.POST("/:order_no/select-payment", userPaymentMethodHandler.SelectPaymentMethod)
+			paymentAuth.GET("/:order_no/payment-info", middleware.RateLimitMiddleware(paymentInfoLimit, time.Minute), userPaymentMethodHandler.GetOrderPaymentInfo)
+			paymentAuth.GET("/:order_no/payment-card", middleware.RateLimitMiddleware(paymentInfoLimit, time.Minute), userPaymentMethodHandler.GetPaymentCard)
+			paymentAuth.POST("/:order_no/select-payment", middleware.RateLimitMiddleware(paymentSelectLimit, time.Minute), userPaymentMethodHandler.SelectPaymentMethod)
 		}
 
 		// 工单/客服中心

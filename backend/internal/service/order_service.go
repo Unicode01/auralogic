@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"auralogic/internal/config"
@@ -28,6 +29,7 @@ type OrderService struct {
 	promoCodeRepo     *repository.PromoCodeRepository
 	cfg               *config.Config
 	emailService      *EmailService
+	userOrderLocks    sync.Map
 }
 
 const (
@@ -94,6 +96,48 @@ func NewOrderService(
 		cfg:               cfg,
 		emailService:      emailService,
 	}
+}
+
+func (s *OrderService) ensurePendingPaymentLimit(userID uint) error {
+	limit := s.cfg.Order.MaxPendingPaymentOrdersPerUser
+	if limit <= 0 {
+		return nil
+	}
+
+	count, err := s.OrderRepo.CountByUserAndStatus(userID, models.OrderStatusPendingPayment)
+	if err != nil {
+		return fmt.Errorf("failed to count pending payment orders: %w", err)
+	}
+	if count < int64(limit) {
+		return nil
+	}
+
+	return bizerr.Newf(
+		"order.pendingPaymentLimitExceeded",
+		"You already have %d unpaid orders. The maximum is %d. Please complete or cancel existing unpaid orders first.",
+		count, limit,
+	).WithParams(map[string]interface{}{
+		"current": count,
+		"max":     limit,
+	})
+}
+
+func (s *OrderService) getUserOrderLock(userID uint) *sync.Mutex {
+	if userID == 0 {
+		return &sync.Mutex{}
+	}
+	if lock, ok := s.userOrderLocks.Load(userID); ok {
+		return lock.(*sync.Mutex)
+	}
+	newLock := &sync.Mutex{}
+	actual, _ := s.userOrderLocks.LoadOrStore(userID, newLock)
+	return actual.(*sync.Mutex)
+}
+
+func (s *OrderService) lockUserOrderCreation(userID uint) func() {
+	lock := s.getUserOrderLock(userID)
+	lock.Lock()
+	return lock.Unlock
 }
 
 // CreateDraft CreateOrder草稿
@@ -445,6 +489,9 @@ func (s *OrderService) CreateAdminOrder(req AdminOrderRequest) (*models.Order, e
 				_, scriptInvID, err := s.virtualProductSvc.AllocateStockFromInventory(*vid, item.Quantity, orderNo)
 				if err != nil {
 					// 分配失败，回滚物理库存和订单
+					if releaseErr := s.virtualProductSvc.ReleaseStock(orderNo); releaseErr != nil {
+						fmt.Printf("Warning: Failed to rollback virtual stock for order %s: %v\n", orderNo, releaseErr)
+					}
 					for j, inventoryID := range inventoryBindings {
 						s.inventoryRepo.ReleaseReserve(inventoryID, orderItems[j].Quantity, orderNo)
 					}
@@ -468,6 +515,9 @@ func (s *OrderService) CreateAdminOrder(req AdminOrderRequest) (*models.Order, e
 				_, scriptInvID, err := s.virtualProductSvc.AllocateStockForProductByAttributes(product.ID, item.Quantity, orderNo, allocAttrs)
 				if err != nil {
 					// 分配失败，回滚物理库存和订单
+					if releaseErr := s.virtualProductSvc.ReleaseStock(orderNo); releaseErr != nil {
+						fmt.Printf("Warning: Failed to rollback virtual stock for order %s: %v\n", orderNo, releaseErr)
+					}
 					for j, inventoryID := range inventoryBindings {
 						s.inventoryRepo.ReleaseReserve(inventoryID, orderItems[j].Quantity, orderNo)
 					}
@@ -509,6 +559,13 @@ func (s *OrderService) CreateUserOrder(userID uint, items []models.OrderItem, re
 	user, err := s.userRepo.FindByID(userID)
 	if err != nil {
 		return nil, errors.New("User not found")
+	}
+
+	unlock := s.lockUserOrderCreation(userID)
+	defer unlock()
+
+	if err := s.ensurePendingPaymentLimit(userID); err != nil {
+		return nil, err
 	}
 
 	// 校验订单商品项
@@ -931,8 +988,16 @@ func (s *OrderService) CreateUserOrder(userID uint, items []models.OrderItem, re
 				_, scriptInvID, err := s.virtualProductSvc.AllocateStockForProductByAttributes(product.ID, item.Quantity, orderNo, allocAttrs)
 				if err != nil {
 					// 分配失败，需要回滚订单和已分配的物理库存
+					if releaseErr := s.virtualProductSvc.ReleaseStock(orderNo); releaseErr != nil {
+						fmt.Printf("Warning: Failed to rollback virtual stock for order %s: %v\n", orderNo, releaseErr)
+					}
 					for j, inventoryID := range inventoryBindings {
 						s.inventoryRepo.ReleaseReserve(inventoryID, items[j].Quantity, orderNo)
+					}
+					if promoCodeID != nil && s.promoCodeRepo != nil {
+						if releaseErr := s.promoCodeRepo.ReleaseReserve(*promoCodeID, orderNo); releaseErr != nil {
+							fmt.Printf("Warning: Failed to rollback promo code reserve for order %s: %v\n", orderNo, releaseErr)
+						}
 					}
 					s.OrderRepo.Delete(order.ID)
 					return nil, fmt.Errorf("Failed to allocate virtual product stock: %v", err)

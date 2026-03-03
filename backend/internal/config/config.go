@@ -167,7 +167,7 @@ type CaptchaConfig struct {
 	EnableForLogin        bool   `json:"enable_for_login"`         // 登录时是否需要验证码
 	EnableForRegister     bool   `json:"enable_for_register"`      // 注册时是否需要验证码
 	EnableForSerialVerify bool   `json:"enable_for_serial_verify"` // 序列号验证时是否需要验证码
-	EnableForBind         bool   `json:"enable_for_bind"`           // 绑定邮箱/手机时是否需要验证码
+	EnableForBind         bool   `json:"enable_for_bind"`          // 绑定邮箱/手机时是否需要验证码
 }
 
 // SecurityConfig 安全配置
@@ -183,17 +183,20 @@ type SecurityConfig struct {
 // MessageRateLimit 邮件/短信发送频率限制
 type MessageRateLimit struct {
 	Hourly       int    `json:"hourly"`        // max per recipient per hour, 0=unlimited
-	Daily        int    `json:"daily"`          // max per recipient per day, 0=unlimited
-	ExceedAction string `json:"exceed_action"`  // "cancel" or "delay"
+	Daily        int    `json:"daily"`         // max per recipient per day, 0=unlimited
+	ExceedAction string `json:"exceed_action"` // "cancel" or "delay"
 }
 
 // RateLimitConfig 限流配置
 type RateLimitConfig struct {
-	Enabled      bool `json:"enabled"`
-	API          int  `json:"api"`
-	UserLogin    int  `json:"user_login"`
-	UserRequest  int  `json:"user_request"`
-	AdminRequest int  `json:"admin_request"`
+	Enabled       bool `json:"enabled"`
+	API           int  `json:"api"`
+	UserLogin     int  `json:"user_login"`
+	UserRequest   int  `json:"user_request"`
+	AdminRequest  int  `json:"admin_request"`
+	OrderCreate   int  `json:"order_create"`
+	PaymentInfo   int  `json:"payment_info"`
+	PaymentSelect int  `json:"payment_select"`
 }
 
 // LogConfig 日志配置
@@ -257,15 +260,18 @@ func InitLogger(cfg *LogConfig) (*os.File, error) {
 
 // OrderConfig Order配置
 type OrderConfig struct {
-	NoPrefix                string             `json:"no_prefix"`
-	AutoCancelHours         int                `json:"auto_cancel_hours"`
-	Currency                string             `json:"currency"` // 货币单位: CNY, USD, EUR, JPY, etc.
-	MaxOrderItems           int                `json:"max_order_items"`          // 单个订单最大商品项数，0表示使用默认值100
-	MaxItemQuantity         int                `json:"max_item_quantity"`        // 单个商品项最大数量，0表示使用默认值9999
-	ShowVirtualStockRemark  bool               `json:"show_virtual_stock_remark"` // 是否在用户侧显示虚拟产品备注
-	StockDisplay            StockDisplayConfig `json:"stock_display"`
-	VirtualDeliveryOrder    string             `json:"virtual_delivery_order"` // 虚拟库存发货顺序: random(随机), newest(先发新库存), oldest(先发老库存)
-	Invoice                 InvoiceConfig      `json:"invoice"`
+	NoPrefix                       string             `json:"no_prefix"`
+	AutoCancelHours                int                `json:"auto_cancel_hours"`
+	MaxPendingPaymentOrdersPerUser int                `json:"max_pending_payment_orders_per_user"`
+	MaxPaymentPollingTasksPerUser  int                `json:"max_payment_polling_tasks_per_user"`
+	MaxPaymentPollingTasksGlobal   int                `json:"max_payment_polling_tasks_global"`
+	Currency                       string             `json:"currency"`                  // 货币单位: CNY, USD, EUR, JPY, etc.
+	MaxOrderItems                  int                `json:"max_order_items"`           // 单个订单最大商品项数，0表示使用默认值100
+	MaxItemQuantity                int                `json:"max_item_quantity"`         // 单个商品项最大数量，0表示使用默认值9999
+	ShowVirtualStockRemark         bool               `json:"show_virtual_stock_remark"` // 是否在用户侧显示虚拟产品备注
+	StockDisplay                   StockDisplayConfig `json:"stock_display"`
+	VirtualDeliveryOrder           string             `json:"virtual_delivery_order"` // 虚拟库存发货顺序: random(随机), newest(先发新库存), oldest(先发老库存)
+	Invoice                        InvoiceConfig      `json:"invoice"`
 }
 
 // InvoiceConfig 账单/发票配置
@@ -370,11 +376,11 @@ type AuthBrandingConfig struct {
 
 // CustomizationConfig 个性化配置
 type CustomizationConfig struct {
-	PrimaryColor string              `json:"primary_color"` // 主题主色调 (HSL格式, 如 "217.2 91% 60%")
-	LogoURL      string              `json:"logo_url"`      // 自定义Logo URL
-	FaviconURL   string              `json:"favicon_url"`   // 自定义Favicon URL
-	PageRules    []PageRule          `json:"page_rules"`    // 页面定向规则
-	AuthBranding AuthBrandingConfig  `json:"auth_branding"` // 认证页品牌面板
+	PrimaryColor string             `json:"primary_color"` // 主题主色调 (HSL格式, 如 "217.2 91% 60%")
+	LogoURL      string             `json:"logo_url"`      // 自定义Logo URL
+	FaviconURL   string             `json:"favicon_url"`   // 自定义Favicon URL
+	PageRules    []PageRule         `json:"page_rules"`    // 页面定向规则
+	AuthBranding AuthBrandingConfig `json:"auth_branding"` // 认证页品牌面板
 }
 
 // AnalyticsConfig 数据分析配置
@@ -549,6 +555,24 @@ func (c *Config) Validate() error {
 	}
 	if c.Order.MaxItemQuantity == 0 {
 		c.Order.MaxItemQuantity = 9999
+	}
+	if c.Order.MaxPendingPaymentOrdersPerUser == 0 {
+		c.Order.MaxPendingPaymentOrdersPerUser = 10
+	}
+	if c.Order.MaxPaymentPollingTasksPerUser == 0 {
+		c.Order.MaxPaymentPollingTasksPerUser = 20
+	}
+	if c.Order.MaxPaymentPollingTasksGlobal == 0 {
+		c.Order.MaxPaymentPollingTasksGlobal = 2000
+	}
+	if c.RateLimit.OrderCreate == 0 {
+		c.RateLimit.OrderCreate = 30
+	}
+	if c.RateLimit.PaymentInfo == 0 {
+		c.RateLimit.PaymentInfo = 120
+	}
+	if c.RateLimit.PaymentSelect == 0 {
+		c.RateLimit.PaymentSelect = 60
 	}
 	if c.MagicLink.ExpireMinutes == 0 {
 		c.MagicLink.ExpireMinutes = 15

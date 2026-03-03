@@ -123,7 +123,10 @@ func (h *PaymentMethodHandler) SelectPaymentMethod(c *gin.Context) {
 
 	// 将订单加入付款状态轮询队列
 	if h.pollingService != nil {
-		h.pollingService.AddToQueue(order.ID, req.PaymentMethodID)
+		if err := h.pollingService.AddToQueue(order.ID, req.PaymentMethodID); err != nil {
+			response.HandleError(c, "Failed to queue payment polling task", err)
+			return
+		}
 	}
 
 	// 生成付款卡片并缓存
