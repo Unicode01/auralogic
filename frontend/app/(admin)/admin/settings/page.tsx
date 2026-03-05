@@ -516,6 +516,7 @@ export default function SettingsPage() {
   const templateEventLabels: Record<string, string> = {
     welcome: t.admin.templateEventWelcome,
     email_verification: t.admin.templateEventEmailVerification,
+    marketing: t.admin.templateEventMarketing,
     order_created: t.admin.templateEventOrderCreated,
     order_paid: t.admin.templateEventOrderPaid,
     order_shipped: t.admin.templateEventOrderShipped,

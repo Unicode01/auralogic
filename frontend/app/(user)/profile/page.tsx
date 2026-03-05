@@ -6,7 +6,6 @@ import { getPublicConfig } from '@/lib/api'
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Separator } from '@/components/ui/separator'
 import {
   User,
   Mail,
@@ -15,16 +14,12 @@ import {
   Settings,
   Package,
   LogOut,
-  Globe,
   ChevronRight,
-  Key,
   ShieldCheck,
   MessageSquare,
   BookOpen,
   Megaphone,
-  Sun,
-  Moon,
-  Monitor
+  Bell
 } from 'lucide-react'
 import Link from 'next/link'
 import { formatDate } from '@/lib/utils'
@@ -32,7 +27,6 @@ import { useLocale } from '@/hooks/use-locale'
 import { usePageTitle } from '@/hooks/use-page-title'
 import { getTranslations } from '@/lib/i18n'
 import { useIsMobile } from '@/hooks/use-mobile'
-import { useTheme, Theme } from '@/contexts/theme-context'
 import { clearToken } from '@/lib/auth'
 
 // 角色颜色
@@ -44,9 +38,8 @@ const roleColors: Record<string, 'default' | 'secondary' | 'destructive' | 'outl
 
 export default function ProfilePage() {
   const { user } = useAuth()
-  const { locale, setLocale } = useLocale()
+  const { locale } = useLocale()
   const { isMobile } = useIsMobile()
-  const { theme, setTheme } = useTheme()
   const t = getTranslations(locale)
   usePageTitle(t.pageTitle.profile)
 
@@ -68,35 +61,6 @@ export default function ProfilePage() {
     if (typeof window !== 'undefined') {
       clearToken()
       window.location.href = '/login'
-    }
-  }
-
-  const toggleLanguage = () => {
-    setLocale(locale === 'zh' ? 'en' : 'zh')
-  }
-
-  const cycleTheme = () => {
-    const themes: Theme[] = ['light', 'dark', 'system']
-    const currentIndex = themes.indexOf(theme)
-    const nextIndex = (currentIndex + 1) % themes.length
-    setTheme(themes[nextIndex])
-  }
-
-  const getThemeLabel = () => {
-    switch (theme) {
-      case 'light': return t.theme?.light || '浅色'
-      case 'dark': return t.theme?.dark || '深色'
-      case 'system': return t.theme?.system || '跟随系统'
-      default: return theme
-    }
-  }
-
-  const getThemeIcon = () => {
-    switch (theme) {
-      case 'light': return <Sun className="h-5 w-5 text-muted-foreground" />
-      case 'dark': return <Moon className="h-5 w-5 text-muted-foreground" />
-      case 'system': return <Monitor className="h-5 w-5 text-muted-foreground" />
-      default: return <Sun className="h-5 w-5 text-muted-foreground" />
     }
   }
 
@@ -244,39 +208,16 @@ export default function ProfilePage() {
               <ChevronRight className="h-5 w-5 text-muted-foreground" />
             </Link>
 
-            {/* 语言切换 */}
-            <button
-              onClick={toggleLanguage}
-              className="flex items-center justify-between p-4 hover:bg-accent transition-colors w-full text-left"
+            <Link
+              href="/profile/preferences"
+              className="flex items-center justify-between p-4 hover:bg-accent transition-colors"
             >
               <div className="flex items-center gap-3">
-                <Globe className="h-5 w-5 text-muted-foreground" />
-                <span>{t.sidebar.language}</span>
+                <Bell className="h-5 w-5 text-muted-foreground" />
+                <span>{t.sidebar.preferences}</span>
               </div>
-              <div className="flex items-center gap-2">
-                <span className="text-sm text-muted-foreground">
-                  {locale === 'zh' ? '中文' : 'English'}
-                </span>
-                <ChevronRight className="h-5 w-5 text-muted-foreground" />
-              </div>
-            </button>
-
-            {/* 主题切换 */}
-            <button
-              onClick={cycleTheme}
-              className="flex items-center justify-between p-4 hover:bg-accent transition-colors w-full text-left"
-            >
-              <div className="flex items-center gap-3">
-                {getThemeIcon()}
-                <span>{t.sidebar?.theme || '主题'}</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-sm text-muted-foreground">
-                  {getThemeLabel()}
-                </span>
-                <ChevronRight className="h-5 w-5 text-muted-foreground" />
-              </div>
-            </button>
+              <ChevronRight className="h-5 w-5 text-muted-foreground" />
+            </Link>
 
             {/* 管理后台入口 - 仅管理员可见 */}
             {(user?.role === 'admin' || user?.role === 'super_admin') && (

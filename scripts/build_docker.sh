@@ -1051,6 +1051,32 @@ copy_docker_files() {
 }
 
 # ---------------------------
+# 仅补充缺失模板（不覆盖用户已有模板）
+# ---------------------------
+sync_missing_templates() {
+  local src_dir="$1"
+  local dst_dir="$2"
+  local copied_count=0
+
+  # 逐个文件补充，保留目标目录中已存在的自定义内容
+  while IFS= read -r -d '' src_file; do
+    local rel_path="${src_file#$src_dir/}"
+    local dst_file="$dst_dir/$rel_path"
+    if [ ! -f "$dst_file" ]; then
+      mkdir -p "$(dirname "$dst_file")"
+      cp "$src_file" "$dst_file"
+      copied_count=$((copied_count + 1))
+    fi
+  done < <(find "$src_dir" -type f -print0)
+
+  if [ "$copied_count" -gt 0 ]; then
+    ok "已补充 $copied_count 个新增邮件模板"
+  else
+    info "未发现需要补充的新增邮件模板"
+  fi
+}
+
+# ---------------------------
 # 构建 Docker 镜像
 # ---------------------------
 build_docker_image() {
@@ -1246,7 +1272,8 @@ update_container() {
         cp -r "$PROJECT_ROOT/backend/templates" "$WORK_DIR/docker-build/templates"
         ok "邮件模板已更新为最新版本"
       else
-        info "保留现有邮件模板"
+        info "保留现有邮件模板，并自动补充缺失的新模板"
+        sync_missing_templates "$PROJECT_ROOT/backend/templates" "$WORK_DIR/docker-build/templates"
       fi
     else
       info "未发现已有模板目录，自动复制源码模板..."

@@ -194,7 +194,7 @@ export default function TicketDetailPage() {
       {/* 头部 - 更紧凑 */}
       <div className="flex items-center justify-between px-2 py-1.5 md:px-3 md:py-2 border-b shrink-0">
         <div className="flex items-center gap-2 min-w-0">
-          <Button variant="ghost" size="icon" asChild className="shrink-0 h-8 w-8">
+          <Button variant="outline" size="icon" asChild className="shrink-0 h-8 w-8">
             <Link href="/tickets">
               <ArrowLeft className="h-4 w-4" />
             </Link>

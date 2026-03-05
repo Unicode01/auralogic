@@ -6,45 +6,53 @@ import (
 	"gorm.io/gorm"
 )
 
-// User User模型
+// User model
 type User struct {
 	ID   uint   `gorm:"primaryKey" json:"id"`
 	UUID string `gorm:"type:varchar(36);uniqueIndex;not null" json:"uuid"`
 	// Uniqueness is enforced via "active-only" (deleted_at IS NULL) unique indexes in database.AutoMigrate().
-	Email         string         `gorm:"type:varchar(255);index" json:"email"`
-	Phone         *string        `gorm:"type:varchar(50);index" json:"phone,omitempty"`
-	PasswordHash  string         `gorm:"type:varchar(255)" json:"-"`
-	Name          string         `gorm:"type:varchar(100)" json:"name"`
-	Avatar        string         `gorm:"type:varchar(500)" json:"avatar,omitempty"`
-	Role          string         `gorm:"type:varchar(20);default:'user'" json:"role"` // user/admin/super_admin
-	IsActive      bool           `gorm:"default:true" json:"is_active"`
-	EmailVerified bool           `gorm:"default:false" json:"email_verified"`                 // 邮箱是否已验证
-	Locale        string         `gorm:"type:varchar(10)" json:"locale,omitempty"`            // 用户语言偏好: zh, en
-	LastLoginIP   string         `gorm:"type:varchar(50)" json:"-"`     // 最后登录IP
-	RegisterIP    string         `gorm:"type:varchar(50)" json:"-"`       // 注册IP
-	Country       string         `gorm:"type:varchar(100)" json:"country,omitempty"`          // 用户所在国家
-	LastLoginAt   *time.Time     `json:"last_login_at,omitempty"`
-	CreatedAt     time.Time      `json:"created_at"`
-	UpdatedAt     time.Time      `json:"updated_at"`
-	DeletedAt     gorm.DeletedAt `gorm:"index" json:"-"`
+	Email        string  `gorm:"type:varchar(255);index" json:"email"`
+	Phone        *string `gorm:"type:varchar(50);index" json:"phone,omitempty"`
+	PasswordHash string  `gorm:"type:varchar(255)" json:"-"`
+	Name         string  `gorm:"type:varchar(100)" json:"name"`
+	Avatar       string  `gorm:"type:varchar(500)" json:"avatar,omitempty"`
+	Role         string  `gorm:"type:varchar(20);default:'user'" json:"role"` // user/admin/super_admin
+	IsActive     bool    `gorm:"default:true" json:"is_active"`
+
+	EmailVerified bool   `gorm:"default:false" json:"email_verified"`
+	Locale        string `gorm:"type:varchar(10)" json:"locale,omitempty"`
+	Country       string `gorm:"type:varchar(100)" json:"country,omitempty"`
+
+	// User-level notification preferences.
+	EmailNotifyOrder     bool `gorm:"default:true" json:"email_notify_order"`
+	EmailNotifyTicket    bool `gorm:"default:true" json:"email_notify_ticket"`
+	EmailNotifyMarketing bool `gorm:"default:true" json:"email_notify_marketing"`
+	SMSNotifyMarketing   bool `gorm:"default:true" json:"sms_notify_marketing"`
+
+	LastLoginIP string         `gorm:"type:varchar(50)" json:"-"`
+	RegisterIP  string         `gorm:"type:varchar(50)" json:"-"`
+	LastLoginAt *time.Time     `json:"last_login_at,omitempty"`
+	CreatedAt   time.Time      `json:"created_at"`
+	UpdatedAt   time.Time      `json:"updated_at"`
+	DeletedAt   gorm.DeletedAt `gorm:"index" json:"-"`
 }
 
-// TableName 指定表名
+// TableName specifies table name
 func (User) TableName() string {
 	return "users"
 }
 
-// IsAdmin 是否是Admin
+// IsAdmin returns whether user is admin or super admin
 func (u *User) IsAdmin() bool {
 	return u.Role == "admin" || u.Role == "super_admin"
 }
 
-// IsSuperAdmin 是否是超级Admin
+// IsSuperAdmin returns whether user is super admin
 func (u *User) IsSuperAdmin() bool {
 	return u.Role == "super_admin"
 }
 
-// AdminPermission AdminPermission模型
+// AdminPermission model
 type AdminPermission struct {
 	ID          uint           `gorm:"primaryKey" json:"id"`
 	UserID      uint           `gorm:"uniqueIndex;not null" json:"user_id"`
@@ -56,14 +64,14 @@ type AdminPermission struct {
 	DeletedAt   gorm.DeletedAt `gorm:"index" json:"-"`
 }
 
-// TableName 指定表名
+// TableName specifies table name
 func (AdminPermission) TableName() string {
 	return "admin_permissions"
 }
 
-// MagicToken 快速登录Token 的表名在 magic_token.go
+// MagicToken table is defined in magic_token.go
 
-// EmailVerificationToken 邮箱验证Token
+// EmailVerificationToken email verification token
 type EmailVerificationToken struct {
 	ID        uint           `gorm:"primaryKey" json:"id"`
 	Token     string         `gorm:"type:varchar(255);uniqueIndex;not null" json:"token"`
@@ -84,7 +92,7 @@ func (t *EmailVerificationToken) IsValid() bool {
 	return !t.Used && time.Now().Before(t.ExpiresAt)
 }
 
-// HasPermission 检查是否拥有指定Permission
+// HasPermission checks whether permission is present.
 func (ap *AdminPermission) HasPermission(permission string) bool {
 	for _, p := range ap.Permissions {
 		if p == permission {

@@ -3,12 +3,12 @@ package admin
 import (
 	"strings"
 
-	"github.com/gin-gonic/gin"
 	"auralogic/internal/database"
 	"auralogic/internal/models"
 	"auralogic/internal/pkg/logger"
 	"auralogic/internal/pkg/response"
 	"auralogic/internal/service"
+	"github.com/gin-gonic/gin"
 )
 
 type AuthHandler struct {
@@ -75,6 +75,10 @@ func (h *AuthHandler) Login(c *gin.Context) {
 				"user.view",
 				"user.edit",
 				"user.permission",
+				"announcement.view",
+				"announcement.edit",
+				"marketing.view",
+				"marketing.send",
 				"admin.create",
 				"admin.edit",
 				"admin.delete",

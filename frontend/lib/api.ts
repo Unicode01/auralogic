@@ -337,7 +337,14 @@ export async function changePassword(oldPassword: string, newPassword: string) {
   })
 }
 
-export async function updateUserPreferences(data: { locale?: string; country?: string }) {
+export async function updateUserPreferences(data: {
+  locale?: string
+  country?: string
+  email_notify_order?: boolean
+  email_notify_ticket?: boolean
+  email_notify_marketing?: boolean
+  sms_notify_marketing?: boolean
+}) {
   return apiClient.put('/api/user/auth/preferences', data)
 }
 
@@ -1543,6 +1550,149 @@ export async function deleteKnowledgeArticle(id: number) {
 }
 
 // ==========================================
+// Marketing API
+// ==========================================
+
+export interface SendAdminMarketingData {
+  title: string
+  content: string
+  send_email: boolean
+  send_sms: boolean
+  target_all: boolean
+  user_ids?: number[]
+}
+
+export interface PreviewAdminMarketingData {
+  title: string
+  content: string
+  user_id?: number
+}
+
+export interface PreviewAdminMarketingResult {
+  title: string
+  email_subject: string
+  content_html: string
+  email_html: string
+  sms_text: string
+  resolved_variables?: Record<string, string>
+  supported_placeholders?: string[]
+  supported_template_variables?: string[]
+}
+
+export interface SendAdminMarketingResult {
+  id?: number
+  batch_id?: number
+  batch_no?: string
+  operator_id?: number
+  operator_name?: string
+  created_at?: string
+  started_at?: string
+  completed_at?: string
+  status?: 'queued' | 'running' | 'completed' | 'failed'
+  total_tasks?: number
+  processed_tasks?: number
+  failed_reason?: string
+  target_all: boolean
+  requested_user_count: number
+  targeted_users: number
+  send_email: boolean
+  send_sms: boolean
+  email_sent: number
+  email_failed: number
+  email_skipped: number
+  sms_sent: number
+  sms_failed: number
+  sms_skipped: number
+}
+
+export interface MarketingBatchItem {
+  id: number
+  batch_no: string
+  title: string
+  status: 'queued' | 'running' | 'completed' | 'failed'
+  total_tasks: number
+  processed_tasks: number
+  send_email: boolean
+  send_sms: boolean
+  target_all: boolean
+  requested_user_count: number
+  targeted_users: number
+  email_sent: number
+  email_failed: number
+  email_skipped: number
+  sms_sent: number
+  sms_failed: number
+  sms_skipped: number
+  operator_id?: number
+  operator_name?: string
+  started_at?: string
+  completed_at?: string
+  failed_reason?: string
+  created_at: string
+  updated_at: string
+}
+
+export interface MarketingBatchTaskItem {
+  id: number
+  batch_id: number
+  user_id: number
+  channel: 'email' | 'sms'
+  status: 'pending' | 'queued' | 'sent' | 'failed' | 'skipped'
+  error_message?: string
+  processed_at?: string
+  created_at: string
+  user?: {
+    id: number
+    name?: string
+    email?: string
+    phone?: string
+  }
+}
+
+export async function getMarketingUsers(params?: { page?: number; limit?: number; search?: string }) {
+  const query = new URLSearchParams()
+  if (params?.page) query.append('page', params.page.toString())
+  if (params?.limit) query.append('limit', params.limit.toString())
+  if (params?.search) query.append('search', params.search)
+  return apiClient.get(`/api/admin/marketing/users?${query}`)
+}
+
+export async function getMarketingBatches(params?: { page?: number; limit?: number; batch_no?: string; operator?: string; status?: string }) {
+  const query = new URLSearchParams()
+  if (params?.page) query.append('page', params.page.toString())
+  if (params?.limit) query.append('limit', params.limit.toString())
+  if (params?.batch_no) query.append('batch_no', params.batch_no)
+  if (params?.operator) query.append('operator', params.operator)
+  if (params?.status) query.append('status', params.status)
+  return apiClient.get(`/api/admin/marketing/batches?${query}`)
+}
+
+export async function getMarketingBatch(id: number) {
+  return apiClient.get(`/api/admin/marketing/batches/${id}`)
+}
+
+export async function getMarketingBatchTasks(
+  id: number,
+  params?: { page?: number; limit?: number; status?: string; channel?: string; search?: string }
+) {
+  const query = new URLSearchParams()
+  if (params?.page) query.append('page', params.page.toString())
+  if (params?.limit) query.append('limit', params.limit.toString())
+  if (params?.status) query.append('status', params.status)
+  if (params?.channel) query.append('channel', params.channel)
+  if (params?.search) query.append('search', params.search)
+  return apiClient.get(`/api/admin/marketing/batches/${id}/tasks?${query}`)
+}
+
+export async function previewAdminMarketing(data: PreviewAdminMarketingData) {
+  return apiClient.post('/api/admin/marketing/preview', data)
+}
+
+export async function sendAdminMarketing(data: SendAdminMarketingData) {
+  return apiClient.post('/api/admin/marketing/send', data)
+}
+
+// ==========================================
 // 公告 API
 // ==========================================
 
@@ -1550,6 +1700,9 @@ export interface Announcement {
   id: number
   title: string
   content: string
+  category?: 'general' | 'marketing'
+  send_email?: boolean
+  send_sms?: boolean
   is_mandatory: boolean
   require_full_read: boolean
   created_at: string
@@ -1592,11 +1745,27 @@ export async function getAdminAnnouncement(id: number) {
   return apiClient.get(`/api/admin/announcements/${id}`)
 }
 
-export async function createAnnouncement(data: { title: string; content: string; is_mandatory?: boolean; require_full_read?: boolean }) {
+export async function createAnnouncement(data: {
+  title: string
+  content: string
+  category?: 'general' | 'marketing'
+  send_email?: boolean
+  send_sms?: boolean
+  is_mandatory?: boolean
+  require_full_read?: boolean
+}) {
   return apiClient.post('/api/admin/announcements', data)
 }
 
-export async function updateAnnouncement(id: number, data: { title?: string; content?: string; is_mandatory?: boolean; require_full_read?: boolean }) {
+export async function updateAnnouncement(id: number, data: {
+  title?: string
+  content?: string
+  category?: 'general' | 'marketing'
+  send_email?: boolean
+  send_sms?: boolean
+  is_mandatory?: boolean
+  require_full_read?: boolean
+}) {
   return apiClient.put(`/api/admin/announcements/${id}`, data)
 }
 

@@ -4,8 +4,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 	"auralogic/internal/config"
 	"auralogic/internal/middleware"
 	"auralogic/internal/models"
@@ -13,6 +11,8 @@ import (
 	"auralogic/internal/pkg/password"
 	"auralogic/internal/pkg/response"
 	"auralogic/internal/repository"
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
@@ -40,7 +40,7 @@ func userToResponse(user *models.User) gin.H {
 		"avatar":         user.Avatar,
 		"role":           user.Role,
 		"is_active":      user.IsActive,
-		"email_verified":  user.EmailVerified,
+		"email_verified": user.EmailVerified,
 		"locale":         user.Locale,
 		"last_login_ip":  user.LastLoginIP,
 		"register_ip":    user.RegisterIP,
@@ -114,13 +114,15 @@ func (h *UserHandler) CreateUser(c *gin.Context) {
 
 	// CreateUser
 	user := &models.User{
-		UUID:          uuid.New().String(),
-		Email:         req.Email,
-		PasswordHash:  hashedPassword,
-		Name:          req.Name,
-		Role:          req.Role,
-		IsActive:      true,
-		EmailVerified: true,
+		UUID:                 uuid.New().String(),
+		Email:                req.Email,
+		PasswordHash:         hashedPassword,
+		Name:                 req.Name,
+		Role:                 req.Role,
+		IsActive:             true,
+		EmailVerified:        true,
+		EmailNotifyMarketing: true,
+		SMSNotifyMarketing:   true,
 	}
 
 	if err := h.userRepo.Create(user); err != nil {

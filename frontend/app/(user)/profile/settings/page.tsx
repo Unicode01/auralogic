@@ -286,7 +286,7 @@ export default function SettingsPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-4">
-        <Button asChild variant="ghost" size="icon" className="md:hidden">
+        <Button asChild variant="outline" size="icon" className="md:hidden">
           <Link href="/profile">
             <ArrowLeft className="h-5 w-5" />
           </Link>

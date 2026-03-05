@@ -62,6 +62,38 @@ func (s *SMSService) SendVerificationCode(phone, phoneCode, code, eventType stri
 	return s.sendDirect(phone, phoneCode, code, eventType)
 }
 
+// SendMarketingSMS sends marketing SMS to one user and respects user opt-in.
+func (s *SMSService) SendMarketingSMS(user *models.User, content string) error {
+	return s.SendMarketingSMSWithBatch(user, content, nil)
+}
+
+// SendMarketingSMSWithBatch sends marketing SMS to one user and respects user opt-in.
+// batchID is optional and is used for marketing batch tracking.
+func (s *SMSService) SendMarketingSMSWithBatch(user *models.User, content string, batchID *uint) error {
+	if user == nil || !user.SMSNotifyMarketing || user.Phone == nil || *user.Phone == "" {
+		return nil
+	}
+	message := strings.TrimSpace(content)
+	if message == "" {
+		return nil
+	}
+
+	smsCfg := s.cfg.SMS
+	if !smsCfg.Enabled {
+		return fmt.Errorf("SMS service is not enabled")
+	}
+
+	phone := strings.TrimSpace(*user.Phone)
+	rl := config.GetConfig().SMSRateLimit
+	if checkMessageRateLimit("sms_marketing", phone, rl) {
+		return fmt.Errorf("SMS rate limit exceeded")
+	}
+	incrMessageRateCounters("sms_marketing", phone)
+
+	userID := user.ID
+	return s.sendMarketingDirect(phone, "", message, &userID, batchID)
+}
+
 // sendDirect sends the SMS without rate limit checks (used by delayed processing).
 func (s *SMSService) sendDirect(phone, phoneCode, code, eventType string) error {
 	smsCfg := s.cfg.SMS
@@ -83,7 +115,28 @@ func (s *SMSService) sendDirect(phone, phoneCode, code, eventType string) error 
 		sendErr = fmt.Errorf("unknown SMS provider: %s", smsCfg.Provider)
 	}
 
-	s.logSms(phone, fmt.Sprintf("Verification code: %s", code), eventType, smsCfg.Provider, sendErr)
+	s.logSms(phone, fmt.Sprintf("Verification code: %s", code), eventType, smsCfg.Provider, sendErr, nil, nil)
+	return sendErr
+}
+
+func (s *SMSService) sendMarketingDirect(phone, phoneCode, message string, userID, batchID *uint) error {
+	smsCfg := s.cfg.SMS
+
+	var sendErr error
+	switch smsCfg.Provider {
+	case "twilio":
+		to := phone
+		if phoneCode != "" {
+			to = phoneCode + phone
+		}
+		sendErr = s.sendTwilioMessage(to, message)
+	case "custom":
+		sendErr = s.sendCustomHTTPMessage(phone, phoneCode, message)
+	default:
+		sendErr = fmt.Errorf("provider %s does not support marketing SMS", smsCfg.Provider)
+	}
+
+	s.logSms(phone, message, "marketing", smsCfg.Provider, sendErr, userID, batchID)
 	return sendErr
 }
 
@@ -152,7 +205,7 @@ func (s *SMSService) TestSMS(phone string) error {
 	return s.SendVerificationCode(phone, "", "123456", "test")
 }
 
-func (s *SMSService) logSms(phone, content, eventType, provider string, sendErr error) {
+func (s *SMSService) logSms(phone, content, eventType, provider string, sendErr error, userID, batchID *uint) {
 	if s.db == nil {
 		return
 	}
@@ -161,6 +214,8 @@ func (s *SMSService) logSms(phone, content, eventType, provider string, sendErr 
 		Phone:     phone,
 		Content:   content,
 		EventType: eventType,
+		UserID:    userID,
+		BatchID:   batchID,
 		Provider:  provider,
 		Status:    models.SmsLogStatusSent,
 		ExpireAt:  &expireAt,
@@ -283,13 +338,17 @@ func (s *SMSService) sendAliyunDYPNS(phone, countryCode, code, eventType string)
 }
 
 func (s *SMSService) sendTwilio(phone, code string) error {
+	return s.sendTwilioMessage(phone, fmt.Sprintf("Your verification code is: %s", code))
+}
+
+func (s *SMSService) sendTwilioMessage(phone, body string) error {
 	smsCfg := s.cfg.SMS
 	apiURL := fmt.Sprintf("https://api.twilio.com/2010-04-01/Accounts/%s/Messages.json", smsCfg.TwilioAccountSID)
 
 	data := url.Values{}
 	data.Set("To", phone)
 	data.Set("From", smsCfg.TwilioFromNumber)
-	data.Set("Body", fmt.Sprintf("Your verification code is: %s", code))
+	data.Set("Body", body)
 
 	req, err := http.NewRequest("POST", apiURL, strings.NewReader(data.Encode()))
 	if err != nil {
@@ -312,6 +371,10 @@ func (s *SMSService) sendTwilio(phone, code string) error {
 }
 
 func (s *SMSService) sendCustomHTTP(phone, phoneCode, code string) error {
+	return s.sendCustomHTTPMessage(phone, phoneCode, code)
+}
+
+func (s *SMSService) sendCustomHTTPMessage(phone, phoneCode, message string) error {
 	smsCfg := s.cfg.SMS
 	method := smsCfg.CustomMethod
 	if method == "" {
@@ -321,7 +384,8 @@ func (s *SMSService) sendCustomHTTP(phone, phoneCode, code string) error {
 	body := smsCfg.CustomBodyTemplate
 	body = strings.ReplaceAll(body, "{{phone}}", phone)
 	body = strings.ReplaceAll(body, "{{phone_code}}", phoneCode)
-	body = strings.ReplaceAll(body, "{{code}}", code)
+	body = strings.ReplaceAll(body, "{{code}}", message)
+	body = strings.ReplaceAll(body, "{{message}}", message)
 
 	req, err := http.NewRequest(method, smsCfg.CustomURL, bytes.NewBufferString(body))
 	if err != nil {

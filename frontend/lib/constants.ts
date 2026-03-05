@@ -48,6 +48,10 @@ export const PERMISSIONS = [
   { value: 'announcement.view', labelKey: 'permAnnouncementView' as const, category: 'announcement' },
   { value: 'announcement.edit', labelKey: 'permAnnouncementEdit' as const, category: 'announcement' },
 
+  // 营销权限
+  { value: 'marketing.view', labelKey: 'permMarketingView' as const, category: 'marketing' },
+  { value: 'marketing.send', labelKey: 'permMarketingSend' as const, category: 'marketing' },
+
   // 管理员权限
   { value: 'admin.create', labelKey: 'permAdminCreate' as const, category: 'admin' },
   { value: 'admin.edit', labelKey: 'permAdminEdit' as const, category: 'admin' },
@@ -61,7 +65,7 @@ export const PERMISSIONS = [
 ]
 
 // 权限分类键名
-export const PERMISSION_CATEGORIES = ['order', 'product', 'serial', 'user', 'ticket', 'knowledge', 'announcement', 'admin', 'system'] as const
+export const PERMISSION_CATEGORIES = ['order', 'product', 'serial', 'user', 'ticket', 'knowledge', 'announcement', 'marketing', 'admin', 'system'] as const
 
 // 分类键名到翻译键的映射
 export const CATEGORY_LABEL_KEYS: Record<string, string> = {
@@ -72,6 +76,7 @@ export const CATEGORY_LABEL_KEYS: Record<string, string> = {
   ticket: 'permCategoryTicket',
   knowledge: 'permCategoryKnowledge',
   announcement: 'permCategoryAnnouncement',
+  marketing: 'permCategoryMarketing',
   admin: 'permCategoryAdmin',
   system: 'permCategorySystem',
 }
@@ -85,6 +90,7 @@ export const PERMISSIONS_BY_CATEGORY: Record<string, typeof PERMISSIONS> = {
   ticket: PERMISSIONS.filter(p => p.category === 'ticket'),
   knowledge: PERMISSIONS.filter(p => p.category === 'knowledge'),
   announcement: PERMISSIONS.filter(p => p.category === 'announcement'),
+  marketing: PERMISSIONS.filter(p => p.category === 'marketing'),
   admin: PERMISSIONS.filter(p => p.category === 'admin'),
   system: PERMISSIONS.filter(p => p.category === 'system'),
 }

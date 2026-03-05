@@ -15,6 +15,13 @@ import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -49,6 +56,9 @@ import { MarkdownMessage } from '@/components/ui/markdown-message'
 interface AnnouncementForm {
   title: string
   content: string
+  category: 'general' | 'marketing'
+  send_email: boolean
+  send_sms: boolean
   is_mandatory: boolean
   require_full_read: boolean
 }
@@ -70,6 +80,9 @@ export default function AdminAnnouncementsPage() {
   const [form, setForm] = useState<AnnouncementForm>({
     title: '',
     content: '',
+    category: 'general',
+    send_email: false,
+    send_sms: false,
     is_mandatory: false,
     require_full_read: false,
   })
@@ -98,6 +111,9 @@ export default function AdminAnnouncementsPage() {
     setForm({
       title: item.title || '',
       content: item.content || '',
+      category: (item.category as 'general' | 'marketing') || 'general',
+      send_email: item.send_email ?? false,
+      send_sms: item.send_sms ?? false,
       is_mandatory: item.is_mandatory ?? false,
       require_full_read: item.require_full_read ?? false,
     })
@@ -114,6 +130,9 @@ export default function AdminAnnouncementsPage() {
         setForm({
           title: '',
           content: '',
+          category: 'general',
+          send_email: false,
+          send_sms: false,
           is_mandatory: false,
           require_full_read: false,
         })
@@ -169,6 +188,9 @@ export default function AdminAnnouncementsPage() {
     setForm({
       title: '',
       content: '',
+      category: 'general',
+      send_email: false,
+      send_sms: false,
       is_mandatory: false,
       require_full_read: false,
     })
@@ -185,6 +207,9 @@ export default function AdminAnnouncementsPage() {
     setForm({
       title: '',
       content: '',
+      category: 'general',
+      send_email: false,
+      send_sms: false,
       is_mandatory: false,
       require_full_read: false,
     })
@@ -259,6 +284,11 @@ export default function AdminAnnouncementsPage() {
                         <div className="flex-1 min-w-0">
                           <div className="font-medium truncate">{item.title}</div>
                           <div className="flex items-center gap-2 mt-1">
+                            {item.category === 'marketing' && (
+                              <Badge variant="outline" className="text-xs">
+                                {t.announcement.categoryMarketing}
+                              </Badge>
+                            )}
                             {item.is_mandatory && (
                               <Badge variant="destructive" className="text-xs">
                                 {t.announcement.mandatory}
@@ -267,6 +297,16 @@ export default function AdminAnnouncementsPage() {
                             {item.require_full_read && (
                               <Badge variant="secondary" className="text-xs">
                                 {t.announcement.requireFullRead}
+                              </Badge>
+                            )}
+                            {item.send_email && (
+                              <Badge variant="secondary" className="text-xs">
+                                {t.announcement.sendEmail}
+                              </Badge>
+                            )}
+                            {item.send_sms && (
+                              <Badge variant="secondary" className="text-xs">
+                                {t.announcement.sendSms}
                               </Badge>
                             )}
                             <span className="text-xs text-muted-foreground">
@@ -422,6 +462,54 @@ export default function AdminAnnouncementsPage() {
                       />
                     </div>
 
+                    <div className="space-y-2">
+                      <Label>{t.announcement.category}</Label>
+                      <Select
+                        value={form.category}
+                        onValueChange={(value: 'general' | 'marketing') =>
+                          setForm((prev) => ({ ...prev, category: value }))
+                        }
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="general">{t.announcement.categoryGeneral}</SelectItem>
+                          <SelectItem value="marketing">{t.announcement.categoryMarketing}</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="flex items-center justify-between rounded-lg border p-3">
+                      <div className="space-y-0.5">
+                        <Label>{t.announcement.sendEmail}</Label>
+                        <p className="text-xs text-muted-foreground">
+                          {t.announcement.sendEmailHint}
+                        </p>
+                      </div>
+                      <Switch
+                        checked={form.send_email}
+                        onCheckedChange={(checked) =>
+                          setForm((prev) => ({ ...prev, send_email: checked }))
+                        }
+                      />
+                    </div>
+
+                    <div className="flex items-center justify-between rounded-lg border p-3">
+                      <div className="space-y-0.5">
+                        <Label>{t.announcement.sendSms}</Label>
+                        <p className="text-xs text-muted-foreground">
+                          {t.announcement.sendSmsHint}
+                        </p>
+                      </div>
+                      <Switch
+                        checked={form.send_sms}
+                        onCheckedChange={(checked) =>
+                          setForm((prev) => ({ ...prev, send_sms: checked }))
+                        }
+                      />
+                    </div>
+
                     <div className="flex items-center justify-between rounded-lg border p-3">
                       <div className="space-y-0.5">
                         <Label>{t.announcement.mandatory}</Label>
@@ -546,4 +634,3 @@ export default function AdminAnnouncementsPage() {
     </div>
   )
 }
-

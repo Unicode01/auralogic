@@ -8,12 +8,13 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"auralogic/internal/config"
 	"auralogic/internal/models"
-	"auralogic/internal/pkg/money"
 	"auralogic/internal/pkg/cache"
+	"auralogic/internal/pkg/money"
 	"github.com/go-redis/redis/v8"
 	"gopkg.in/gomail.v2"
 	"gorm.io/gorm"
@@ -183,6 +184,61 @@ func getAppName() string {
 	return "AuraLogic"
 }
 
+func (s *EmailService) canSendOrderEmail(order *models.Order) bool {
+	if order.UserEmail == "" || !order.EmailNotificationsEnabled {
+		return false
+	}
+	if order.UserID == nil {
+		return true
+	}
+
+	var user models.User
+	if err := s.db.Select("email_notify_order").First(&user, *order.UserID).Error; err != nil {
+		// Fail-open to avoid dropping transactional emails when user record lookup fails.
+		return true
+	}
+	return user.EmailNotifyOrder
+}
+
+func (s *EmailService) canSendTicketEmail(userID uint) bool {
+	var user models.User
+	if err := s.db.Select("email_notify_ticket").First(&user, userID).Error; err != nil {
+		// Fail-open to avoid dropping transactional emails when user record lookup fails.
+		return true
+	}
+	return user.EmailNotifyTicket
+}
+
+// SendMarketingAnnouncementEmail sends a marketing message by email for one user,
+// respecting user-level marketing opt-in.
+func (s *EmailService) SendMarketingAnnouncementEmail(user *models.User, title, content string) error {
+	return s.SendMarketingAnnouncementEmailWithBatch(user, title, content, nil)
+}
+
+// SendMarketingAnnouncementEmailWithBatch sends a marketing message by email for one user,
+// respecting user-level marketing opt-in and attaching marketing batch id.
+func (s *EmailService) SendMarketingAnnouncementEmailWithBatch(user *models.User, title, content string, batchID *uint) error {
+	if user == nil || user.Email == "" || !user.EmailNotifyMarketing {
+		return nil
+	}
+	if strings.TrimSpace(content) == "" {
+		return nil
+	}
+
+	subject := strings.TrimSpace(title)
+	if subject == "" {
+		appName := getAppName()
+		if resolveLocale(user.Locale) == "zh" {
+			subject = fmt.Sprintf("营销通知 - %s", appName)
+		} else {
+			subject = fmt.Sprintf("Marketing Message - %s", appName)
+		}
+	}
+
+	userID := user.ID
+	return s.queueEmail(user.Email, subject, content, "marketing.announcement", nil, &userID, batchID)
+}
+
 // SendEmail 发送邮件
 func (s *EmailService) SendEmail(to, subject, content string) error {
 	if !s.cfg.Enabled {
@@ -238,6 +294,10 @@ func incrMessageRateCounters(prefix, recipient string) {
 
 // QueueEmail 将邮件加入队列
 func (s *EmailService) QueueEmail(to, subject, content, eventType string, orderID, userID *uint) error {
+	return s.queueEmail(to, subject, content, eventType, orderID, userID, nil)
+}
+
+func (s *EmailService) queueEmail(to, subject, content, eventType string, orderID, userID, batchID *uint) error {
 	rl := config.GetConfig().EmailRateLimit
 
 	// Check rate limit
@@ -252,6 +312,7 @@ func (s *EmailService) QueueEmail(to, subject, content, eventType string, orderI
 				EventType: eventType,
 				OrderID:   orderID,
 				UserID:    userID,
+				BatchID:   batchID,
 				Status:    models.EmailLogStatusPending,
 				ExpireAt:  &expireAt,
 			}
@@ -280,6 +341,7 @@ func (s *EmailService) QueueEmail(to, subject, content, eventType string, orderI
 		EventType: eventType,
 		OrderID:   orderID,
 		UserID:    userID,
+		BatchID:   batchID,
 		Status:    models.EmailLogStatusPending,
 		ExpireAt:  &expireAt,
 	}
@@ -346,7 +408,11 @@ func (s *EmailService) ProcessEmailQueue() {
 		// TTL检查：如果邮件已过期则跳过发送
 		if emailLog.ExpireAt != nil && time.Now().After(*emailLog.ExpireAt) {
 			emailLog.Status = models.EmailLogStatusExpired
-			s.db.Save(&emailLog)
+			if err := s.db.Save(&emailLog).Error; err != nil {
+				log.Printf("Failed to update expired email log %s: %v", emailID, err)
+				continue
+			}
+			s.syncMarketingTaskStatus(&emailLog)
 			continue
 		}
 
@@ -368,8 +434,196 @@ func (s *EmailService) ProcessEmailQueue() {
 			emailLog.SentAt = &now
 		}
 
-		s.db.Save(&emailLog)
+		if err := s.db.Save(&emailLog).Error; err != nil {
+			log.Printf("Failed to save email log %s: %v", emailID, err)
+			continue
+		}
+		s.syncMarketingTaskStatus(&emailLog)
 	}
+}
+
+func (s *EmailService) syncMarketingTaskStatus(emailLog *models.EmailLog) {
+	if s.db == nil || emailLog == nil || emailLog.BatchID == nil || emailLog.UserID == nil {
+		return
+	}
+	if emailLog.EventType != "marketing.announcement" {
+		return
+	}
+
+	var (
+		taskStatus  models.MarketingTaskStatus
+		errMessage  string
+		shouldApply bool
+	)
+
+	switch emailLog.Status {
+	case models.EmailLogStatusSent:
+		taskStatus = models.MarketingTaskStatusSent
+		shouldApply = true
+	case models.EmailLogStatusFailed:
+		// Failed with retries remaining is not a final state yet.
+		if emailLog.RetryCount >= 3 {
+			taskStatus = models.MarketingTaskStatusFailed
+			errMessage = trimEmailError(emailLog.ErrorMessage)
+			shouldApply = true
+		}
+	case models.EmailLogStatusExpired:
+		taskStatus = models.MarketingTaskStatusFailed
+		errMessage = trimEmailError(emailLog.ErrorMessage)
+		if errMessage == "" {
+			errMessage = "email expired"
+		}
+		shouldApply = true
+	}
+
+	if !shouldApply {
+		return
+	}
+
+	updates := map[string]interface{}{
+		"status":        taskStatus,
+		"processed_at":  models.NowFunc(),
+		"error_message": "",
+	}
+	if taskStatus == models.MarketingTaskStatusFailed {
+		updates["error_message"] = errMessage
+	}
+
+	if err := s.db.Model(&models.MarketingBatchTask{}).
+		Where("batch_id = ? AND user_id = ? AND channel = ? AND status IN ?", *emailLog.BatchID, *emailLog.UserID, models.MarketingTaskChannelEmail, []models.MarketingTaskStatus{
+			models.MarketingTaskStatusPending,
+			models.MarketingTaskStatusQueued,
+		}).
+		Updates(updates).Error; err != nil {
+		log.Printf("Failed to sync marketing email task status, batch=%d user=%d: %v", *emailLog.BatchID, *emailLog.UserID, err)
+		return
+	}
+
+	s.refreshMarketingBatchStats(*emailLog.BatchID)
+}
+
+func (s *EmailService) refreshMarketingBatchStats(batchID uint) {
+	if batchID == 0 || s.db == nil {
+		return
+	}
+
+	type aggRow struct {
+		Channel models.MarketingTaskChannel `gorm:"column:channel"`
+		Status  models.MarketingTaskStatus  `gorm:"column:status"`
+		Count   int64                       `gorm:"column:count"`
+	}
+
+	var total int64
+	if err := s.db.Model(&models.MarketingBatchTask{}).Where("batch_id = ?", batchID).Count(&total).Error; err != nil {
+		log.Printf("Failed to count marketing batch tasks, batch=%d: %v", batchID, err)
+		return
+	}
+
+	var processed int64
+	if err := s.db.Model(&models.MarketingBatchTask{}).
+		Where("batch_id = ? AND status IN ?", batchID, []models.MarketingTaskStatus{
+			models.MarketingTaskStatusSent,
+			models.MarketingTaskStatusFailed,
+			models.MarketingTaskStatusSkipped,
+		}).
+		Count(&processed).Error; err != nil {
+		log.Printf("Failed to count processed marketing tasks, batch=%d: %v", batchID, err)
+		return
+	}
+
+	var unresolved int64
+	if err := s.db.Model(&models.MarketingBatchTask{}).
+		Where("batch_id = ? AND status IN ?", batchID, []models.MarketingTaskStatus{
+			models.MarketingTaskStatusPending,
+			models.MarketingTaskStatusQueued,
+		}).
+		Count(&unresolved).Error; err != nil {
+		log.Printf("Failed to count unresolved marketing tasks, batch=%d: %v", batchID, err)
+		return
+	}
+
+	var rows []aggRow
+	if err := s.db.Model(&models.MarketingBatchTask{}).
+		Select("channel, status, COUNT(*) as count").
+		Where("batch_id = ?", batchID).
+		Group("channel, status").
+		Scan(&rows).Error; err != nil {
+		log.Printf("Failed to aggregate marketing batch stats, batch=%d: %v", batchID, err)
+		return
+	}
+
+	emailSent := int64(0)
+	emailFailed := int64(0)
+	emailSkipped := int64(0)
+	smsSent := int64(0)
+	smsFailed := int64(0)
+	smsSkipped := int64(0)
+	for _, row := range rows {
+		switch row.Channel {
+		case models.MarketingTaskChannelEmail:
+			switch row.Status {
+			case models.MarketingTaskStatusSent:
+				emailSent = row.Count
+			case models.MarketingTaskStatusFailed:
+				emailFailed = row.Count
+			case models.MarketingTaskStatusSkipped:
+				emailSkipped = row.Count
+			}
+		case models.MarketingTaskChannelSMS:
+			switch row.Status {
+			case models.MarketingTaskStatusSent:
+				smsSent = row.Count
+			case models.MarketingTaskStatusFailed:
+				smsFailed = row.Count
+			case models.MarketingTaskStatusSkipped:
+				smsSkipped = row.Count
+			}
+		}
+	}
+
+	var batch models.MarketingBatch
+	if err := s.db.Select("id", "status").First(&batch, batchID).Error; err != nil {
+		log.Printf("Failed to query marketing batch, batch=%d: %v", batchID, err)
+		return
+	}
+
+	updates := map[string]interface{}{
+		"total_tasks":     int(total),
+		"processed_tasks": int(processed),
+		"email_sent":      int(emailSent),
+		"email_failed":    int(emailFailed),
+		"email_skipped":   int(emailSkipped),
+		"sms_sent":        int(smsSent),
+		"sms_failed":      int(smsFailed),
+		"sms_skipped":     int(smsSkipped),
+	}
+
+	if batch.Status != models.MarketingBatchStatusFailed {
+		if unresolved == 0 {
+			now := models.NowFunc()
+			updates["status"] = models.MarketingBatchStatusCompleted
+			updates["completed_at"] = now
+		} else {
+			updates["status"] = models.MarketingBatchStatusRunning
+			updates["completed_at"] = nil
+		}
+	}
+
+	if err := s.db.Model(&models.MarketingBatch{}).Where("id = ?", batchID).Updates(updates).Error; err != nil {
+		log.Printf("Failed to update marketing batch stats from email queue, batch=%d: %v", batchID, err)
+	}
+}
+
+func trimEmailError(msg string) string {
+	msg = strings.TrimSpace(msg)
+	if msg == "" {
+		return ""
+	}
+	const maxLen = 1000
+	if len(msg) <= maxLen {
+		return msg
+	}
+	return msg[:maxLen]
 }
 
 // ========================
@@ -541,7 +795,7 @@ func (s *EmailService) SendOrderCreatedEmail(order *models.Order) error {
 	if !getEmailNotifyConfig().OrderCreated {
 		return nil
 	}
-	if order.UserEmail == "" || !order.EmailNotificationsEnabled {
+	if !s.canSendOrderEmail(order) {
 		return nil
 	}
 
@@ -582,7 +836,7 @@ func (s *EmailService) SendOrderPaidEmail(order *models.Order, isVirtualOnly boo
 	if !getEmailNotifyConfig().OrderPaid {
 		return nil
 	}
-	if order.UserEmail == "" || !order.EmailNotificationsEnabled {
+	if !s.canSendOrderEmail(order) {
 		return nil
 	}
 
@@ -632,7 +886,7 @@ func (s *EmailService) SendOrderShippedEmail(order *models.Order) error {
 	if !getEmailNotifyConfig().OrderShipped {
 		return nil
 	}
-	if order.UserEmail == "" || !order.EmailNotificationsEnabled {
+	if !s.canSendOrderEmail(order) {
 		return nil
 	}
 
@@ -680,7 +934,7 @@ func (s *EmailService) SendOrderCompletedEmail(order *models.Order) error {
 	if !getEmailNotifyConfig().OrderCompleted {
 		return nil
 	}
-	if order.UserEmail == "" || !order.EmailNotificationsEnabled {
+	if !s.canSendOrderEmail(order) {
 		return nil
 	}
 
@@ -725,7 +979,7 @@ func (s *EmailService) SendOrderResubmitEmail(order *models.Order, formURL strin
 	if !getEmailNotifyConfig().OrderResubmit {
 		return nil
 	}
-	if order.UserEmail == "" || !order.EmailNotificationsEnabled {
+	if !s.canSendOrderEmail(order) {
 		return nil
 	}
 
@@ -765,7 +1019,7 @@ func (s *EmailService) SendOrderCancelledEmail(order *models.Order) error {
 	if !getEmailNotifyConfig().OrderCancelled {
 		return nil
 	}
-	if order.UserEmail == "" || !order.EmailNotificationsEnabled {
+	if !s.canSendOrderEmail(order) {
 		return nil
 	}
 
@@ -834,7 +1088,7 @@ func (s *EmailService) SendTicketCreatedEmail(ticket *models.Ticket, userEmail s
 	appName := getAppName()
 
 	for _, admin := range admins {
-		if admin.Email == "" {
+		if admin.Email == "" || !admin.EmailNotifyTicket {
 			continue
 		}
 
@@ -894,6 +1148,9 @@ func (s *EmailService) SendTicketAdminReplyEmail(ticket *models.Ticket, adminNam
 		return err
 	}
 	if user.Email == "" {
+		return nil
+	}
+	if !s.canSendTicketEmail(user.ID) {
 		return nil
 	}
 
@@ -958,7 +1215,7 @@ func (s *EmailService) SendTicketUserReplyEmail(ticket *models.Ticket, userName,
 	}
 
 	for _, admin := range admins {
-		if admin.Email == "" {
+		if admin.Email == "" || !admin.EmailNotifyTicket {
 			continue
 		}
 
@@ -1009,6 +1266,9 @@ func (s *EmailService) SendTicketResolvedEmail(ticket *models.Ticket) error {
 		return err
 	}
 	if user.Email == "" {
+		return nil
+	}
+	if !s.canSendTicketEmail(user.ID) {
 		return nil
 	}
 

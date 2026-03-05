@@ -8,13 +8,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"auralogic/internal/config"
 	"auralogic/internal/models"
 	"auralogic/internal/pkg/cache"
 	"auralogic/internal/pkg/jwt"
 	"auralogic/internal/pkg/password"
 	"auralogic/internal/repository"
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
@@ -132,13 +132,15 @@ func (s *AuthService) Register(email, phone, name, pwd string) (*models.User, er
 
 	// 创建用户
 	user := &models.User{
-		UUID:          uuid.New().String(),
-		Email:         email,
-		Name:          name,
-		PasswordHash:  hashedPassword,
-		Role:          "user",
-		IsActive:      true,
-		EmailVerified: false,
+		UUID:                 uuid.New().String(),
+		Email:                email,
+		Name:                 name,
+		PasswordHash:         hashedPassword,
+		Role:                 "user",
+		IsActive:             true,
+		EmailVerified:        false,
+		EmailNotifyMarketing: true,
+		SMSNotifyMarketing:   true,
 	}
 
 	// 只有手机号不为空时才设置
@@ -221,8 +223,12 @@ func (s *AuthService) UpdateLoginIP(user *models.User) {
 	s.userRepo.Update(user)
 }
 
-// UpdatePreferences 更新用户偏好设置（语言、国家等）
-func (s *AuthService) UpdatePreferences(userID uint, locale, country string) error {
+// UpdatePreferences updates user preferences (locale/country/notification switches).
+func (s *AuthService) UpdatePreferences(
+	userID uint,
+	locale, country string,
+	emailNotifyOrder, emailNotifyTicket, emailNotifyMarketing, smsNotifyMarketing *bool,
+) error {
 	user, err := s.userRepo.FindByID(userID)
 	if err != nil {
 		return err
@@ -233,6 +239,18 @@ func (s *AuthService) UpdatePreferences(userID uint, locale, country string) err
 	}
 	if country != "" {
 		user.Country = country
+	}
+	if emailNotifyOrder != nil {
+		user.EmailNotifyOrder = *emailNotifyOrder
+	}
+	if emailNotifyTicket != nil {
+		user.EmailNotifyTicket = *emailNotifyTicket
+	}
+	if emailNotifyMarketing != nil {
+		user.EmailNotifyMarketing = *emailNotifyMarketing
+	}
+	if smsNotifyMarketing != nil {
+		user.SMSNotifyMarketing = *smsNotifyMarketing
 	}
 
 	return s.userRepo.Update(user)

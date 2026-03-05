@@ -11,6 +11,9 @@ type Announcement struct {
 	ID              uint           `gorm:"primaryKey" json:"id"`
 	Title           string         `gorm:"type:varchar(255);not null" json:"title"`
 	Content         string         `gorm:"type:text" json:"content"`
+	Category        string         `gorm:"type:varchar(30);default:'general';index" json:"category"`
+	SendEmail       bool           `gorm:"default:false" json:"send_email"`
+	SendSMS         bool           `gorm:"default:false" json:"send_sms"`
 	IsMandatory     bool           `gorm:"default:false" json:"is_mandatory"`
 	RequireFullRead bool           `gorm:"default:false" json:"require_full_read"`
 	CreatedAt       time.Time      `json:"created_at"`

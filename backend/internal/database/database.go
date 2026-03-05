@@ -132,6 +132,8 @@ func AutoMigrate() error {
 		&models.MagicToken{},
 		&models.APIKey{},
 		&models.OperationLog{},
+		&models.MarketingBatch{},
+		&models.MarketingBatchTask{},
 		&models.EmailLog{},
 		&models.SmsLog{},
 		&models.VirtualInventory{},

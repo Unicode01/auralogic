@@ -57,6 +57,7 @@ func SetupRouter(
 
 	// CreateService - SMS
 	smsService := service.NewSMSService(cfg, db)
+	marketingService := service.NewMarketingService(db, emailService, smsService)
 
 	// CreateHandler
 	userAuthHandler := userHandler.NewAuthHandler(authService, emailService, smsService)
@@ -89,7 +90,8 @@ func SetupRouter(
 	adminPromoCodeHandler := adminHandler.NewPromoCodeHandler(promoCodeService)
 	userPromoCodeHandler := userHandler.NewPromoCodeHandler(promoCodeService)
 	adminKnowledgeHandler := adminHandler.NewKnowledgeHandler(db)
-	adminAnnouncementHandler := adminHandler.NewAnnouncementHandler(db)
+	adminAnnouncementHandler := adminHandler.NewAnnouncementHandler(db, emailService, smsService)
+	adminMarketingHandler := adminHandler.NewMarketingHandler(db, marketingService)
 	adminLandingPageHandler := adminHandler.NewLandingPageHandler(db, cfg)
 	userKnowledgeHandler := userHandler.NewKnowledgeHandler(db)
 	userAnnouncementHandler := userHandler.NewAnnouncementHandler(db)
@@ -571,6 +573,17 @@ func SetupRouter(
 			announcementsAdmin.GET("/:id", middleware.RequirePermission("announcement.view"), adminAnnouncementHandler.GetAnnouncement)
 			announcementsAdmin.PUT("/:id", middleware.RequirePermission("announcement.edit"), adminAnnouncementHandler.UpdateAnnouncement)
 			announcementsAdmin.DELETE("/:id", middleware.RequirePermission("announcement.edit"), adminAnnouncementHandler.DeleteAnnouncement)
+		}
+
+		marketingAdmin := adminAPI.Group("/marketing")
+		marketingAdmin.Use(middleware.AuthMiddleware(), middleware.RequireAdmin())
+		{
+			marketingAdmin.GET("/users", middleware.RequirePermission("marketing.view"), adminMarketingHandler.ListRecipients)
+			marketingAdmin.POST("/preview", middleware.RequirePermission("marketing.send"), adminMarketingHandler.PreviewMarketing)
+			marketingAdmin.GET("/batches", middleware.RequirePermission("marketing.view"), adminMarketingHandler.ListBatches)
+			marketingAdmin.GET("/batches/:id", middleware.RequirePermission("marketing.view"), adminMarketingHandler.GetBatch)
+			marketingAdmin.GET("/batches/:id/tasks", middleware.RequirePermission("marketing.view"), adminMarketingHandler.ListBatchTasks)
+			marketingAdmin.POST("/send", middleware.RequirePermission("marketing.send"), adminMarketingHandler.SendMarketing)
 		}
 	}
 

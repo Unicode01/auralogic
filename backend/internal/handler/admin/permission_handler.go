@@ -3,10 +3,10 @@ package admin
 import (
 	"strconv"
 
-	"github.com/gin-gonic/gin"
 	"auralogic/internal/middleware"
 	"auralogic/internal/models"
 	"auralogic/internal/pkg/response"
+	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
 
@@ -145,6 +145,10 @@ func (h *PermissionHandler) ListAllPermissions(c *gin.Context) {
 		"AnnouncementPermission": {
 			"announcement.view",
 			"announcement.edit",
+		},
+		"MarketingPermission": {
+			"marketing.view",
+			"marketing.send",
 		},
 		"TicketPermission": {
 			"ticket.view",

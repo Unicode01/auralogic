@@ -79,6 +79,8 @@ func main() {
 	// 初始化Service
 	authService := service.NewAuthService(userRepo, cfg)
 	emailService := service.NewEmailService(db, &cfg.SMTP, cfg.App.URL)
+	smsService := service.NewSMSService(cfg, db)
+	marketingService := service.NewMarketingService(db, emailService, smsService)
 	bindingService := service.NewBindingService(bindingRepo, inventoryRepo, productRepo)
 	serialService := service.NewSerialService(serialRepo, productRepo, orderRepo)
 	virtualInventoryService := service.NewVirtualInventoryService(db)
@@ -91,6 +93,9 @@ func main() {
 		go emailService.ProcessEmailQueue()
 		log.Println("Email service started")
 	}
+
+	go marketingService.ProcessQueue()
+	log.Println("Marketing queue worker started")
 
 	// 初始化内置付款方式
 	paymentMethodService := service.NewPaymentMethodService(db)

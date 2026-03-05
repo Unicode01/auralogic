@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { cn } from '@/lib/utils'
-import { LayoutDashboard, Package, Users, Settings, Key, ArrowLeft, FileText, ShoppingBag, Warehouse, ShieldCheck, CreditCard, MessageSquare, BarChart3, Tag, BookOpen, Megaphone } from 'lucide-react'
+import { LayoutDashboard, Package, Users, Settings, Key, ArrowLeft, FileText, ShoppingBag, Warehouse, ShieldCheck, CreditCard, MessageSquare, BarChart3, Tag, BookOpen, Megaphone, Send } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { usePermission } from '@/hooks/use-permission'
 import { useLocale } from '@/hooks/use-locale'
@@ -79,6 +79,12 @@ const menuItems = [
     href: '/admin/announcements',
     icon: Megaphone,
     permission: 'announcement.view',
+  },
+  {
+    titleKey: 'marketingManagement' as const,
+    href: '/admin/marketing',
+    icon: Send,
+    permission: 'marketing.view',
   },
   {
     titleKey: 'paymentMethods' as const,

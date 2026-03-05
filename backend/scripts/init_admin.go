@@ -4,12 +4,12 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/google/uuid"
 	"auralogic/internal/config"
 	"auralogic/internal/database"
 	adminHandler "auralogic/internal/handler/admin"
 	"auralogic/internal/models"
 	"auralogic/internal/pkg/password"
+	"github.com/google/uuid"
 )
 
 func main() {
@@ -108,6 +108,9 @@ func main() {
 		// Announcement
 		"announcement.view",
 		"announcement.edit",
+		// Marketing
+		"marketing.view",
+		"marketing.send",
 		// Ticket
 		"ticket.view",
 		"ticket.reply",

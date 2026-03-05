@@ -3,9 +3,9 @@ package admin
 import (
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"auralogic/internal/models"
 	"auralogic/internal/pkg/response"
+	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
 
@@ -76,13 +76,14 @@ func (h *LogHandler) ListEmailLogs(c *gin.Context) {
 	status := c.Query("status")
 	eventType := c.Query("event_type")
 	toEmail := c.Query("to_email")
+	batchID := c.Query("batch_id")
 	startDate := c.Query("start_date")
 	endDate := c.Query("end_date")
 
 	var logs []models.EmailLog
 	var total int64
 
-	query := h.db.Model(&models.EmailLog{}).Preload("User").Preload("Order")
+	query := h.db.Model(&models.EmailLog{}).Preload("User").Preload("Order").Preload("Batch")
 
 	// 过滤条件
 	if status != "" {
@@ -93,6 +94,9 @@ func (h *LogHandler) ListEmailLogs(c *gin.Context) {
 	}
 	if toEmail != "" {
 		query = query.Where("to_email LIKE ?", "%"+toEmail+"%")
+	}
+	if batchID != "" {
+		query = query.Where("batch_id = ?", batchID)
 	}
 	if startDate != "" {
 		if t, err := time.Parse("2006-01-02", startDate); err == nil {
@@ -128,13 +132,14 @@ func (h *LogHandler) ListSmsLogs(c *gin.Context) {
 	status := c.Query("status")
 	eventType := c.Query("event_type")
 	phone := c.Query("phone")
+	batchID := c.Query("batch_id")
 	startDate := c.Query("start_date")
 	endDate := c.Query("end_date")
 
 	var logs []models.SmsLog
 	var total int64
 
-	query := h.db.Model(&models.SmsLog{}).Preload("User")
+	query := h.db.Model(&models.SmsLog{}).Preload("User").Preload("Batch")
 
 	if status != "" {
 		query = query.Where("status = ?", status)
@@ -144,6 +149,9 @@ func (h *LogHandler) ListSmsLogs(c *gin.Context) {
 	}
 	if phone != "" {
 		query = query.Where("phone LIKE ?", "%"+phone+"%")
+	}
+	if batchID != "" {
+		query = query.Where("batch_id = ?", batchID)
 	}
 	if startDate != "" {
 		if t, err := time.Parse("2006-01-02", startDate); err == nil {
@@ -288,4 +296,3 @@ func (h *LogHandler) RetryFailedEmails(c *gin.Context) {
 		"affected": result.RowsAffected,
 	})
 }
-

@@ -1156,12 +1156,14 @@ func (s *OrderService) SubmitShippingForm(formToken string, receiverInfo map[str
 				}
 
 				user = &models.User{
-					UUID:         uuid.New().String(),
-					Email:        normalizedEmail,
-					Name:         order.ReceiverName,
-					PasswordHash: hashedPassword,
-					Role:         "user",
-					IsActive:     true,
+					UUID:                 uuid.New().String(),
+					Email:                normalizedEmail,
+					Name:                 order.ReceiverName,
+					PasswordHash:         hashedPassword,
+					Role:                 "user",
+					IsActive:             true,
+					EmailNotifyMarketing: true,
+					SMSNotifyMarketing:   true,
 				}
 				// 只有phone不为空时才设置
 				if order.ReceiverPhone != "" {

@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"auralogic/internal/config"
 	"auralogic/internal/database"
 	"auralogic/internal/middleware"
@@ -19,6 +18,7 @@ import (
 	"auralogic/internal/pkg/response"
 	"auralogic/internal/pkg/utils"
 	"auralogic/internal/service"
+	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
 
@@ -294,16 +294,20 @@ func (h *AuthHandler) GetMe(c *gin.Context) {
 
 	// 构建响应数据
 	result := gin.H{
-		"user_id":    user.ID,
-		"uuid":       user.UUID,
-		"email":      user.Email,
-		"name":       user.Name,
-		"role":       user.Role,
-		"avatar":     user.Avatar,
-		"is_active":  user.IsActive,
-		"locale":     user.Locale,
-		"country":    user.Country,
-		"created_at": user.CreatedAt,
+		"user_id":                user.ID,
+		"uuid":                   user.UUID,
+		"email":                  user.Email,
+		"name":                   user.Name,
+		"role":                   user.Role,
+		"avatar":                 user.Avatar,
+		"is_active":              user.IsActive,
+		"locale":                 user.Locale,
+		"country":                user.Country,
+		"email_notify_order":     user.EmailNotifyOrder,
+		"email_notify_ticket":    user.EmailNotifyTicket,
+		"email_notify_marketing": user.EmailNotifyMarketing,
+		"sms_notify_marketing":   user.SMSNotifyMarketing,
+		"created_at":             user.CreatedAt,
 	}
 	if user.Phone != nil && *user.Phone != "" {
 		result["phone"] = maskPhone(*user.Phone)
@@ -367,8 +371,12 @@ func (h *AuthHandler) ChangePassword(c *gin.Context) {
 
 // UpdatePreferencesRequest 更新用户偏好请求
 type UpdatePreferencesRequest struct {
-	Locale  string `json:"locale"`
-	Country string `json:"country"`
+	Locale               string `json:"locale"`
+	Country              string `json:"country"`
+	EmailNotifyOrder     *bool  `json:"email_notify_order"`
+	EmailNotifyTicket    *bool  `json:"email_notify_ticket"`
+	EmailNotifyMarketing *bool  `json:"email_notify_marketing"`
+	SMSNotifyMarketing   *bool  `json:"sms_notify_marketing"`
 }
 
 // UpdatePreferences 更新用户偏好设置
@@ -381,7 +389,15 @@ func (h *AuthHandler) UpdatePreferences(c *gin.Context) {
 		return
 	}
 
-	if err := h.authService.UpdatePreferences(userID, req.Locale, req.Country); err != nil {
+	if err := h.authService.UpdatePreferences(
+		userID,
+		req.Locale,
+		req.Country,
+		req.EmailNotifyOrder,
+		req.EmailNotifyTicket,
+		req.EmailNotifyMarketing,
+		req.SMSNotifyMarketing,
+	); err != nil {
 		response.BadRequest(c, err.Error())
 		return
 	}
@@ -438,6 +454,10 @@ func getAllPermissions() []string {
 		"user.view",
 		"user.edit",
 		"user.permission",
+		"announcement.view",
+		"announcement.edit",
+		"marketing.view",
+		"marketing.send",
 		"admin.create",
 		"admin.edit",
 		"admin.delete",
