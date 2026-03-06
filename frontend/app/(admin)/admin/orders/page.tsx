@@ -352,20 +352,22 @@ function AdminOrdersContent() {
         <OrderStatusBadge status={row.original.status} />
       ),
     },
-    {
-      header: t.admin.platformUser,
-      cell: ({ row }: { row: { original: any } }) => {
-        const userName = row.original.externalUserName || row.original.external_user_name
-        const userEmail = row.original.userEmail || row.original.user_email
-        return (
-          <div className="flex flex-col">
-            <span className="font-medium">{userName || '-'}</span>
-            {userEmail && (
-              <span className="text-xs text-muted-foreground">{userEmail}</span>
-            )}
-          </div>
-        )
-      },
+	    {
+	      header: t.admin.platformUser,
+	      cell: ({ row }: { row: { original: any } }) => {
+	        const userName = row.original.externalUserName || row.original.external_user_name
+	        const userEmail = row.original.userEmail || row.original.user_email
+	        const externalUserID = row.original.externalUserID || row.original.external_user_id
+	        const displayName = userName || userEmail || externalUserID || '-'
+	        return (
+	          <div className="flex flex-col">
+	            <span className="font-medium">{displayName}</span>
+	            {userEmail && userEmail !== displayName && (
+	              <span className="text-xs text-muted-foreground">{userEmail}</span>
+	            )}
+	          </div>
+	        )
+	      },
     },
     {
       header: t.admin.receiver,

@@ -1309,6 +1309,106 @@ func (s *VirtualInventoryService) DeliverStock(orderID uint, orderNo string, del
 	return nil
 }
 
+// MarkScriptStockDeliveredWithoutExecution 仅标记脚本虚拟库存为已发货（跳过脚本执行）
+// 适用于外部系统已实际完成交付，但脚本调用超时/失败的兜底场景。
+func (s *VirtualInventoryService) MarkScriptStockDeliveredWithoutExecution(orderID uint, orderNo string, deliveredBy *uint) error {
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		now := models.NowFunc()
+		processed := 0
+
+		// 旧流程：脚本库存可能存在 reserved 占位记录，直接转 sold。
+		scriptInvSubQuery := tx.Table("virtual_inventories").
+			Select("id").
+			Where("type = ?", models.VirtualInventoryTypeScript)
+
+		var reservedScriptStocks []models.VirtualProductStock
+		if err := tx.Where("order_no = ? AND status = ? AND virtual_inventory_id IN (?)",
+			orderNo, models.VirtualStockStatusReserved, scriptInvSubQuery).
+			Find(&reservedScriptStocks).Error; err != nil {
+			return err
+		}
+
+		if len(reservedScriptStocks) > 0 {
+			invCounts := make(map[uint]int)
+			for _, stock := range reservedScriptStocks {
+				updates := map[string]interface{}{
+					"status":       models.VirtualStockStatusSold,
+					"order_id":     orderID,
+					"delivered_at": now,
+				}
+				if deliveredBy != nil {
+					updates["delivered_by"] = *deliveredBy
+				}
+				if strings.TrimSpace(stock.Content) == "" {
+					updates["content"] = fmt.Sprintf("[MANUAL_SHIPPED] %s", orderNo)
+				}
+				if strings.TrimSpace(stock.Remark) == "" {
+					updates["remark"] = "Manual shipped without script execution"
+				}
+
+				if err := tx.Model(&models.VirtualProductStock{}).
+					Where("id = ?", stock.ID).
+					Updates(updates).Error; err != nil {
+					return err
+				}
+
+				invCounts[stock.VirtualInventoryID]++
+				processed++
+			}
+
+			for invID, count := range invCounts {
+				s.createVirtualInventoryLog(tx, invID, models.InventoryLogTypeDeliver, count, orderNo, "", "admin", "Manual mark shipped without script execution")
+			}
+		}
+
+		// 新流程：根据 VirtualInventoryBindings 计算脚本待发货条目，并直接补 sold 记录。
+		pendingItems, err := s.getScriptPendingItemsWithDB(tx, orderNo)
+		if err != nil {
+			return err
+		}
+
+		for _, item := range pendingItems {
+			var inv models.VirtualInventory
+			if err := tx.Select("id, type").First(&inv, item.InventoryID).Error; err != nil {
+				return fmt.Errorf("inventory %d not found: %w", item.InventoryID, err)
+			}
+			if inv.Type != models.VirtualInventoryTypeScript {
+				continue
+			}
+
+			soldStocks := make([]models.VirtualProductStock, 0, item.Quantity)
+			for i := 0; i < item.Quantity; i++ {
+				soldStocks = append(soldStocks, models.VirtualProductStock{
+					VirtualInventoryID: item.InventoryID,
+					Content:            fmt.Sprintf("[MANUAL_SHIPPED] %s #%d", orderNo, i+1),
+					Remark:             "Manual shipped without script execution",
+					Status:             models.VirtualStockStatusSold,
+					OrderNo:            orderNo,
+					OrderID:            &orderID,
+					DeliveredAt:        &now,
+					DeliveredBy:        deliveredBy,
+					CreatedAt:          now,
+				})
+			}
+
+			if len(soldStocks) > 0 {
+				if err := tx.CreateInBatches(&soldStocks, 200).Error; err != nil {
+					return fmt.Errorf("failed to create manual sold stock: %w", err)
+				}
+			}
+
+			s.createVirtualInventoryLog(tx, item.InventoryID, models.InventoryLogTypeDeliver, item.Quantity, orderNo, "", "admin", "Manual mark shipped without script execution")
+			processed += item.Quantity
+		}
+
+		if processed == 0 {
+			return errors.New("no pending script virtual stock to mark shipped")
+		}
+
+		return nil
+	})
+}
+
 // CanAutoDeliver 检查订单的所有预留虚拟库存是否都属于自动发货商品
 // 如果存在任何非自动发货的预留库存，返回 false（不允许部分自动发货）
 func (s *VirtualInventoryService) CanAutoDeliver(orderNo string) (bool, error) {

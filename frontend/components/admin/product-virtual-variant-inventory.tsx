@@ -143,6 +143,12 @@ export function ProductVirtualVariantInventory({
         return virtualInventories.find((inv: any) => inv.id === inventoryId)
     }, [virtualInventories])
 
+    const isScriptUnlimitedInventory = (inventory?: any) =>
+        inventory?.type === 'script' && Number(inventory?.available ?? 0) === 0
+
+    const getAvailableDisplay = (inventory?: any) =>
+        isScriptUnlimitedInventory(inventory) ? t.virtualStock.unlimited : Number(inventory?.available ?? 0)
+
     const attrToString = useCallback((attrs: Record<string, string>) => {
         if (Object.keys(attrs).length === 0) return t.admin.defaultVariant
         return Object.entries(attrs)
@@ -277,7 +283,7 @@ export function ProductVirtualVariantInventory({
                                                         <SelectContent>
                                                             {virtualInventories.map((inv: any) => (
                                                                 <SelectItem key={inv.id} value={inv.id.toString()}>
-                                                                    {String(inv.name || '')} ({t.admin.virtualAvailable}: {Number(inv.available || 0)})
+                                                                    {String(inv.name || '')} ({t.admin.virtualAvailable}: {getAvailableDisplay(inv)})
                                                                 </SelectItem>
                                                             ))}
                                                         </SelectContent>
@@ -292,7 +298,7 @@ export function ProductVirtualVariantInventory({
                                                             )}
                                                             <div className="flex gap-2 text-xs">
                                                                 <span>{t.admin.virtualTotal}: {inventory.total || 0}</span>
-                                                                <span className="text-green-600 dark:text-green-400">{t.admin.virtualAvailable}: {inventory.available || 0}</span>
+                                                                <span className="text-green-600 dark:text-green-400">{t.admin.virtualAvailable}: {getAvailableDisplay(inventory)}</span>
                                                                 <span className="text-yellow-600 dark:text-yellow-400">{t.admin.virtualReserved}: {inventory.reserved || 0}</span>
                                                             </div>
                                                         </div>

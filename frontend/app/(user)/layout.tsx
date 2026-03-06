@@ -1,11 +1,13 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, usePathname } from 'next/navigation'
+import { useQuery } from '@tanstack/react-query'
 import { useAuth } from '@/hooks/use-auth'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { useLocale } from '@/hooks/use-locale'
 import { getTranslations } from '@/lib/i18n'
+import { getPublicConfig } from '@/lib/api'
 import { UserSidebar } from '@/components/layout/user-sidebar'
 import { MobileBottomNav } from '@/components/layout/mobile-bottom-nav'
 import { CartProvider } from '@/contexts/cart-context'
@@ -16,38 +18,46 @@ export default function UserLayout({ children }: { children: React.ReactNode }) 
   const { isMobile, mounted: mobileMounted } = useIsMobile()
   const { locale, mounted: localeMounted } = useLocale()
   const router = useRouter()
+  const pathname = usePathname()
   const [mounted, setMounted] = useState(false)
+  const { data: publicConfigData, isLoading: publicConfigLoading } = useQuery({
+    queryKey: ['publicConfig'],
+    queryFn: getPublicConfig,
+    staleTime: 5 * 60 * 1000,
+  })
+
+  const isProductsRoute = pathname === '/products' || pathname.startsWith('/products/')
+  const isCartRoute = pathname === '/cart'
+  const isPreferencesRoute = pathname === '/profile/preferences'
+  const allowGuestProductBrowse = publicConfigData?.data?.allow_guest_product_browse === true
+  const allowGuestAccess =
+    !isAuthenticated &&
+    allowGuestProductBrowse &&
+    (isProductsRoute || isCartRoute || isPreferencesRoute)
 
   useEffect(() => {
     setMounted(true)
   }, [])
 
   useEffect(() => {
-    if (mounted && !isLoading && !isAuthenticated) {
+    if (mounted && !isLoading && !publicConfigLoading && !isAuthenticated && !allowGuestAccess) {
       router.push('/login')
     }
-  }, [mounted, isAuthenticated, isLoading, router])
+  }, [mounted, isAuthenticated, isLoading, publicConfigLoading, allowGuestAccess, router])
 
   const loadingText = localeMounted ? getTranslations(locale).common.loading : '...'
-
-  // 在挂载前，显示完整布局（避免 hydration 错误）
-  if (!mounted || !mobileMounted) {
+  // Show loading before mount or while guest-access config is being fetched.
+  if (!mounted || !mobileMounted || (!isLoading && !isAuthenticated && publicConfigLoading)) {
     return (
-      <div className="flex h-screen sidebar-layout">
-        <UserSidebar className="hidden md:flex" />
-        <main className="flex-1 overflow-y-auto p-4 md:p-8 pb-20 md:pb-8">
-          <div className="flex items-center justify-center h-full">
-            <div className="text-center">{loadingText}</div>
-          </div>
-        </main>
-        <div className="md:hidden">
-          <MobileBottomNav />
+      <div className="min-h-screen p-4 md:p-8">
+        <div className="flex items-center justify-center h-[50vh]">
+          <div className="text-center">{loadingText}</div>
         </div>
       </div>
     )
   }
 
-  // 加载中
+  // 鍔犺浇涓?
   if (isLoading) {
     return (
       <div className="flex h-screen sidebar-layout">
@@ -63,21 +73,42 @@ export default function UserLayout({ children }: { children: React.ReactNode }) 
   }
 
   if (!isAuthenticated) {
+    if (allowGuestAccess) {
+      const guestLayout = (
+        <div className="flex h-screen sidebar-layout">
+          {!isMobile && <UserSidebar guestMode />}
+          <main className={`flex-1 overflow-y-auto p-4 md:p-8 ${isMobile ? 'pb-20' : ''}`}>
+            {children}
+          </main>
+          {isMobile && <MobileBottomNav guestMode />}
+        </div>
+      )
+
+      if (isCartRoute) {
+        return (
+          <CartProvider>
+            {guestLayout}
+          </CartProvider>
+        )
+      }
+
+      return guestLayout
+    }
     return null
   }
 
   return (
     <CartProvider>
       <div className="flex h-screen sidebar-layout">
-        {/* 桌面端显示侧边栏 */}
+        {/* 妗岄潰绔樉绀轰晶杈规爮 */}
         {!isMobile && <UserSidebar />}
 
-        {/* 主内容区 - 移动端底部留出导航栏空间 */}
+        {/* 涓诲唴瀹瑰尯 - 绉诲姩绔簳閮ㄧ暀鍑哄鑸爮绌洪棿 */}
         <main className={`flex-1 overflow-y-auto p-4 md:p-8 ${isMobile ? 'pb-20' : ''}`}>
           {children}
         </main>
 
-        {/* 移动端显示底部导航 */}
+        {/* 绉诲姩绔樉绀哄簳閮ㄥ鑸?*/}
         {isMobile && <MobileBottomNav />}
       </div>
       <AnnouncementPopup />

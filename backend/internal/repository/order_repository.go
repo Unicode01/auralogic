@@ -2,6 +2,7 @@ package repository
 
 import (
 	"auralogic/internal/models"
+	"fmt"
 	"gorm.io/gorm"
 )
 
@@ -88,6 +89,40 @@ func (r *OrderRepository) CountByUserAndStatus(userID uint, status models.OrderS
 		Where("user_id = ? AND status = ?", userID, status).
 		Count(&total).Error
 	return total, err
+}
+
+// GetUserConsumptionSummary 获取用户消费汇总（基于指定订单状态）
+func (r *OrderRepository) GetUserConsumptionSummary(userID uint, statuses []models.OrderStatus) (int64, int64, error) {
+	var result struct {
+		OrderCount int64
+		TotalSpent int64
+	}
+
+	sumExpr := orderTotalAmountSumExpr(r.db.Dialector.Name())
+	query := r.db.Model(&models.Order{}).
+		Select(fmt.Sprintf("COUNT(*) as order_count, %s as total_spent", sumExpr)).
+		Where("user_id = ?", userID)
+
+	if len(statuses) > 0 {
+		query = query.Where("status IN ?", statuses)
+	}
+
+	if err := query.Scan(&result).Error; err != nil {
+		return 0, 0, err
+	}
+
+	return result.OrderCount, result.TotalSpent, nil
+}
+
+func orderTotalAmountSumExpr(dialect string) string {
+	switch dialect {
+	case "postgres":
+		return "COALESCE(SUM(total_amount)::bigint, 0)"
+	case "mysql":
+		return "COALESCE(CAST(SUM(total_amount) AS SIGNED), 0)"
+	default: // sqlite and others
+		return "COALESCE(CAST(SUM(total_amount) AS INTEGER), 0)"
+	}
 }
 
 // List 获取订单列表

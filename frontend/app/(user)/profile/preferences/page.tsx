@@ -59,6 +59,7 @@ export default function PreferencesPage() {
   const { theme, setTheme } = useTheme()
   const t = getTranslations(locale)
   usePageTitle(t.pageTitle.profilePreferences)
+  const isGuest = !user
 
   const toast = useToast()
   const queryClient = useQueryClient()
@@ -140,18 +141,20 @@ export default function PreferencesPage() {
     saveNotificationPrefsMutation.mutate(notificationPrefs)
   }, [saveNotificationPrefsMutation, notificationPrefs])
 
+  const backHref = isGuest ? '/products' : '/profile'
+
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-4">
         <Button asChild variant="outline" size="icon" className="md:hidden">
-          <Link href="/profile">
+          <Link href={backHref}>
             <ArrowLeft className="h-5 w-5" />
           </Link>
         </Button>
         <h1 className="text-2xl font-bold md:text-3xl">{t.sidebar.preferences}</h1>
       </div>
 
-      <div className="grid gap-6 xl:grid-cols-[1fr_1.4fr]">
+      <div className={cn('grid gap-6', !isGuest && 'xl:grid-cols-[1fr_1.4fr]')}>
         <Card className="h-fit">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
@@ -217,83 +220,85 @@ export default function PreferencesPage() {
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Bell className="h-5 w-5" />
-              {t.profile.notificationSettings}
-            </CardTitle>
-            <CardDescription>{t.profile.notificationSettingsDesc}</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-3 rounded-xl border p-4">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Mail className="h-4 w-4 text-muted-foreground" />
-                  <p className="text-sm font-medium">{t.profile.email}</p>
+        {!isGuest && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Bell className="h-5 w-5" />
+                {t.profile.notificationSettings}
+              </CardTitle>
+              <CardDescription>{t.profile.notificationSettingsDesc}</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-3 rounded-xl border p-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Mail className="h-4 w-4 text-muted-foreground" />
+                    <p className="text-sm font-medium">{t.profile.email}</p>
+                  </div>
+                  <Badge variant={smtpEnabled ? 'secondary' : 'outline'}>
+                    {smtpEnabled ? t.profile.serviceStatusEnabled : t.profile.serviceStatusDisabled}
+                  </Badge>
                 </div>
-                <Badge variant={smtpEnabled ? 'secondary' : 'outline'}>
-                  {smtpEnabled ? t.profile.serviceStatusEnabled : t.profile.serviceStatusDisabled}
-                </Badge>
+                <NotificationSwitchRow
+                  label={t.profile.emailOrderNotifications}
+                  checked={notificationPrefs.email_notify_order}
+                  onCheckedChange={(checked) =>
+                    setNotificationPrefs((prev) => ({ ...prev, email_notify_order: checked }))
+                  }
+                  disabled={!smtpEnabled}
+                />
+                <NotificationSwitchRow
+                  label={t.profile.emailTicketNotifications}
+                  checked={notificationPrefs.email_notify_ticket}
+                  onCheckedChange={(checked) =>
+                    setNotificationPrefs((prev) => ({ ...prev, email_notify_ticket: checked }))
+                  }
+                  disabled={!smtpEnabled}
+                />
+                <NotificationSwitchRow
+                  label={t.profile.emailMarketingNotifications}
+                  checked={notificationPrefs.email_notify_marketing}
+                  onCheckedChange={(checked) =>
+                    setNotificationPrefs((prev) => ({ ...prev, email_notify_marketing: checked }))
+                  }
+                  disabled={!smtpEnabled}
+                />
               </div>
-              <NotificationSwitchRow
-                label={t.profile.emailOrderNotifications}
-                checked={notificationPrefs.email_notify_order}
-                onCheckedChange={(checked) =>
-                  setNotificationPrefs((prev) => ({ ...prev, email_notify_order: checked }))
-                }
-                disabled={!smtpEnabled}
-              />
-              <NotificationSwitchRow
-                label={t.profile.emailTicketNotifications}
-                checked={notificationPrefs.email_notify_ticket}
-                onCheckedChange={(checked) =>
-                  setNotificationPrefs((prev) => ({ ...prev, email_notify_ticket: checked }))
-                }
-                disabled={!smtpEnabled}
-              />
-              <NotificationSwitchRow
-                label={t.profile.emailMarketingNotifications}
-                checked={notificationPrefs.email_notify_marketing}
-                onCheckedChange={(checked) =>
-                  setNotificationPrefs((prev) => ({ ...prev, email_notify_marketing: checked }))
-                }
-                disabled={!smtpEnabled}
-              />
-            </div>
 
-            <div className="space-y-3 rounded-xl border p-4">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <MessageSquare className="h-4 w-4 text-muted-foreground" />
-                  <p className="text-sm font-medium">SMS</p>
+              <div className="space-y-3 rounded-xl border p-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <MessageSquare className="h-4 w-4 text-muted-foreground" />
+                    <p className="text-sm font-medium">SMS</p>
+                  </div>
+                  <Badge variant={smsEnabled ? 'secondary' : 'outline'}>
+                    {smsEnabled ? t.profile.serviceStatusEnabled : t.profile.serviceStatusDisabled}
+                  </Badge>
                 </div>
-                <Badge variant={smsEnabled ? 'secondary' : 'outline'}>
-                  {smsEnabled ? t.profile.serviceStatusEnabled : t.profile.serviceStatusDisabled}
-                </Badge>
+                <NotificationSwitchRow
+                  label={t.profile.smsMarketingNotifications}
+                  checked={notificationPrefs.sms_notify_marketing}
+                  onCheckedChange={(checked) =>
+                    setNotificationPrefs((prev) => ({ ...prev, sms_notify_marketing: checked }))
+                  }
+                  disabled={!smsEnabled}
+                />
               </div>
-              <NotificationSwitchRow
-                label={t.profile.smsMarketingNotifications}
-                checked={notificationPrefs.sms_notify_marketing}
-                onCheckedChange={(checked) =>
-                  setNotificationPrefs((prev) => ({ ...prev, sms_notify_marketing: checked }))
-                }
-                disabled={!smsEnabled}
-              />
-            </div>
 
-            <div className="flex justify-end pt-1">
-              <Button
-                onClick={handleSaveNotificationPrefs}
-                disabled={saveNotificationPrefsMutation.isPending}
-              >
-                {saveNotificationPrefsMutation.isPending
-                  ? t.profile.notificationSaving
-                  : t.profile.notificationSave}
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
+              <div className="flex justify-end pt-1">
+                <Button
+                  onClick={handleSaveNotificationPrefs}
+                  disabled={saveNotificationPrefsMutation.isPending}
+                >
+                  {saveNotificationPrefsMutation.isPending
+                    ? t.profile.notificationSaving
+                    : t.profile.notificationSave}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        )}
       </div>
     </div>
   )

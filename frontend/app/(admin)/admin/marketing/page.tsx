@@ -20,6 +20,13 @@ import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Badge } from '@/components/ui/badge'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { MarkdownEditor } from '@/components/ui/markdown-editor'
@@ -31,6 +38,7 @@ import { usePageTitle } from '@/hooks/use-page-title'
 import { usePermission } from '@/hooks/use-permission'
 
 type RecipientMode = 'all' | 'selected'
+type TriState = 'all' | 'true' | 'false'
 
 interface AdminUserItem {
   id: number
@@ -39,6 +47,11 @@ interface AdminUserItem {
   phone?: string | null
   role?: string
   is_active?: boolean
+  email_verified?: boolean
+  locale?: string
+  country?: string
+  email_notify_marketing?: boolean
+  sms_notify_marketing?: boolean
 }
 
 function formatDateTime(dateString?: string, locale?: string) {
@@ -56,6 +69,7 @@ export default function AdminMarketingPage() {
   const [permissionReady, setPermissionReady] = useState(false)
   const canViewMarketing = permissionReady && hasPermission('marketing.view')
   const canSendMarketing = permissionReady && hasPermission('marketing.send')
+  const canViewRecipientUsers = permissionReady && hasPermission('marketing.view') && hasPermission('user.view')
   usePageTitle(t.pageTitle.adminMarketing)
 
   useEffect(() => {
@@ -73,10 +87,24 @@ export default function AdminMarketingPage() {
   const [selectedUserIds, setSelectedUserIds] = useState<number[]>([])
   const [searchInput, setSearchInput] = useState('')
   const [search, setSearch] = useState('')
+  const [userStatusFilter, setUserStatusFilter] = useState<TriState>('all')
+  const [userVerifiedFilter, setUserVerifiedFilter] = useState<TriState>('all')
+  const [userEmailMarketingFilter, setUserEmailMarketingFilter] = useState<TriState>('all')
+  const [userSmsMarketingFilter, setUserSmsMarketingFilter] = useState<TriState>('all')
+  const [userHasPhoneFilter, setUserHasPhoneFilter] = useState<TriState>('all')
+  const [userLocaleFilter, setUserLocaleFilter] = useState('')
   const [userPage, setUserPage] = useState(1)
   const [batchPage, setBatchPage] = useState(1)
   const [lastBatchId, setLastBatchId] = useState<number | null>(null)
   const [lastResult, setLastResult] = useState<SendAdminMarketingResult | null>(null)
+
+  const parseTriState = (value: TriState): boolean | undefined => {
+    if (value === 'all') return undefined
+    return value === 'true'
+  }
+  const cleanFilterLabel = (label: string) => label
+    .replace(/^筛选[:：]\s*/u, '')
+    .replace(/^Filter:\s*/u, '')
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -86,10 +114,36 @@ export default function AdminMarketingPage() {
     return () => window.clearTimeout(timer)
   }, [title, content])
 
+  useEffect(() => {
+    if (recipientMode !== 'selected') return
+    const timer = window.setTimeout(() => {
+      setUserPage(1)
+      setSearch(searchInput.trim())
+    }, 250)
+    return () => window.clearTimeout(timer)
+  }, [searchInput, recipientMode])
+
+  useEffect(() => {
+    if (!permissionReady) return
+    if (!canViewRecipientUsers && recipientMode === 'selected') {
+      setRecipientMode('all')
+    }
+  }, [permissionReady, canViewRecipientUsers, recipientMode])
+
   const usersQuery = useQuery({
-    queryKey: ['marketingUsers', userPage, search],
-    queryFn: () => getMarketingUsers({ page: userPage, limit: 20, search: search || undefined }),
-    enabled: canViewMarketing && recipientMode === 'selected',
+    queryKey: ['marketingUsers', userPage, search, userStatusFilter, userVerifiedFilter, userEmailMarketingFilter, userSmsMarketingFilter, userHasPhoneFilter, userLocaleFilter],
+    queryFn: () => getMarketingUsers({
+      page: userPage,
+      limit: 20,
+      search: search || undefined,
+      is_active: parseTriState(userStatusFilter),
+      email_verified: parseTriState(userVerifiedFilter),
+      email_notify_marketing: parseTriState(userEmailMarketingFilter),
+      sms_notify_marketing: parseTriState(userSmsMarketingFilter),
+      has_phone: parseTriState(userHasPhoneFilter),
+      locale: userLocaleFilter || undefined,
+    }),
+    enabled: canViewRecipientUsers && recipientMode === 'selected',
   })
 
   const users: AdminUserItem[] = usersQuery.data?.data?.items || []
@@ -234,6 +288,10 @@ export default function AdminMarketingPage() {
     }
     if (!sendEmail && !sendSms) {
       toast.error(t.admin.marketingChannelRequired)
+      return
+    }
+    if (recipientMode === 'selected' && !canViewRecipientUsers) {
+      toast.error(t.message.noPermission)
       return
     }
     if (recipientMode === 'selected' && selectedUserIds.length === 0) {
@@ -450,45 +508,133 @@ export default function AdminMarketingPage() {
               <Button
                 type="button"
                 variant={recipientMode === 'selected' ? 'default' : 'outline'}
-                onClick={() => setRecipientMode('selected')}
+                onClick={() => {
+                  if (!canViewRecipientUsers) return
+                  setRecipientMode('selected')
+                }}
+                disabled={!canViewRecipientUsers}
               >
                 {t.admin.marketingTargetSelected}
               </Button>
             </div>
+            {!canViewRecipientUsers ? (
+              <p className="text-xs text-muted-foreground">{t.message.noPermission}</p>
+            ) : null}
 
             {recipientMode === 'all' ? (
               <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
                 {t.admin.marketingTargetAllHint}
               </div>
-            ) : (
-              <div className="space-y-3">
-                <div className="flex gap-2">
-                  <div className="relative flex-1">
-                    <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                    <Input
-                      value={searchInput}
-                      onChange={(e) => setSearchInput(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          setUserPage(1)
-                          setSearch(searchInput.trim())
-                        }
-                      }}
-                      placeholder={t.admin.marketingUserSearchPlaceholder}
-                      className="pl-9"
-                    />
-                  </div>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => {
-                      setUserPage(1)
-                      setSearch(searchInput.trim())
-                    }}
-                  >
-                    {t.admin.search}
-                  </Button>
-                </div>
+	            ) : (
+	              <div className="space-y-3">
+                <Card>
+                  <CardContent className="space-y-3 pt-6">
+                    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">{t.admin.userFilterSearch}</label>
+                        <div className="relative">
+                          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                          <Input
+                            value={searchInput}
+                            onChange={(e) => setSearchInput(e.target.value)}
+                            placeholder={t.admin.userFilterSearchPlaceholder}
+                            className="pl-9"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">{cleanFilterLabel(t.admin.userFilterStatus)}</label>
+                        <Select value={userStatusFilter} onValueChange={(v) => { setUserStatusFilter(v as TriState); setUserPage(1) }}>
+                          <SelectTrigger>
+                            <SelectValue placeholder={cleanFilterLabel(t.admin.userFilterStatus)} />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="all">{t.common.all}</SelectItem>
+	                            <SelectItem value="true">{t.admin.active}</SelectItem>
+	                            <SelectItem value="false">{t.admin.inactive}</SelectItem>
+	                          </SelectContent>
+	                        </Select>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">{cleanFilterLabel(t.admin.userFilterEmailVerified)}</label>
+                        <Select value={userVerifiedFilter} onValueChange={(v) => { setUserVerifiedFilter(v as TriState); setUserPage(1) }}>
+                          <SelectTrigger>
+                            <SelectValue placeholder={cleanFilterLabel(t.admin.userFilterEmailVerified)} />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="all">{t.common.all}</SelectItem>
+	                            <SelectItem value="true">{t.admin.verified}</SelectItem>
+	                            <SelectItem value="false">{t.admin.unverified}</SelectItem>
+	                          </SelectContent>
+	                        </Select>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">{cleanFilterLabel(t.admin.userFilterHasPhone)}</label>
+                        <Select value={userHasPhoneFilter} onValueChange={(v) => { setUserHasPhoneFilter(v as TriState); setUserPage(1) }}>
+                          <SelectTrigger>
+                            <SelectValue placeholder={cleanFilterLabel(t.admin.userFilterHasPhone)} />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="all">{t.common.all}</SelectItem>
+	                            <SelectItem value="true">{t.admin.withPhone}</SelectItem>
+	                            <SelectItem value="false">{t.admin.withoutPhone}</SelectItem>
+	                          </SelectContent>
+	                        </Select>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">{cleanFilterLabel(t.admin.userFilterEmailMarketing)}</label>
+                        <Select value={userEmailMarketingFilter} onValueChange={(v) => { setUserEmailMarketingFilter(v as TriState); setUserPage(1) }}>
+                          <SelectTrigger>
+                            <SelectValue placeholder={cleanFilterLabel(t.admin.userFilterEmailMarketing)} />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="all">{t.common.all}</SelectItem>
+	                            <SelectItem value="true">{t.admin.enabled}</SelectItem>
+	                            <SelectItem value="false">{t.admin.disabled}</SelectItem>
+	                          </SelectContent>
+	                        </Select>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">{cleanFilterLabel(t.admin.userFilterSmsMarketing)}</label>
+                        <Select value={userSmsMarketingFilter} onValueChange={(v) => { setUserSmsMarketingFilter(v as TriState); setUserPage(1) }}>
+                          <SelectTrigger>
+                            <SelectValue placeholder={cleanFilterLabel(t.admin.userFilterSmsMarketing)} />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="all">{t.common.all}</SelectItem>
+	                            <SelectItem value="true">{t.admin.enabled}</SelectItem>
+	                            <SelectItem value="false">{t.admin.disabled}</SelectItem>
+	                          </SelectContent>
+	                        </Select>
+                      </div>
+
+	                      <div className="space-y-2">
+	                        <label className="text-sm font-medium">{cleanFilterLabel(t.admin.userFilterLocale)}</label>
+	                        <Select
+	                          value={userLocaleFilter || 'all'}
+	                          onValueChange={(value) => {
+	                            setUserLocaleFilter(value === 'all' ? '' : value)
+	                            setUserPage(1)
+	                          }}
+	                        >
+	                          <SelectTrigger>
+	                            <SelectValue placeholder={t.common.all} />
+	                          </SelectTrigger>
+	                          <SelectContent>
+	                            <SelectItem value="all">{t.common.all}</SelectItem>
+	                            <SelectItem value="zh">{t.language.zh}</SelectItem>
+	                            <SelectItem value="en">{t.language.en}</SelectItem>
+	                          </SelectContent>
+	                        </Select>
+	                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
 
                 <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
                   <div className="flex items-center gap-2">

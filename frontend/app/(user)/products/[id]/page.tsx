@@ -15,6 +15,7 @@ import { useLocale } from '@/hooks/use-locale'
 import { usePageTitle } from '@/hooks/use-page-title'
 import { getTranslations, translateBizError } from '@/lib/i18n'
 import { useCurrency, formatPrice, getCurrencySymbol } from '@/contexts/currency-context'
+import { addToGuestCart } from '@/lib/guest-cart'
 import { MarkdownMessage } from '@/components/ui/markdown-message'
 
 export default function ProductDetailPage() {
@@ -309,14 +310,18 @@ export default function ProductDetailPage() {
   }
 
   const handleAddToCart = async () => {
-    if (!user) {
-      toast.error(t.product.pleaseLoginFirst)
-      setTimeout(() => router.push('/login'), 1000)
+    if (!allAttributesSelected) {
+      toast.error(t.product.pleaseSelectAllAttributes)
       return
     }
 
-    if (!allAttributesSelected) {
-      toast.error(t.product.pleaseSelectAllAttributes)
+    if (!user) {
+      addToGuestCart({
+        product_id: productId,
+        quantity: quantity,
+        attributes: selectedAttributes,
+      }, maxItemQuantity)
+      toast.success(t.product.guestCartAdded)
       return
     }
 
@@ -348,6 +353,12 @@ export default function ProductDetailPage() {
 
   // 应用优惠码
   const handleApplyPromoCode = async () => {
+    if (!user) {
+      toast.error(t.product.loginForPromoCode)
+      setTimeout(() => router.push('/login'), 1000)
+      return
+    }
+
     if (!promoCodeInput.trim()) return
 
     setIsValidatingPromo(true)
@@ -811,25 +822,32 @@ export default function ProductDetailPage() {
                     {t.promoCode.enterPromoCode}
                   </div>
                   {!appliedPromo ? (
-                    <div className="flex gap-2">
-                      <Input
-                        value={promoCodeInput}
-                        onChange={(e) => setPromoCodeInput(e.target.value)}
-                        placeholder={t.promoCode.promoCodePlaceholder}
-                        className="flex-1"
-                        maxLength={50}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') handleApplyPromoCode()
-                        }}
-                      />
-                      <Button
-                        onClick={handleApplyPromoCode}
-                        disabled={!promoCodeInput.trim() || isValidatingPromo}
-                        size="default"
-                      >
-                        {isValidatingPromo ? t.promoCode.applying : t.promoCode.apply}
-                      </Button>
-                    </div>
+                    <>
+                      <div className="flex gap-2">
+                        <Input
+                          value={promoCodeInput}
+                          onChange={(e) => setPromoCodeInput(e.target.value)}
+                          placeholder={t.promoCode.promoCodePlaceholder}
+                          className="flex-1"
+                          maxLength={50}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') handleApplyPromoCode()
+                          }}
+                        />
+                        <Button
+                          onClick={handleApplyPromoCode}
+                          disabled={!user || !promoCodeInput.trim() || isValidatingPromo}
+                          size="default"
+                        >
+                          {isValidatingPromo ? t.promoCode.applying : t.promoCode.apply}
+                        </Button>
+                      </div>
+                      {!user && (
+                        <p className="text-xs text-muted-foreground">
+                          {t.product.loginForPromoCode}
+                        </p>
+                      )}
+                    </>
                   ) : (
                     <div className="space-y-2">
                       <div className="flex items-center justify-between rounded-lg bg-green-500/10 dark:bg-green-500/20 border border-green-500/20 dark:border-green-500/30 p-3">

@@ -1,8 +1,9 @@
 'use client'
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { getCurrentUser, login, loginWithCode, loginWithPhoneCode, logout, register, phoneRegister } from '@/lib/api'
+import { addToCart, getCurrentUser, login, loginWithCode, loginWithPhoneCode, logout, register, phoneRegister } from '@/lib/api'
 import { getToken, setToken, clearToken, setUser } from '@/lib/auth'
+import { clearGuestCart, getGuestCart, setGuestCart } from '@/lib/guest-cart'
 import { useRouter } from 'next/navigation'
 import toast from 'react-hot-toast'
 import { useLocale } from '@/hooks/use-locale'
@@ -63,6 +64,46 @@ export function useAuth() {
     return fallback
   }
 
+  async function syncGuestCartAfterLogin(): Promise<boolean> {
+    const guestItems = getGuestCart()
+    if (!guestItems.length) return false
+
+    const failedItems: typeof guestItems = []
+    for (const item of guestItems) {
+      try {
+        await addToCart({
+          product_id: item.product_id,
+          quantity: item.quantity,
+          attributes: item.attributes,
+        })
+      } catch {
+        failedItems.push(item)
+      }
+    }
+
+    if (failedItems.length > 0) {
+      setGuestCart(failedItems)
+    } else {
+      clearGuestCart()
+    }
+
+    await queryClient.invalidateQueries({ queryKey: ['cart'] })
+    return true
+  }
+
+  async function handleAuthSuccess(data: any) {
+    setToken(data.data.token)
+    const user = data.data.user
+    const desired = resolvePostLoginLocale(user?.locale)
+    const finalUser = desired ? { ...user, locale: desired } : user
+    setUser(finalUser)
+    if (desired) setLocale(desired)
+    queryClient.setQueryData(['currentUser'], { data: finalUser })
+
+    const hadGuestCart = await syncGuestCartAfterLogin()
+    router.push(hadGuestCart ? '/cart' : '/orders')
+  }
+
   // 获取当前用户
   const { data: user, isLoading, error } = useQuery({
     queryKey: ['currentUser'],
@@ -74,15 +115,8 @@ export function useAuth() {
   // 登录
   const loginMutation = useMutation({
     mutationFn: login,
-    onSuccess: (data: any) => {
-      setToken(data.data.token)
-      const user = data.data.user
-      const desired = resolvePostLoginLocale(user?.locale)
-      const finalUser = desired ? { ...user, locale: desired } : user
-      setUser(finalUser)
-      if (desired) setLocale(desired)
-      queryClient.setQueryData(['currentUser'], { data: finalUser })
-      router.push('/orders')
+    onSuccess: async (data: any) => {
+      await handleAuthSuccess(data)
     },
     onError: (error: any) => {
       // 邮箱未验证，跳转到验证页面
@@ -97,15 +131,8 @@ export function useAuth() {
   // 验证码登录
   const loginWithCodeMutation = useMutation({
     mutationFn: loginWithCode,
-    onSuccess: (data: any) => {
-      setToken(data.data.token)
-      const user = data.data.user
-      const desired = resolvePostLoginLocale(user?.locale)
-      const finalUser = desired ? { ...user, locale: desired } : user
-      setUser(finalUser)
-      if (desired) setLocale(desired)
-      queryClient.setQueryData(['currentUser'], { data: finalUser })
-      router.push('/orders')
+    onSuccess: async (data: any) => {
+      await handleAuthSuccess(data)
     },
     onError: (error: any) => {
       toast.error(getErrorMessage(error, t.auth.loginFailed))
@@ -115,15 +142,8 @@ export function useAuth() {
   // 手机验证码登录
   const loginWithPhoneCodeMutation = useMutation({
     mutationFn: loginWithPhoneCode,
-    onSuccess: (data: any) => {
-      setToken(data.data.token)
-      const user = data.data.user
-      const desired = resolvePostLoginLocale(user?.locale)
-      const finalUser = desired ? { ...user, locale: desired } : user
-      setUser(finalUser)
-      if (desired) setLocale(desired)
-      queryClient.setQueryData(['currentUser'], { data: finalUser })
-      router.push('/orders')
+    onSuccess: async (data: any) => {
+      await handleAuthSuccess(data)
     },
     onError: (error: any) => {
       toast.error(getErrorMessage(error, t.auth.loginFailed))
@@ -133,20 +153,13 @@ export function useAuth() {
   // 注册
   const registerMutation = useMutation({
     mutationFn: register,
-    onSuccess: (data: any) => {
+    onSuccess: async (data: any) => {
       // 如果需要邮箱验证
       if (data.data?.require_verification) {
         router.push(`/verify-email?email=${encodeURIComponent(data.data.email)}&pending=true`)
         return
       }
-      setToken(data.data.token)
-      const user = data.data.user
-      const desired = resolvePostLoginLocale(user?.locale)
-      const finalUser = desired ? { ...user, locale: desired } : user
-      setUser(finalUser)
-      if (desired) setLocale(desired)
-      queryClient.setQueryData(['currentUser'], { data: finalUser })
-      router.push('/orders')
+      await handleAuthSuccess(data)
     },
     onError: (error: Error) => {
       toast.error(getErrorMessage(error, t.auth.registerFailed))
@@ -156,15 +169,8 @@ export function useAuth() {
   // 手机号注册
   const phoneRegisterMutation = useMutation({
     mutationFn: phoneRegister,
-    onSuccess: (data: any) => {
-      setToken(data.data.token)
-      const user = data.data.user
-      const desired = resolvePostLoginLocale(user?.locale)
-      const finalUser = desired ? { ...user, locale: desired } : user
-      setUser(finalUser)
-      if (desired) setLocale(desired)
-      queryClient.setQueryData(['currentUser'], { data: finalUser })
-      router.push('/orders')
+    onSuccess: async (data: any) => {
+      await handleAuthSuccess(data)
     },
     onError: (error: Error) => {
       toast.error(getErrorMessage(error, t.auth.registerFailed))

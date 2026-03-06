@@ -46,6 +46,11 @@ export function formatCurrency(amount: number | undefined, currency: string = 'C
   return `${symbol}${(amount / 100).toFixed(2)}`
 }
 
+// Backward-compatible alias used by existing pages.
+export function formatPrice(amount: number | undefined, currency: string = 'CNY') {
+  return formatCurrency(amount, currency)
+}
+
 function pow10BigInt(scale: number): bigint {
   return BigInt(10) ** BigInt(scale)
 }

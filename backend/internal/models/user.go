@@ -23,6 +23,10 @@ type User struct {
 	Locale        string `gorm:"type:varchar(10)" json:"locale,omitempty"`
 	Country       string `gorm:"type:varchar(100)" json:"country,omitempty"`
 
+	// 用户消费统计（金额单位：minor，例：分）
+	TotalSpentMinor int64 `gorm:"type:bigint;default:0" json:"total_spent_minor"`
+	TotalOrderCount int64 `gorm:"type:bigint;default:0" json:"total_order_count"`
+
 	// User-level notification preferences.
 	EmailNotifyOrder     bool `gorm:"default:true" json:"email_notify_order"`
 	EmailNotifyTicket    bool `gorm:"default:true" json:"email_notify_ticket"`

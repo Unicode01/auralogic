@@ -50,14 +50,14 @@ function OrderDetailContent({ orderNo }: { orderNo: string }) {
   const { locale } = useLocale()
   const t = getTranslations(locale)
   usePageTitle(t.pageTitle.orderDetail)
-  const [paymentMethodSelected, setPaymentMethodSelected] = useState(false)
+  const [shouldAutoRefresh, setShouldAutoRefresh] = useState(true)
   const [formToken, setFormToken] = useState<string | null>(null)
   const [formData, setFormData] = useState<any>(null)
   const [formLoading, setFormLoading] = useState(false)
   const [invoiceLoading, setInvoiceLoading] = useState(false)
 
   const { data, isLoading, refetch } = useOrderDetail(orderNo, {
-    refetchInterval: paymentMethodSelected ? 5000 : false,
+    refetchInterval: shouldAutoRefresh ? 5000 : false,
   })
 
   const { data: publicConfig } = useQuery({
@@ -68,12 +68,12 @@ function OrderDetailContent({ orderNo }: { orderNo: string }) {
 
   const order = data?.data
 
-  // 支付成功后（状态不再是 pending_payment），停止轮询
+  // 订单非终态时自动轮询状态，终态自动停止
   useEffect(() => {
-    if (order && order.status !== 'pending_payment' && paymentMethodSelected) {
-      setPaymentMethodSelected(false)
-    }
-  }, [order?.status, paymentMethodSelected])
+    if (!order?.status) return
+    const activeStatuses = ['pending_payment', 'draft', 'need_resubmit', 'pending', 'shipped']
+    setShouldAutoRefresh(activeStatuses.includes(order.status))
+  }, [order?.status])
 
   // 获取虚拟产品内容（只有已付款后才能查看）
   const { data: virtualStocksData } = useQuery({
@@ -247,7 +247,7 @@ function OrderDetailContent({ orderNo }: { orderNo: string }) {
         virtualStocks={virtualStocks}
         isVirtualOnly={isVirtualOnly}
         showVirtualStockRemark={showVirtualStockRemark}
-        paymentCard={isPendingPayment ? <PaymentMethodCard orderNo={orderNo} onPaymentSelected={() => { setPaymentMethodSelected(true); refetch() }} /> : undefined}
+        paymentCard={isPendingPayment ? <PaymentMethodCard orderNo={orderNo} onPaymentSelected={() => { refetch() }} /> : undefined}
         shippingForm={shippingFormNode}
       />
     </div>

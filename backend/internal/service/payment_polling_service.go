@@ -10,6 +10,7 @@ import (
 	"auralogic/internal/models"
 	"auralogic/internal/pkg/bizerr"
 	"auralogic/internal/pkg/logger"
+	"auralogic/internal/repository"
 	"gorm.io/gorm"
 )
 
@@ -56,6 +57,8 @@ func (h *TaskHeap) Pop() interface{} {
 // PaymentPollingService 付款状态轮询服务（时间轮实现）
 type PaymentPollingService struct {
 	db                  *gorm.DB
+	orderRepo           *repository.OrderRepository
+	userRepo            *repository.UserRepository
 	jsRuntime           *JSRuntimeService
 	virtualInventorySvc *VirtualInventoryService
 	emailService        *EmailService
@@ -87,6 +90,8 @@ func NewPaymentPollingService(db *gorm.DB, virtualInventorySvc *VirtualInventory
 
 	return &PaymentPollingService{
 		db:                  db,
+		orderRepo:           repository.NewOrderRepository(db),
+		userRepo:            repository.NewUserRepository(db),
 		jsRuntime:           NewJSRuntimeService(db),
 		virtualInventorySvc: virtualInventorySvc,
 		emailService:        emailService,
@@ -567,6 +572,7 @@ func (s *PaymentPollingService) handlePaymentSuccess(task *PollingTask, order *m
 
 	order.Status = finalStatus
 	order.ShippedAt = finalShippedAt
+	s.syncUserConsumptionStatsBestEffort(task.OrderID, order.UserID, "payment_polling_success")
 
 	// 记录付款成功日志
 	logger.LogPaymentOperation(s.db, "payment_success", task.OrderID, map[string]interface{}{
@@ -590,6 +596,32 @@ func (s *PaymentPollingService) handlePaymentSuccess(task *PollingTask, order *m
 	s.mutex.Lock()
 	s.removeFromQueueLocked(task.OrderID)
 	s.mutex.Unlock()
+}
+
+func (s *PaymentPollingService) syncUserConsumptionStatsBestEffort(orderID uint, userID *uint, scene string) {
+	if userID == nil || *userID == 0 || s.orderRepo == nil || s.userRepo == nil {
+		return
+	}
+
+	orderCount, totalSpentMinor, err := s.orderRepo.GetUserConsumptionSummary(*userID, userConsumptionStatuses)
+	if err != nil {
+		logger.LogPaymentOperation(s.db, "sync_user_consumption_stats_failed", orderID, map[string]interface{}{
+			"scene":   scene,
+			"user_id": *userID,
+			"stage":   "query_summary",
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	if err := s.userRepo.UpdateConsumptionStats(*userID, totalSpentMinor, orderCount); err != nil {
+		logger.LogPaymentOperation(s.db, "sync_user_consumption_stats_failed", orderID, map[string]interface{}{
+			"scene":   scene,
+			"user_id": *userID,
+			"stage":   "update_user",
+			"error":   err.Error(),
+		})
+	}
 }
 
 // saveTaskToDB 保存任务到数据库

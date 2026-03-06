@@ -187,14 +187,15 @@ func SetupRouter(
 		// 账单公开访问（通过一次性令牌认证）
 		userAPI.GET("/invoice/:token", userOrderHandler.ViewInvoiceByToken)
 
-		// Product（推荐商品公开访问，其余需要登录）
+		// Product（推荐商品公开访问；列表/详情按配置动态控制是否需要登录）
 		productsPublic := userAPI.Group("/products")
 		{
 			productsPublic.GET("/featured", userProductHandler.GetFeaturedProducts)
 			productsPublic.GET("/recommended", userProductHandler.GetRecommendedProducts)
 		}
+
 		products := userAPI.Group("/products")
-		products.Use(middleware.AuthMiddleware())
+		products.Use(middleware.ProductBrowseAuthMiddleware(cfg))
 		{
 			products.GET("", userProductHandler.ListProducts)
 			products.GET("/categories", userProductHandler.GetCategories)
@@ -332,6 +333,7 @@ func SetupRouter(
 		users.Use(middleware.AuthMiddleware(), middleware.RequireAdmin())
 		{
 			users.GET("", middleware.RequirePermission("user.view"), adminUserHandler.ListUsers)
+			users.GET("/countries", middleware.RequirePermission("user.view"), adminUserHandler.ListUserCountries)
 			users.POST("", middleware.RequirePermission("user.edit"), adminUserHandler.CreateUser)
 			users.GET("/:id", middleware.RequirePermission("user.view"), adminUserHandler.GetUser)
 			users.PUT("/:id", middleware.RequirePermission("user.edit"), adminUserHandler.UpdateUser)
@@ -578,7 +580,8 @@ func SetupRouter(
 		marketingAdmin := adminAPI.Group("/marketing")
 		marketingAdmin.Use(middleware.AuthMiddleware(), middleware.RequireAdmin())
 		{
-			marketingAdmin.GET("/users", middleware.RequirePermission("marketing.view"), adminMarketingHandler.ListRecipients)
+			marketingAdmin.GET("/countries", middleware.RequirePermission("marketing.view"), middleware.RequirePermission("user.view"), adminMarketingHandler.ListRecipientCountries)
+			marketingAdmin.GET("/users", middleware.RequirePermission("marketing.view"), middleware.RequirePermission("user.view"), adminMarketingHandler.ListRecipients)
 			marketingAdmin.POST("/preview", middleware.RequirePermission("marketing.send"), adminMarketingHandler.PreviewMarketing)
 			marketingAdmin.GET("/batches", middleware.RequirePermission("marketing.view"), adminMarketingHandler.ListBatches)
 			marketingAdmin.GET("/batches/:id", middleware.RequirePermission("marketing.view"), adminMarketingHandler.GetBatch)

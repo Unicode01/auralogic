@@ -109,6 +109,12 @@ function VirtualInventoryBindingCard({ productId, isNew }: { productId: number |
   const bindings = bindingsData?.data?.bindings || []
   const virtualInventories = virtualInventoriesData?.data?.items || []
 
+  const isScriptUnlimitedInventory = (vi?: any) =>
+    vi?.type === 'script' && Number(vi?.available ?? 0) === 0
+
+  const getVirtualInventoryAvailableText = (vi?: any) =>
+    isScriptUnlimitedInventory(vi) ? t.virtualStock.unlimited : Number(vi?.available ?? 0)
+
   // 过滤掉已绑定的库存
   const availableInventories = virtualInventories.filter(
     (vi: any) => !bindings.some((b: any) => b.virtual_inventory_id === vi.id)
@@ -205,8 +211,14 @@ function VirtualInventoryBindingCard({ productId, isNew }: { productId: number |
                     {binding.virtual_inventory?.sku || '-'}
                   </TableCell>
                   <TableCell>
-                    <Badge variant={binding.virtual_inventory?.available > 0 ? 'default' : 'destructive'}>
-                      {binding.virtual_inventory?.available || 0}
+                    <Badge
+                      variant={
+                        binding.virtual_inventory?.available > 0 || isScriptUnlimitedInventory(binding.virtual_inventory)
+                          ? 'default'
+                          : 'destructive'
+                      }
+                    >
+                      {getVirtualInventoryAvailableText(binding.virtual_inventory)}
                     </Badge>
                   </TableCell>
                   <TableCell>
@@ -287,7 +299,7 @@ function VirtualInventoryBindingCard({ productId, isNew }: { productId: number |
                     <SelectContent>
                       {availableInventories.map((vi: any) => (
                         <SelectItem key={vi.id} value={vi.id.toString()}>
-                          {vi.name} {vi.sku ? `(${vi.sku})` : ''} - {t.admin.availableLabel}: {vi.available}
+                          {vi.name} {vi.sku ? `(${vi.sku})` : ''} - {t.admin.availableLabel}: {getVirtualInventoryAvailableText(vi)}
                         </SelectItem>
                       ))}
                     </SelectContent>

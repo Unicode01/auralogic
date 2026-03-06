@@ -139,7 +139,34 @@ export function ShippingForm({ formToken, orderInfo, lang = 'zh', onSuccess, hid
     } catch { return null }
   })()
 
-  const [selectedCountry, setSelectedCountry] = useState(savedShipping?.receiver_country || 'CN')
+  const normalizeCountryCode = (value?: string, countryList?: any[]) => {
+    const raw = String(value || '').trim()
+    if (!raw) return 'CN'
+
+    const upper = raw.toUpperCase()
+    if (!countryList || countryList.length === 0) {
+      return upper
+    }
+
+    const exact = countryList.find((c: any) => String(c.code || '').toUpperCase() === upper)
+    if (exact) {
+      return String(exact.code).toUpperCase()
+    }
+
+    const lower = raw.toLowerCase()
+    const byName = countryList.find((c: any) => {
+      const nameZh = String(c.name_zh || '').trim()
+      const nameEn = String(c.name_en || '').trim().toLowerCase()
+      return nameZh === raw || nameEn === lower
+    })
+    if (byName) {
+      return String(byName.code).toUpperCase()
+    }
+
+    return 'CN'
+  }
+
+  const [selectedCountry, setSelectedCountry] = useState(normalizeCountryCode(savedShipping?.receiver_country))
 
   // 从订单信息中获取固定邮箱
   const fixedEmail = orderInfo.userEmail || orderInfo.user_email || ''
@@ -187,7 +214,7 @@ export function ShippingForm({ formToken, orderInfo, lang = 'zh', onSuccess, hid
       phone_code: savedShipping?.phone_code || '+86',
       receiver_phone: savedShipping?.receiver_phone || '',
       receiver_email: fixedEmail,
-      receiver_country: savedShipping?.receiver_country || 'CN',
+      receiver_country: normalizeCountryCode(savedShipping?.receiver_country),
       receiver_province: savedShipping?.receiver_province || '',
       receiver_city: savedShipping?.receiver_city || '',
       receiver_district: savedShipping?.receiver_district || '',
@@ -198,6 +225,19 @@ export function ShippingForm({ formToken, orderInfo, lang = 'zh', onSuccess, hid
       user_remark: '',
     },
   })
+
+  // 国家列表加载后，自动校正旧缓存中的国家值（如小写 code / 国家名称），避免选择框空白
+  useEffect(() => {
+    if (!countries.length) return
+    const current = form.getValues('receiver_country')
+    const normalized = normalizeCountryCode(current, countries)
+    if (current !== normalized) {
+      form.setValue('receiver_country', normalized, { shouldDirty: false, shouldTouch: false })
+    }
+    if (selectedCountry !== normalized) {
+      setSelectedCountry(normalized)
+    }
+  }, [countries, form, selectedCountry])
 
   // 判断是否是中国（需要填写省市区）
   const isChina = selectedCountry === 'CN'
@@ -350,12 +390,13 @@ export function ShippingForm({ formToken, orderInfo, lang = 'zh', onSuccess, hid
               </FormLabel>
               <Select
                 onValueChange={(value) => {
-                  field.onChange(value)
-                  setSelectedCountry(value)
-                  const phoneCode = phoneCodeMap[value] || '+' + value
+                  const normalized = normalizeCountryCode(value, countries)
+                  field.onChange(normalized)
+                  setSelectedCountry(normalized)
+                  const phoneCode = phoneCodeMap[normalized] || '+' + normalized
                   form.setValue('phone_code', phoneCode)
                 }}
-                value={field.value}
+                value={normalizeCountryCode(field.value, countries)}
               >
                 <FormControl>
                   <SelectTrigger>

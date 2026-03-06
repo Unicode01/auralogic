@@ -8,6 +8,8 @@ export interface User {
   permissions?: string[]
   isActive: boolean
   is_active?: boolean
+  total_spent_minor?: number
+  total_order_count?: number
   createdAt: string
   created_at?: string
 }

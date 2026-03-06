@@ -90,11 +90,64 @@ func (h *MarketingHandler) resolveOperator(c *gin.Context) (*uint, string) {
 func (h *MarketingHandler) ListRecipients(c *gin.Context) {
 	page, limit := response.GetPagination(c)
 	search := strings.TrimSpace(c.Query("search"))
+	locale := strings.TrimSpace(c.Query("locale"))
+	country := strings.TrimSpace(c.Query("country"))
+
+	isActive, ok := parseOptionalBoolQuery(c.Query("is_active"))
+	if !ok {
+		response.BadRequest(c, "Invalid is_active parameter")
+		return
+	}
+	emailVerified, ok := parseOptionalBoolQuery(c.Query("email_verified"))
+	if !ok {
+		response.BadRequest(c, "Invalid email_verified parameter")
+		return
+	}
+	emailNotifyMarketing, ok := parseOptionalBoolQuery(c.Query("email_notify_marketing"))
+	if !ok {
+		response.BadRequest(c, "Invalid email_notify_marketing parameter")
+		return
+	}
+	smsNotifyMarketing, ok := parseOptionalBoolQuery(c.Query("sms_notify_marketing"))
+	if !ok {
+		response.BadRequest(c, "Invalid sms_notify_marketing parameter")
+		return
+	}
+	hasPhone, ok := parseOptionalBoolQuery(c.Query("has_phone"))
+	if !ok {
+		response.BadRequest(c, "Invalid has_phone parameter")
+		return
+	}
 
 	query := h.db.Model(&models.User{}).Where("role = ?", "user")
 	if search != "" {
 		like := "%" + search + "%"
-		query = query.Where("email LIKE ? OR name LIKE ?", like, like)
+		query = query.Where("email LIKE ? OR name LIKE ? OR phone LIKE ?", like, like, like)
+	}
+	if isActive != nil {
+		query = query.Where("is_active = ?", *isActive)
+	}
+	if emailVerified != nil {
+		query = query.Where("email_verified = ?", *emailVerified)
+	}
+	if emailNotifyMarketing != nil {
+		query = query.Where("email_notify_marketing = ?", *emailNotifyMarketing)
+	}
+	if smsNotifyMarketing != nil {
+		query = query.Where("sms_notify_marketing = ?", *smsNotifyMarketing)
+	}
+	if hasPhone != nil {
+		if *hasPhone {
+			query = query.Where("phone IS NOT NULL AND phone <> ''")
+		} else {
+			query = query.Where("phone IS NULL OR phone = ''")
+		}
+	}
+	if locale != "" {
+		query = query.Where("LOWER(locale) = LOWER(?)", locale)
+	}
+	if country != "" {
+		query = query.Where("LOWER(country) = LOWER(?)", country)
 	}
 
 	var total int64
@@ -105,7 +158,7 @@ func (h *MarketingHandler) ListRecipients(c *gin.Context) {
 
 	var users []models.User
 	if err := query.
-		Select("id", "name", "email", "phone", "is_active", "email_notify_marketing", "sms_notify_marketing", "created_at").
+		Select("id", "name", "email", "phone", "is_active", "email_verified", "locale", "country", "email_notify_marketing", "sms_notify_marketing", "created_at").
 		Order("id DESC").
 		Offset((page - 1) * limit).
 		Limit(limit).
@@ -122,6 +175,9 @@ func (h *MarketingHandler) ListRecipients(c *gin.Context) {
 			"name":                   user.Name,
 			"email":                  user.Email,
 			"is_active":              user.IsActive,
+			"email_verified":         user.EmailVerified,
+			"locale":                 user.Locale,
+			"country":                user.Country,
 			"email_notify_marketing": user.EmailNotifyMarketing,
 			"sms_notify_marketing":   user.SMSNotifyMarketing,
 			"created_at":             user.CreatedAt,
@@ -133,6 +189,24 @@ func (h *MarketingHandler) ListRecipients(c *gin.Context) {
 	}
 
 	response.Paginated(c, items, page, limit, total)
+}
+
+func (h *MarketingHandler) ListRecipientCountries(c *gin.Context) {
+	countries := make([]string, 0)
+	if err := h.db.Model(&models.User{}).
+		Where("role = ?", "user").
+		Where("country IS NOT NULL").
+		Where("TRIM(country) <> ''").
+		Select("DISTINCT UPPER(TRIM(country)) AS country").
+		Order("country ASC").
+		Pluck("country", &countries).Error; err != nil {
+		response.InternalError(c, "Query failed")
+		return
+	}
+
+	response.Success(c, gin.H{
+		"countries": countries,
+	})
 }
 
 func (h *MarketingHandler) ListBatches(c *gin.Context) {
@@ -369,7 +443,7 @@ func (h *MarketingHandler) SendMarketing(c *gin.Context) {
 	}
 
 	var users []models.User
-	if err := query.Select("id").Find(&users).Error; err != nil {
+	if err := query.Select("id", "email_verified").Find(&users).Error; err != nil {
 		response.InternalError(c, "Query failed")
 		return
 	}
@@ -384,20 +458,23 @@ func (h *MarketingHandler) SendMarketing(c *gin.Context) {
 		TargetAll:          req.TargetAll,
 		Status:             models.MarketingBatchStatusQueued,
 		RequestedUserCount: len(req.UserIDs),
-		TargetedUsers:      len(users),
+		TargetedUsers:      0,
 		OperatorID:         operatorID,
 		OperatorName:       operatorName,
 	}
 
 	tasks := make([]models.MarketingBatchTask, 0, len(users)*2)
+	targetedUserIDs := make(map[uint]struct{}, len(users))
 	for i := range users {
-		userID := users[i].ID
-		if req.SendEmail {
+		user := users[i]
+		userID := user.ID
+		if req.SendEmail && user.EmailVerified {
 			tasks = append(tasks, models.MarketingBatchTask{
 				UserID:  userID,
 				Channel: models.MarketingTaskChannelEmail,
 				Status:  models.MarketingTaskStatusPending,
 			})
+			targetedUserIDs[userID] = struct{}{}
 		}
 		if req.SendSMS {
 			tasks = append(tasks, models.MarketingBatchTask{
@@ -405,8 +482,10 @@ func (h *MarketingHandler) SendMarketing(c *gin.Context) {
 				Channel: models.MarketingTaskChannelSMS,
 				Status:  models.MarketingTaskStatusPending,
 			})
+			targetedUserIDs[userID] = struct{}{}
 		}
 	}
+	batch.TargetedUsers = len(targetedUserIDs)
 	batch.TotalTasks = len(tasks)
 	if batch.TotalTasks == 0 {
 		batch.Status = models.MarketingBatchStatusCompleted

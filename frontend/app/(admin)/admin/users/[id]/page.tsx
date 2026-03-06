@@ -2,13 +2,13 @@
 
 import { use } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { getUserDetail } from '@/lib/api'
+import { getPublicConfig, getUserDetail } from '@/lib/api'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { ArrowLeft, User, Mail, Shield, Calendar } from 'lucide-react'
 import Link from 'next/link'
-import { formatDate } from '@/lib/utils'
+import { formatDate, formatPrice } from '@/lib/utils'
 import { getRoleColor } from '@/lib/role-utils'
 import { useLocale } from '@/hooks/use-locale'
 import { getTranslations } from '@/lib/i18n'
@@ -32,6 +32,11 @@ export default function UserDetailPage({ params }: { params: Promise<{ id: strin
     queryFn: () => getUserDetail(userId),
     enabled: !!userId,
   })
+  const { data: publicConfigData } = useQuery({
+    queryKey: ['publicConfig'],
+    queryFn: getPublicConfig,
+    staleTime: 5 * 60 * 1000,
+  })
 
   if (isLoading) {
     return <div className="text-center py-12">{t.common.loading}</div>
@@ -42,6 +47,7 @@ export default function UserDetailPage({ params }: { params: Promise<{ id: strin
   }
 
   const user = data.data
+  const currency = publicConfigData?.data?.currency || 'CNY'
 
   return (
     <div className="space-y-6">
@@ -125,6 +131,14 @@ export default function UserDetailPage({ params }: { params: Promise<{ id: strin
             <div className="flex justify-between items-center">
               <span className="text-sm">UUID</span>
               <code className="text-xs bg-gray-100 px-2 py-1 rounded">{user.uuid}</code>
+            </div>
+            <div className="flex justify-between items-center">
+              <span className="text-sm">{t.admin.totalSpent}</span>
+              <span className="font-medium">{formatPrice(Number(user.total_spent_minor || 0), currency)}</span>
+            </div>
+            <div className="flex justify-between items-center">
+              <span className="text-sm">{t.admin.orderCount}</span>
+              <span className="font-medium">{Number(user.total_order_count || 0)}</span>
             </div>
           </CardContent>
         </Card>

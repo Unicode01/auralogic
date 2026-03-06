@@ -139,6 +139,276 @@ function onDeliver(order, config) {
   return { success: true, items: items };
 }`
 
+const SCRIPT_EXAMPLE_EMBY_CONFIG = `{
+  "server_url": "https://emby.example.com/emby",
+  "api_key": "YOUR_EMBY_ADMIN_API_KEY",
+  "username_prefix": "al",
+  "username": "",
+  "default_password": "",
+  "password_length": 12,
+  "auto_suffix_on_conflict": true
+}`
+
+const SCRIPT_EXAMPLE_EMBY_REGISTER = `// Emby register-only example
+// - Always creates account(s)
+// - If username already exists: auto suffix (_2, _3...) when auto_suffix_on_conflict=true
+// Config fields are provided by script_config JSON.
+
+function _trimSlash(s) {
+  if (!s) return "";
+  while (s.length > 0 && s.charAt(s.length - 1) === "/") {
+    s = s.slice(0, -1);
+  }
+  return s;
+}
+
+function _sanitizeUsername(s) {
+  s = String(s || "").toLowerCase();
+  s = s.replace(/[^a-z0-9._-]/g, "_");
+  s = s.replace(/_+/g, "_");
+  if (s.length > 30) s = s.slice(0, 30);
+  if (!s) s = "user";
+  return s;
+}
+
+function _randomPassword(len) {
+  var chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%";
+  var out = "";
+  for (var i = 0; i < len; i++) {
+    out += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return out;
+}
+
+function _buildUrl(base, path, query) {
+  base = _trimSlash(base);
+  path = path || "";
+  if (path && path.charAt(0) !== "/") {
+    path = "/" + path;
+  }
+  var url = base + path;
+  var first = true;
+  query = query || {};
+  for (var k in query) {
+    if (!Object.prototype.hasOwnProperty.call(query, k)) continue;
+    var v = query[k];
+    if (v === undefined || v === null || v === "") continue;
+    url += (first ? "?" : "&") + encodeURIComponent(k) + "=" + encodeURIComponent(String(v));
+    first = false;
+  }
+  return url;
+}
+
+function _parseResponseData(resp) {
+  if (resp && resp.data) return resp.data;
+  if (resp && resp.body) {
+    var decoded = AuraLogic.utils.jsonDecode(resp.body);
+    if (decoded) return decoded;
+  }
+  return null;
+}
+
+function _request(baseUrl, apiKey, method, path, body, extraHeaders, extraQuery) {
+  var query = {};
+  if (extraQuery) {
+    for (var qk in extraQuery) {
+      if (!Object.prototype.hasOwnProperty.call(extraQuery, qk)) continue;
+      query[qk] = extraQuery[qk];
+    }
+  }
+  query.api_key = apiKey;
+  var headers = extraHeaders || {};
+  var url = _buildUrl(baseUrl, path, query);
+  var resp = AuraLogic.http.request(method, url, body, headers);
+  if (!resp) {
+    throw new Error("Empty HTTP response");
+  }
+  if (resp.error) {
+    throw new Error(resp.error);
+  }
+  if ((resp.status || 0) >= 400) {
+    throw new Error("HTTP " + resp.status + ": " + (resp.body || "request failed"));
+  }
+  return {
+    raw: resp,
+    data: _parseResponseData(resp)
+  };
+}
+
+function _resolveUsername(order, user, config) {
+  if (config.username) {
+    return _sanitizeUsername(config.username);
+  }
+  var prefix = _sanitizeUsername(config.username_prefix || "al");
+  if (user && user.email) {
+    var email = String(user.email);
+    var local = email.split("@")[0] || "user";
+    return _sanitizeUsername(prefix + "_" + local);
+  }
+  if (user && user.id) {
+    return _sanitizeUsername(prefix + "_" + user.id);
+  }
+  return _sanitizeUsername(prefix + "_" + String(order.order_no || "order"));
+}
+
+function _findUserByName(users, username) {
+  var target = String(username || "").toLowerCase();
+  for (var i = 0; i < users.length; i++) {
+    var u = users[i] || {};
+    var name = String(u.Name || u.name || "").toLowerCase();
+    if (name === target) return u;
+  }
+  return null;
+}
+
+function _collectTakenNames(users) {
+  var taken = {};
+  for (var i = 0; i < users.length; i++) {
+    var u = users[i] || {};
+    var name = String(u.Name || u.name || "").toLowerCase();
+    if (name) taken[name] = true;
+  }
+  return taken;
+}
+
+function _withSuffix(base, suffix) {
+  var suffixText = "_" + String(suffix);
+  var maxBaseLen = 30 - suffixText.length;
+  if (maxBaseLen < 1) maxBaseLen = 1;
+  var b = String(base || "user");
+  if (b.length > maxBaseLen) b = b.slice(0, maxBaseLen);
+  return _sanitizeUsername(b + suffixText);
+}
+
+function _nextAvailableUsername(seed, taken, autoSuffix) {
+  var base = _sanitizeUsername(seed);
+  if (!taken[base.toLowerCase()]) return base;
+  if (!autoSuffix) return "";
+
+  for (var i = 2; i <= 9999; i++) {
+    var candidate = _withSuffix(base, i);
+    if (!taken[candidate.toLowerCase()]) return candidate;
+  }
+  return "";
+}
+
+function _fetchUsers(baseUrl, apiKey) {
+  // Prefer /Users/Query (stable shape: { Items: [...] }), fallback to /Users.
+  try {
+    var q = _request(baseUrl, apiKey, "GET", "/Users/Query", null, null, null);
+    var qData = q.data || {};
+    if (qData.Items && qData.Items.length !== undefined) return qData.Items;
+    if (qData.length !== undefined) return qData;
+  } catch (e) {}
+
+  var raw = _request(baseUrl, apiKey, "GET", "/Users", null, null, null);
+  var data = raw.data || [];
+  if (data.Items && data.Items.length !== undefined) return data.Items;
+  if (data.length !== undefined) return data;
+  return [];
+}
+
+function _createUser(baseUrl, apiKey, username) {
+  // Emby API docs: POST /Users/New with JSON body { Name }
+  var created = _request(
+    baseUrl,
+    apiKey,
+    "POST",
+    "/Users/New",
+    { Name: username },
+    { "Content-Type": "application/json" },
+    null
+  );
+  if (created.data && (created.data.Id || created.data.id)) {
+    return created.data;
+  }
+
+  // Some versions may return empty body; re-query by username.
+  var users = _fetchUsers(baseUrl, apiKey);
+  return _findUserByName(users, username);
+}
+
+function _setPassword(baseUrl, apiKey, userId, password) {
+  if (!password) return;
+  _request(
+    baseUrl,
+    apiKey,
+    "POST",
+    "/Users/" + userId + "/Password",
+    {
+      Id: String(userId),
+      NewPw: password,
+      ResetPassword: false
+    },
+    { "Content-Type": "application/json" },
+    null
+  );
+}
+
+function onDeliver(order, config) {
+  try {
+    var baseUrl = _trimSlash(config.server_url || "");
+    var apiKey = String(config.api_key || "");
+    if (!baseUrl) {
+      return { success: false, message: "config.server_url is required" };
+    }
+    if (!apiKey) {
+      return { success: false, message: "config.api_key is required" };
+    }
+
+    var user = AuraLogic.order.getUser();
+    var baseUsername = _resolveUsername(order, user, config);
+    var count = order.quantity || 1;
+    var autoSuffix = config.auto_suffix_on_conflict !== false;
+    var users = _fetchUsers(baseUrl, apiKey);
+    var taken = _collectTakenNames(users);
+    var items = [];
+
+    for (var i = 0; i < count; i++) {
+      var seed = baseUsername;
+      if (count > 1) {
+        seed = _withSuffix(baseUsername, i + 1);
+      }
+      var username = _nextAvailableUsername(seed, taken, autoSuffix);
+      if (!username) {
+        return { success: false, message: "Username already exists and auto suffix is disabled: " + seed };
+      }
+
+      var embyUser = _createUser(baseUrl, apiKey, username) || {};
+      var createdUserId = embyUser.Id || embyUser.id;
+      if (!createdUserId) {
+        return { success: false, message: "Emby create user succeeded but user id is missing" };
+      }
+
+      var password = String(config.default_password || "");
+      if (!password) {
+        var pwLen = parseInt(config.password_length || 12, 10);
+        if (!pwLen || pwLen < 8) pwLen = 12;
+        password = _randomPassword(pwLen);
+      }
+      _setPassword(baseUrl, apiKey, createdUserId, password);
+
+      var lines = [
+        "Emby Server: " + baseUrl,
+        "Username: " + username,
+        "Password: " + password,
+        "Action: created",
+        "Order No: " + String(order.order_no || "")
+      ];
+      items.push({
+        content: lines.join("\\n"),
+        remark: "Emby account created (" + (i + 1) + "/" + count + ")"
+      });
+
+      taken[username.toLowerCase()] = true;
+    }
+
+    return { success: true, items: items };
+  } catch (e) {
+    return { success: false, message: String(e && e.message ? e.message : e) };
+  }
+}`
+
 export default function VirtualInventoryEditPage() {
   const params = useParams()
   const router = useRouter()
@@ -633,6 +903,12 @@ export default function VirtualInventoryEditPage() {
                       toast.success(t.admin.scriptExampleInserted)
                     }}>
                       {t.admin.scriptExampleOrder}
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => {
+                      setEditForm({ ...editForm, script: SCRIPT_EXAMPLE_EMBY_REGISTER, script_config: SCRIPT_EXAMPLE_EMBY_CONFIG })
+                      toast.success(t.admin.scriptExampleInserted)
+                    }}>
+                      {t.admin.scriptExampleEmby}
                     </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>

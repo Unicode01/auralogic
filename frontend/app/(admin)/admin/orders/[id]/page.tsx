@@ -11,6 +11,7 @@ import { OrderDetail } from '@/components/orders/order-detail'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   Dialog,
   DialogContent,
@@ -59,7 +60,9 @@ export default function AdminOrderDetailPage({ params }: { params: Promise<{ id:
   const [openRefund, setOpenRefund] = useState(false)
   const [openEdit, setOpenEdit] = useState(false)
   const [openResubmit, setOpenResubmit] = useState(false)
+  const [openDeliverVirtual, setOpenDeliverVirtual] = useState(false)
   const [openUpdatePrice, setOpenUpdatePrice] = useState(false)
+  const [markOnlyShipped, setMarkOnlyShipped] = useState(false)
   const [newPrice, setNewPrice] = useState('')
 
   // 编辑收货信息的表单状态
@@ -237,10 +240,13 @@ export default function AdminOrderDetailPage({ params }: { params: Promise<{ id:
   })
 
   const deliverVirtualMutation = useMutation({
-    mutationFn: () => adminDeliverVirtualStock(orderId),
-    onSuccess: () => {
-      toast.success(t.order.virtualDelivered)
+    mutationFn: (onlyMarkShipped: boolean) =>
+      adminDeliverVirtualStock(orderId, { mark_only_shipped: onlyMarkShipped }),
+    onSuccess: (response: any, onlyMarkShipped) => {
+      toast.success(response?.data?.message || (onlyMarkShipped ? t.order.virtualMarkedCompleteOnly : t.order.virtualDelivered))
       queryClient.invalidateQueries({ queryKey: ['adminOrderDetail', orderId] })
+      setOpenDeliverVirtual(false)
+      setMarkOnlyShipped(false)
     },
     onError: (error: any) => {
       if (error.code === 40010 && error.data?.error_key) {
@@ -502,31 +508,58 @@ export default function AdminOrderDetailPage({ params }: { params: Promise<{ id:
 
           {/* 发货虚拟商品 */}
           {order.status === 'pending' && isVirtualOnly && virtualStocks.length === 0 && (
-            <AlertDialog>
-              <AlertDialogTrigger asChild>
+            <Dialog
+              open={openDeliverVirtual}
+              onOpenChange={(open) => {
+                setOpenDeliverVirtual(open)
+                if (!open) {
+                  setMarkOnlyShipped(false)
+                }
+              }}
+            >
+              <DialogTrigger asChild>
                 <Button>
                   <Key className="mr-2 h-4 w-4" />
                   {t.order.deliverVirtual}
                 </Button>
-              </AlertDialogTrigger>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>{t.order.deliverVirtualTitle}</AlertDialogTitle>
-                  <AlertDialogDescription>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>{t.order.deliverVirtualTitle}</DialogTitle>
+                  <DialogDescription>
                     {t.order.deliverVirtualDesc}
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>{t.common.cancel}</AlertDialogCancel>
-                  <AlertDialogAction
-                    onClick={() => deliverVirtualMutation.mutate()}
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="py-2">
+                  <div className="flex items-start space-x-2 rounded-md border p-3">
+                    <Checkbox
+                      id="mark-only-shipped"
+                      checked={markOnlyShipped}
+                      onCheckedChange={(checked) => setMarkOnlyShipped(checked === true)}
+                    />
+                    <div className="space-y-1">
+                      <Label htmlFor="mark-only-shipped" className="cursor-pointer">
+                        {t.order.markOnlyCompleteLabel}
+                      </Label>
+                      <p className="text-xs text-muted-foreground">
+                        {t.order.markOnlyCompleteDesc}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => setOpenDeliverVirtual(false)}>
+                    {t.common.cancel}
+                  </Button>
+                  <Button
+                    onClick={() => deliverVirtualMutation.mutate(markOnlyShipped)}
                     disabled={deliverVirtualMutation.isPending}
                   >
                     {deliverVirtualMutation.isPending ? t.order.delivering : t.order.confirmDeliver}
-                  </AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
           )}
 
           {/* 编辑收货信息 - 虚拟商品不显示 */}

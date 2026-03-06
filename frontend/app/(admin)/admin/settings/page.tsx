@@ -1310,6 +1310,7 @@ export default function SettingsPage() {
                       login: {
                         allow_password_login: formData.get('allow_password_login') === 'on',
                         allow_registration: formData.get('allow_registration') === 'on',
+                        allow_guest_product_browse: formData.get('allow_guest_product_browse') === 'on',
                         require_email_verification: formData.get('require_email_verification') === 'on',
                         allow_email_login: formData.get('allow_email_login') === 'on',
                         allow_password_reset: formData.get('allow_password_reset') === 'on',
@@ -1338,6 +1339,14 @@ export default function SettingsPage() {
                       <p className="text-xs text-muted-foreground mt-1">{t.admin.allowRegistrationHint}</p>
                     </div>
                     <Switch id="allow_registration" name="allow_registration" defaultChecked={settingsData?.security?.login?.allow_registration} />
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <Label htmlFor="allow_guest_product_browse">{t.admin.allowGuestProductBrowse}</Label>
+                      <p className="text-xs text-muted-foreground mt-1">{t.admin.allowGuestProductBrowseHint}</p>
+                    </div>
+                    <Switch id="allow_guest_product_browse" name="allow_guest_product_browse" defaultChecked={settingsData?.security?.login?.allow_guest_product_browse} />
                   </div>
 
                   {/* Email Verification */}

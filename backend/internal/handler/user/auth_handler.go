@@ -96,13 +96,15 @@ func (h *AuthHandler) Login(c *gin.Context) {
 
 	// 构建响应数据
 	result := gin.H{
-		"user_id": user.ID,
-		"uuid":    user.UUID,
-		"email":   user.Email,
-		"name":    user.Name,
-		"role":    user.Role,
-		"avatar":  user.Avatar,
-		"locale":  user.Locale,
+		"user_id":           user.ID,
+		"uuid":              user.UUID,
+		"email":             user.Email,
+		"name":              user.Name,
+		"role":              user.Role,
+		"avatar":            user.Avatar,
+		"locale":            user.Locale,
+		"total_spent_minor": user.TotalSpentMinor,
+		"total_order_count": user.TotalOrderCount,
 	}
 
 	// 如果是Admin，getPermission列表
@@ -254,13 +256,15 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		"token":      jwtToken,
 		"token_type": "Bearer",
 		"user": gin.H{
-			"user_id": user.ID,
-			"uuid":    user.UUID,
-			"email":   user.Email,
-			"name":    user.Name,
-			"role":    user.Role,
-			"avatar":  user.Avatar,
-			"locale":  user.Locale,
+			"user_id":           user.ID,
+			"uuid":              user.UUID,
+			"email":             user.Email,
+			"name":              user.Name,
+			"role":              user.Role,
+			"avatar":            user.Avatar,
+			"locale":            user.Locale,
+			"total_spent_minor": user.TotalSpentMinor,
+			"total_order_count": user.TotalOrderCount,
 		},
 	})
 }
@@ -307,6 +311,8 @@ func (h *AuthHandler) GetMe(c *gin.Context) {
 		"email_notify_ticket":    user.EmailNotifyTicket,
 		"email_notify_marketing": user.EmailNotifyMarketing,
 		"sms_notify_marketing":   user.SMSNotifyMarketing,
+		"total_spent_minor":      user.TotalSpentMinor,
+		"total_order_count":      user.TotalOrderCount,
 		"created_at":             user.CreatedAt,
 	}
 	if user.Phone != nil && *user.Phone != "" {
@@ -549,13 +555,15 @@ func (h *AuthHandler) VerifyEmail(c *gin.Context) {
 		"token":      jwtToken,
 		"token_type": "Bearer",
 		"user": gin.H{
-			"user_id": user.ID,
-			"uuid":    user.UUID,
-			"email":   user.Email,
-			"name":    user.Name,
-			"role":    user.Role,
-			"avatar":  user.Avatar,
-			"locale":  user.Locale,
+			"user_id":           user.ID,
+			"uuid":              user.UUID,
+			"email":             user.Email,
+			"name":              user.Name,
+			"role":              user.Role,
+			"avatar":            user.Avatar,
+			"locale":            user.Locale,
+			"total_spent_minor": user.TotalSpentMinor,
+			"total_order_count": user.TotalOrderCount,
 		},
 	})
 }
@@ -826,13 +834,15 @@ func (h *AuthHandler) LoginWithCode(c *gin.Context) {
 	logger.LogLoginAttempt(db, c, req.Email, true, &user.ID)
 
 	result := gin.H{
-		"user_id": user.ID,
-		"uuid":    user.UUID,
-		"email":   user.Email,
-		"name":    user.Name,
-		"role":    user.Role,
-		"avatar":  user.Avatar,
-		"locale":  user.Locale,
+		"user_id":           user.ID,
+		"uuid":              user.UUID,
+		"email":             user.Email,
+		"name":              user.Name,
+		"role":              user.Role,
+		"avatar":            user.Avatar,
+		"locale":            user.Locale,
+		"total_spent_minor": user.TotalSpentMinor,
+		"total_order_count": user.TotalOrderCount,
 	}
 
 	if user.IsAdmin() {
@@ -950,7 +960,17 @@ func (h *AuthHandler) LoginWithPhoneCode(c *gin.Context) {
 
 	response.Success(c, gin.H{
 		"token": token, "token_type": "Bearer",
-		"user": gin.H{"user_id": user.ID, "uuid": user.UUID, "email": user.Email, "name": user.Name, "role": user.Role, "avatar": user.Avatar, "locale": user.Locale},
+		"user": gin.H{
+			"user_id":           user.ID,
+			"uuid":              user.UUID,
+			"email":             user.Email,
+			"name":              user.Name,
+			"role":              user.Role,
+			"avatar":            user.Avatar,
+			"locale":            user.Locale,
+			"total_spent_minor": user.TotalSpentMinor,
+			"total_order_count": user.TotalOrderCount,
+		},
 	})
 }
 
@@ -1026,7 +1046,17 @@ func (h *AuthHandler) PhoneRegister(c *gin.Context) {
 
 	response.Success(c, gin.H{
 		"token": jwtToken, "token_type": "Bearer",
-		"user": gin.H{"user_id": user.ID, "uuid": user.UUID, "email": user.Email, "name": user.Name, "role": user.Role, "avatar": user.Avatar, "locale": user.Locale},
+		"user": gin.H{
+			"user_id":           user.ID,
+			"uuid":              user.UUID,
+			"email":             user.Email,
+			"name":              user.Name,
+			"role":              user.Role,
+			"avatar":            user.Avatar,
+			"locale":            user.Locale,
+			"total_spent_minor": user.TotalSpentMinor,
+			"total_order_count": user.TotalOrderCount,
+		},
 	})
 }
 
