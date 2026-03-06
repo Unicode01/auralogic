@@ -266,6 +266,42 @@ var defaultLandingPageBody = `
   var grid=document.getElementById('productGrid');
   var stats=document.getElementById('heroStats');
   var currency='{{.Currency}}';
+  var hasBigInt=(typeof BigInt==='function');
+
+  function toMinorInt(value){
+    if(value===null||value===undefined||value===''){return hasBigInt?0n:0;}
+    if(!hasBigInt){
+      var n=Number(value);
+      return isFinite(n)?Math.trunc(n):0;
+    }
+    if(typeof value==='bigint'){return value;}
+    if(typeof value==='number'){
+      return isFinite(value)?BigInt(Math.trunc(value)):0n;
+    }
+    if(typeof value==='string'){
+      var s=value.trim();
+      if(!s){return 0n;}
+      if(/^-?\d+$/.test(s)){
+        try{return BigInt(s);}catch(_){return 0n;}
+      }
+      var n2=Number(s);
+      return isFinite(n2)?BigInt(Math.trunc(n2)):0n;
+    }
+    return 0n;
+  }
+
+  function formatMinorPrice(value){
+    if(!hasBigInt){
+      return (toMinorInt(value)/100).toFixed(2);
+    }
+    var minor=toMinorInt(value);
+    var negative=minor<0n;
+    var abs=negative?-minor:minor;
+    var major=abs/100n;
+    var cents=(abs%100n).toString();
+    if(cents.length<2){cents='0'+cents;}
+    return (negative?'-':'')+major.toString()+'.'+cents;
+  }
 
   fetch('/api/user/products/recommended?limit=8')
     .then(function(r){return r.json()})
@@ -282,7 +318,8 @@ var defaultLandingPageBody = `
       items.forEach(function(p){
         var img=p.images&&p.images.length?p.images[0]:'';
         var imgTag=img?'<div class="product-img-wrap"><img class="product-img" src="'+img+'" alt="'+p.name+'" loading="lazy"></div>':'<div class="product-img-wrap"><div class="product-img"></div></div>';
-        html+='<a href="/products/'+p.id+'" class="product-card fade-in">'+imgTag+'<div class="product-info"><h3>'+p.name+'</h3><div class="desc">'+(p.short_description||p.description||'')+'</div><div class="product-meta"><span class="product-price">'+currency+' '+(Number(p.price_minor||0)/100).toFixed(2)+'</span>'+(p.category?'<span class="product-badge">'+p.category+'</span>':'')+'</div></div></a>';
+        var priceMinor=(p.price_minor!==undefined&&p.price_minor!==null)?p.price_minor:p.price;
+        html+='<a href="/products/'+p.id+'" class="product-card fade-in">'+imgTag+'<div class="product-info"><h3>'+p.name+'</h3><div class="desc">'+(p.short_description||p.description||'')+'</div><div class="product-meta"><span class="product-price">'+currency+' '+formatMinorPrice(priceMinor)+'</span>'+(p.category?'<span class="product-badge">'+p.category+'</span>':'')+'</div></div></a>';
       });
       grid.innerHTML=html;
       // Observe new cards

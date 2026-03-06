@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"auralogic/internal/config"
 	"auralogic/internal/database"
 	"auralogic/internal/models"
 	"auralogic/internal/pkg/jwt"
@@ -125,6 +126,19 @@ func OptionalAuthMiddleware() gin.HandlerFunc {
 	}
 }
 
+// ProductBrowseAuthMiddleware 动态控制商品浏览是否需要登录。
+// 当 allow_guest_product_browse=true 时放行游客，否则走 AuthMiddleware。
+func ProductBrowseAuthMiddleware(cfg *config.Config) gin.HandlerFunc {
+	auth := AuthMiddleware()
+	return func(c *gin.Context) {
+		if cfg != nil && cfg.Security.Login.AllowGuestProductBrowse {
+			c.Next()
+			return
+		}
+		auth(c)
+	}
+}
+
 // GetUserID 从上下文getUserID
 func GetUserID(c *gin.Context) (uint, bool) {
 	userID, exists := c.Get("user_id")
@@ -165,4 +179,3 @@ func GetUintParam(c *gin.Context, key string) (uint, error) {
 	}
 	return uint(id), nil
 }
-

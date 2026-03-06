@@ -166,7 +166,7 @@ func (s *MarketingService) processBatch(batchID uint) error {
 
 func (s *MarketingService) processTask(batch *models.MarketingBatch, task *models.MarketingBatchTask) error {
 	var user models.User
-	if err := s.db.Select("id", "name", "email", "phone", "locale", "email_notify_marketing", "sms_notify_marketing").
+	if err := s.db.Select("id", "name", "email", "phone", "locale", "email_verified", "email_notify_marketing", "sms_notify_marketing").
 		First(&user, task.UserID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return s.updateTaskResult(task.ID, models.MarketingTaskStatusFailed, "user not found")
@@ -185,7 +185,7 @@ func (s *MarketingService) processTask(batch *models.MarketingBatch, task *model
 }
 
 func (s *MarketingService) processEmailTask(batch *models.MarketingBatch, user *models.User, taskID uint) error {
-	if user.Email == "" || !user.EmailNotifyMarketing {
+	if user.Email == "" || !user.EmailVerified || !user.EmailNotifyMarketing {
 		return s.updateTaskResult(taskID, models.MarketingTaskStatusSkipped, "")
 	}
 	if s.emailService == nil {

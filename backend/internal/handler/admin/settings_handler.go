@@ -79,6 +79,7 @@ func (h *SettingsHandler) GetPublicConfig(c *gin.Context) {
 		"default_theme":              defaultTheme,
 		"allow_registration":         h.cfg.Security.Login.AllowRegistration,
 		"allow_password_login":       h.cfg.Security.Login.AllowPasswordLogin,
+		"allow_guest_product_browse": h.cfg.Security.Login.AllowGuestProductBrowse,
 		"allow_email_login":          h.cfg.Security.Login.AllowEmailLogin,
 		"allow_password_reset":       h.cfg.Security.Login.AllowPasswordReset,
 		"sms_enabled":                h.cfg.SMS.Enabled,
@@ -543,6 +544,7 @@ func (h *SettingsHandler) UpdateSettings(c *gin.Context) {
 		securityConfig["login"] = map[string]interface{}{
 			"allow_password_login":       req.Security.Login.AllowPasswordLogin,
 			"allow_registration":         req.Security.Login.AllowRegistration,
+			"allow_guest_product_browse": req.Security.Login.AllowGuestProductBrowse,
 			"require_email_verification": req.Security.Login.RequireEmailVerification,
 			"allow_email_login":          req.Security.Login.AllowEmailLogin,
 			"allow_password_reset":       req.Security.Login.AllowPasswordReset,

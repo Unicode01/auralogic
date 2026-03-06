@@ -3,22 +3,12 @@
 import { useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { Loader2 } from 'lucide-react'
-import { getToken } from '@/lib/auth'
 
 export default function HomePage() {
   const router = useRouter()
 
   useEffect(() => {
-    // 检查登录状态
-    const token = getToken()
-    
-    if (token) {
-      // 已登录，重定向到商品页
-      router.replace('/products')
-    } else {
-      // 未登录，重定向到登录页
-      router.replace('/login')
-    }
+    router.replace('/products')
   }, [router])
 
   // 显示加载状态

@@ -6,13 +6,15 @@ import (
 	"html/template"
 	"log"
 	"net/http"
+	"regexp"
+	"strings"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"auralogic/internal/config"
 	"auralogic/internal/models"
 	"auralogic/internal/pkg/response"
 	"auralogic/internal/pkg/utils"
+	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
 
@@ -23,6 +25,62 @@ type LandingPageHandler struct {
 
 func NewLandingPageHandler(db *gorm.DB, cfg *config.Config) *LandingPageHandler {
 	return &LandingPageHandler{db: db, cfg: cfg}
+}
+
+func matchPageRule(pagePath string, rule config.PageRule) bool {
+	if rule.MatchType == "regex" {
+		re, err := regexp.Compile(rule.Pattern)
+		if err != nil {
+			return false
+		}
+		return re.MatchString(pagePath)
+	}
+	return pagePath == rule.Pattern
+}
+
+func collectPageInjectContent(pagePath string, rules []config.PageRule) (string, string) {
+	var css, js strings.Builder
+	for _, rule := range rules {
+		if !rule.Enabled || !matchPageRule(pagePath, rule) {
+			continue
+		}
+		if rule.CSS != "" {
+			css.WriteString(rule.CSS)
+			css.WriteByte('\n')
+		}
+		if rule.JS != "" {
+			js.WriteString(rule.JS)
+			js.WriteByte('\n')
+		}
+	}
+	return css.String(), js.String()
+}
+
+func injectPageContent(htmlContent, css, js string) string {
+	if css == "" && js == "" {
+		return htmlContent
+	}
+
+	result := htmlContent
+	if css != "" {
+		styleTag := `<style id="auralogic-page-inject-css">` + css + `</style>`
+		if strings.Contains(result, "</head>") {
+			result = strings.Replace(result, "</head>", styleTag+"\n</head>", 1)
+		} else {
+			result = styleTag + "\n" + result
+		}
+	}
+
+	if js != "" {
+		scriptTag := `<script id="auralogic-page-inject-js">` + js + `</script>`
+		if strings.Contains(result, "</body>") {
+			result = strings.Replace(result, "</body>", scriptTag+"\n</body>", 1)
+		} else {
+			result = result + "\n" + scriptTag
+		}
+	}
+
+	return result
 }
 
 // ServeLandingPage 公开 GET / — 渲染落地页
@@ -68,6 +126,9 @@ func (h *LandingPageHandler) ServeLandingPage(c *gin.Context) {
 		c.Redirect(http.StatusFound, "/login")
 		return
 	}
+	renderedHTML := buf.String()
+	pageInjectCSS, pageInjectJS := collectPageInjectContent("/", h.cfg.Customization.PageRules)
+	renderedHTML = injectPageContent(renderedHTML, pageInjectCSS, pageInjectJS)
 
 	// 异步记录 PageView
 	ip := utils.GetRealIP(c)
@@ -85,7 +146,7 @@ func (h *LandingPageHandler) ServeLandingPage(c *gin.Context) {
 		}
 	}()
 
-	c.Data(http.StatusOK, "text/html; charset=utf-8", buf.Bytes())
+	c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(renderedHTML))
 }
 
 // GetLandingPage 管理员 GET — 返回落地页 JSON

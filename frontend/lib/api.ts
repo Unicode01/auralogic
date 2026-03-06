@@ -656,8 +656,8 @@ export async function adminMarkOrderAsPaid(id: number) {
   return apiClient.post(`/api/admin/orders/${id}/mark-paid`)
 }
 
-export async function adminDeliverVirtualStock(id: number) {
-  return apiClient.post(`/api/admin/orders/${id}/deliver-virtual`)
+export async function adminDeliverVirtualStock(id: number, data?: { mark_only_shipped?: boolean }) {
+  return apiClient.post(`/api/admin/orders/${id}/deliver-virtual`, data || {})
 }
 
 export async function updateOrderPrice(id: number, totalAmountMinor: number) {
@@ -670,14 +670,34 @@ export async function getUsers(params?: {
   limit?: number
   role?: string
   search?: string
+  is_active?: boolean
+  email_verified?: boolean
+  email_notify_marketing?: boolean
+  sms_notify_marketing?: boolean
+  has_phone?: boolean
+  locale?: string
+  country?: string
 }) {
   const query = new URLSearchParams()
   if (params?.page) query.append('page', params.page.toString())
   if (params?.limit) query.append('limit', params.limit.toString())
   if (params?.role) query.append('role', params.role)
   if (params?.search) query.append('search', params.search)
+  if (params?.is_active !== undefined) query.append('is_active', String(params.is_active))
+  if (params?.email_verified !== undefined) query.append('email_verified', String(params.email_verified))
+  if (params?.email_notify_marketing !== undefined) query.append('email_notify_marketing', String(params.email_notify_marketing))
+  if (params?.sms_notify_marketing !== undefined) query.append('sms_notify_marketing', String(params.sms_notify_marketing))
+  if (params?.has_phone !== undefined) query.append('has_phone', String(params.has_phone))
+  if (params?.locale) query.append('locale', params.locale)
+  if (params?.country) query.append('country', params.country)
 
   return apiClient.get(`/api/admin/users?${query}`)
+}
+
+export async function getUserCountries(params?: { role?: string }) {
+  const query = new URLSearchParams()
+  if (params?.role) query.append('role', params.role)
+  return apiClient.get(`/api/admin/users/countries?${query}`)
 }
 
 export async function getUserDetail(id: number) {
@@ -1649,12 +1669,34 @@ export interface MarketingBatchTaskItem {
   }
 }
 
-export async function getMarketingUsers(params?: { page?: number; limit?: number; search?: string }) {
+export async function getMarketingUsers(params?: {
+  page?: number
+  limit?: number
+  search?: string
+  is_active?: boolean
+  email_verified?: boolean
+  email_notify_marketing?: boolean
+  sms_notify_marketing?: boolean
+  has_phone?: boolean
+  locale?: string
+  country?: string
+}) {
   const query = new URLSearchParams()
   if (params?.page) query.append('page', params.page.toString())
   if (params?.limit) query.append('limit', params.limit.toString())
   if (params?.search) query.append('search', params.search)
+  if (params?.is_active !== undefined) query.append('is_active', String(params.is_active))
+  if (params?.email_verified !== undefined) query.append('email_verified', String(params.email_verified))
+  if (params?.email_notify_marketing !== undefined) query.append('email_notify_marketing', String(params.email_notify_marketing))
+  if (params?.sms_notify_marketing !== undefined) query.append('sms_notify_marketing', String(params.sms_notify_marketing))
+  if (params?.has_phone !== undefined) query.append('has_phone', String(params.has_phone))
+  if (params?.locale) query.append('locale', params.locale)
+  if (params?.country) query.append('country', params.country)
   return apiClient.get(`/api/admin/marketing/users?${query}`)
+}
+
+export async function getMarketingUserCountries() {
+  return apiClient.get('/api/admin/marketing/countries')
 }
 
 export async function getMarketingBatches(params?: { page?: number; limit?: number; batch_no?: string; operator?: string; status?: string }) {

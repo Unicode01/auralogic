@@ -218,7 +218,7 @@ func (s *EmailService) SendMarketingAnnouncementEmail(user *models.User, title, 
 // SendMarketingAnnouncementEmailWithBatch sends a marketing message by email for one user,
 // respecting user-level marketing opt-in and attaching marketing batch id.
 func (s *EmailService) SendMarketingAnnouncementEmailWithBatch(user *models.User, title, content string, batchID *uint) error {
-	if user == nil || user.Email == "" || !user.EmailNotifyMarketing {
+	if user == nil || user.Email == "" || !user.EmailVerified || !user.EmailNotifyMarketing {
 		return nil
 	}
 	if strings.TrimSpace(content) == "" {

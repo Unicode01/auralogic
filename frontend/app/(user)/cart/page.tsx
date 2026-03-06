@@ -1,21 +1,42 @@
 'use client'
 
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCart } from '@/contexts/cart-context'
-import { createOrder, validatePromoCode, getPublicConfig } from '@/lib/api'
+import { createOrder, validatePromoCode, getPublicConfig, getProduct, getProductAvailableStock, type CartItem } from '@/lib/api'
 import { Card, CardContent, CardHeader, CardFooter } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Trash2, Minus, Plus, ShoppingCart, Package, AlertCircle, RefreshCw, LayoutGrid, LayoutList, Loader2 } from 'lucide-react'
 import Link from 'next/link'
+import { useAuth } from '@/hooks/use-auth'
 import { useLocale } from '@/hooks/use-locale'
 import { usePageTitle } from '@/hooks/use-page-title'
 import { getTranslations, translateBizError } from '@/lib/i18n'
 import toast from 'react-hot-toast'
 import { Checkbox } from '@/components/ui/checkbox'
 import { useCurrency, formatPrice } from '@/contexts/currency-context'
+import {
+  getGuestCart,
+  getGuestCartItemKey,
+  setGuestCart,
+  removeGuestCartItemByKey,
+  updateGuestCartItemQuantityByKey,
+} from '@/lib/guest-cart'
+
+type GuestCartDisplayItem = CartItem & {
+  guest_key: string
+}
+
+function getGuestDisplayItemId(key: string): number {
+  let hash = 0
+  for (let i = 0; i < key.length; i++) {
+    hash = ((hash << 5) - hash + key.charCodeAt(i)) | 0
+  }
+  const normalized = Math.abs(hash)
+  return normalized === 0 ? 1 : normalized
+}
 
 export default function CartPage() {
   const router = useRouter()
@@ -24,7 +45,15 @@ export default function CartPage() {
   const t = getTranslations(locale)
   usePageTitle(t.pageTitle.cart)
   const { currency } = useCurrency()
-  const { items, totalPrice, totalQuantity, isLoading, updateQuantity, removeItem, removeItems, refetch } = useCart()
+  const { isAuthenticated, isLoading: authLoading } = useAuth()
+  const {
+    items: serverItems,
+    isLoading: serverCartLoading,
+    updateQuantity,
+    removeItem,
+    removeItems,
+    refetch,
+  } = useCart()
   const { data: publicConfig } = useQuery({
     queryKey: ['publicConfig'],
     queryFn: getPublicConfig,
@@ -32,6 +61,8 @@ export default function CartPage() {
   })
   const maxItemQuantity = publicConfig?.data?.max_item_quantity || 9999
   const maxOrderItems = publicConfig?.data?.max_order_items || 100
+  const [guestItems, setGuestItems] = useState<GuestCartDisplayItem[]>([])
+  const [isGuestItemsLoading, setIsGuestItemsLoading] = useState(false)
   const [selectedItems, setSelectedItems] = useState<Set<number>>(new Set())
   const [viewMode, setViewMode] = useState<'list' | 'card'>(() => {
     if (typeof window !== 'undefined') {
@@ -40,6 +71,82 @@ export default function CartPage() {
     }
     return 'list'
   })
+  const isGuestMode = !isAuthenticated
+
+  const refreshGuestItems = useCallback(async () => {
+    const localItems = getGuestCart()
+    if (!localItems.length) {
+      setGuestItems([])
+      return
+    }
+
+    setIsGuestItemsLoading(true)
+    try {
+      const enrichedItems = await Promise.all(
+        localItems.map(async (localItem): Promise<GuestCartDisplayItem> => {
+          const guestKey = getGuestCartItemKey(localItem)
+          const fallback: GuestCartDisplayItem = {
+            id: getGuestDisplayItemId(guestKey),
+            guest_key: guestKey,
+            product_id: localItem.product_id,
+            sku: `guest-${localItem.product_id}`,
+            name: `#${localItem.product_id}`,
+            price_minor: 0,
+            image_url: '',
+            product_type: 'physical',
+            quantity: Math.max(1, localItem.quantity),
+            attributes: localItem.attributes || {},
+            available_stock: 0,
+            is_available: false,
+          }
+
+          try {
+            const [productResult, stockResult] = await Promise.allSettled([
+              getProduct(localItem.product_id),
+              getProductAvailableStock(localItem.product_id, localItem.attributes),
+            ])
+
+            const product = productResult.status === 'fulfilled' ? productResult.value?.data : null
+            const stockData = stockResult.status === 'fulfilled' ? stockResult.value?.data : null
+            const primaryImage = product?.images?.find((img: any) => img.is_primary || img.isPrimary)?.url
+              || product?.images?.[0]?.url
+              || ''
+            const isUnlimitedStock = stockData?.is_unlimited === true
+            const availableStock = isUnlimitedStock
+              ? maxItemQuantity
+              : Math.max(0, Number(stockData?.available_stock ?? product?.stock ?? 0))
+            const isAvailable = Boolean(product)
+              && (isUnlimitedStock || availableStock > 0)
+              && product?.status !== 'inactive'
+              && product?.status !== 'draft'
+
+            return {
+              ...fallback,
+              sku: product?.sku || fallback.sku,
+              name: product?.name || fallback.name,
+              price_minor: Number(product?.price_minor || 0),
+              image_url: primaryImage,
+              product_type: product?.product_type || product?.productType || 'physical',
+              available_stock: availableStock,
+              is_available: isAvailable,
+              product: product || undefined,
+            }
+          } catch {
+            return fallback
+          }
+        })
+      )
+
+      setGuestItems(enrichedItems)
+    } finally {
+      setIsGuestItemsLoading(false)
+    }
+  }, [maxItemQuantity])
+
+  useEffect(() => {
+    if (!isGuestMode) return
+    refreshGuestItems()
+  }, [isGuestMode, refreshGuestItems])
 
   // Promo code state
   const [promoCodeInput, setPromoCodeInput] = useState('')
@@ -54,6 +161,28 @@ export default function CartPage() {
     max_discount_minor: number
     min_order_amount_minor: number
   } | null>(null)
+  const items = isGuestMode ? guestItems : serverItems
+  const isLoading = authLoading || (isGuestMode ? isGuestItemsLoading : serverCartLoading)
+
+  const refetchCart = useCallback(() => {
+    if (isGuestMode) {
+      refreshGuestItems()
+      return
+    }
+    refetch()
+  }, [isGuestMode, refreshGuestItems, refetch])
+
+  useEffect(() => {
+    setSelectedItems(prev => {
+      if (prev.size === 0) return prev
+      const validIds = new Set(items.map(item => item.id))
+      const next = new Set<number>()
+      for (const id of prev) {
+        if (validIds.has(id)) next.add(id)
+      }
+      return next.size === prev.size ? prev : next
+    })
+  }, [items])
 
   const handleViewModeChange = (mode: 'list' | 'card') => {
     setViewMode(mode)
@@ -62,6 +191,12 @@ export default function CartPage() {
 
   // 应用优惠码
   const handleApplyPromoCode = async () => {
+    if (isGuestMode) {
+      toast.error(t.cart.loginForPromoCode)
+      setTimeout(() => router.push('/login'), 1000)
+      return
+    }
+
     if (!promoCodeInput.trim()) return
 
     setIsValidatingPromo(true)
@@ -144,6 +279,19 @@ export default function CartPage() {
     const item = items.find(i => i.id === itemId)
     const itemMaxQuantity = item ? getItemMaxQuantity(item) : maxItemQuantity
     if (newQuantity < 1 || newQuantity > itemMaxQuantity) return
+    if (isGuestMode) {
+      const guestItem = item as GuestCartDisplayItem | undefined
+      if (!guestItem) return
+      const result = updateGuestCartItemQuantityByKey(guestItem.guest_key, newQuantity, maxItemQuantity)
+      if (result.updated) {
+        setGuestItems(prev => prev.map((existing) => (
+          existing.guest_key === guestItem.guest_key
+            ? { ...existing, quantity: newQuantity }
+            : existing
+        )))
+      }
+      return
+    }
     try {
       await updateQuantity(itemId, newQuantity)
     } catch (error) {
@@ -154,6 +302,20 @@ export default function CartPage() {
   // 处理删除
   const handleRemove = async (itemId: number) => {
     if (!window.confirm(t.cart.confirmDeleteCartItem)) return
+    if (isGuestMode) {
+      const guestItem = items.find(i => i.id === itemId) as GuestCartDisplayItem | undefined
+      if (!guestItem) return
+      const result = removeGuestCartItemByKey(guestItem.guest_key)
+      if (result.removed) {
+        setGuestItems(prev => prev.filter((existing) => existing.guest_key !== guestItem.guest_key))
+      }
+      setSelectedItems(prev => {
+        const next = new Set(prev)
+        next.delete(itemId)
+        return next
+      })
+      return
+    }
     try {
       await removeItem(itemId)
       setSelectedItems(prev => {
@@ -216,6 +378,12 @@ export default function CartPage() {
 
   // 提交订单
   const handleCheckout = () => {
+    if (isGuestMode) {
+      toast.error(t.cart.loginForCheckout)
+      setTimeout(() => router.push('/login'), 1000)
+      return
+    }
+
     const selectedCartItems = items.filter(item => selectedItems.has(item.id) && item.is_available)
 
     if (selectedCartItems.length === 0) {
@@ -315,7 +483,7 @@ export default function CartPage() {
               <LayoutGrid className="h-4 w-4" />
             </Button>
           </div>
-          <Button variant="outline" size="sm" onClick={() => refetch()}>
+          <Button variant="outline" size="sm" onClick={refetchCart}>
             <RefreshCw className="h-4 w-4 md:mr-2" />
             <span className="hidden md:inline">{t.cart.refresh}</span>
           </Button>
@@ -328,7 +496,17 @@ export default function CartPage() {
                 return
               }
               if (!window.confirm(t.cart.confirmClearSelected)) return
-              removeItems(Array.from(selectedItems))
+              if (isGuestMode) {
+                const selectedItemSet = new Set(selectedItems)
+                const remainingGuestItems = getGuestCart().filter((item) => {
+                  const itemId = getGuestDisplayItemId(getGuestCartItemKey(item))
+                  return !selectedItemSet.has(itemId)
+                })
+                setGuestCart(remainingGuestItems)
+                setGuestItems(prev => prev.filter(item => !selectedItemSet.has(item.id)))
+              } else {
+                removeItems(Array.from(selectedItems))
+              }
               setSelectedItems(new Set())
             }}
             disabled={selectedItems.size === 0}
@@ -340,6 +518,14 @@ export default function CartPage() {
       </div>
 
       {/* 购物车列表 - 列表视图 */}
+      {isGuestMode && (
+        <Card className="border-dashed">
+          <CardContent className="p-3 text-sm text-muted-foreground">
+            {t.cart.guestModeNotice}
+          </CardContent>
+        </Card>
+      )}
+
       {viewMode === 'list' && (
         <div className="space-y-4">
           {items.map((item) => (
@@ -620,7 +806,7 @@ export default function CartPage() {
                   />
                   <Button
                     onClick={handleApplyPromoCode}
-                    disabled={!promoCodeInput.trim() || isValidatingPromo}
+                    disabled={isGuestMode || !promoCodeInput.trim() || isValidatingPromo}
                     size="sm"
                     className="absolute right-0.5 top-1/2 -translate-y-1/2 h-7 text-xs px-3"
                   >
@@ -687,7 +873,7 @@ export default function CartPage() {
                       />
                       <Button
                         onClick={handleApplyPromoCode}
-                        disabled={!promoCodeInput.trim() || isValidatingPromo}
+                        disabled={isGuestMode || !promoCodeInput.trim() || isValidatingPromo}
                         size="sm"
                         className="absolute right-0.5 top-1/2 -translate-y-1/2 h-7 text-xs px-3"
                       >
@@ -745,11 +931,11 @@ export default function CartPage() {
                   size="default"
                   className="shrink-0"
                   onClick={handleCheckout}
-                  disabled={selectedItems.size === 0 || createOrderMutation.isPending}
+                  disabled={selectedItems.size === 0 || (!isGuestMode && createOrderMutation.isPending)}
                 >
-                  {createOrderMutation.isPending
+                  {!isGuestMode && createOrderMutation.isPending
                     ? t.cart.submitting
-                    : t.cart.checkout}
+                    : (isGuestMode ? t.cart.loginToCheckout : t.cart.checkout)}
                 </Button>
               </div>
             </div>

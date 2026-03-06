@@ -185,6 +185,10 @@ func AutoMigrate() error {
 	if err := migrateMoneyToMinorUnits(); err != nil {
 		log.Printf("Warning: failed to migrate money values to minor units: %v", err)
 	}
+	// Migration: backfill user consumption statistics from historical orders.
+	if err := migrateUserConsumptionStats(); err != nil {
+		log.Printf("Warning: failed to migrate user consumption stats: %v", err)
+	}
 
 	return nil
 }
@@ -397,6 +401,95 @@ min_order_amount = ROUND(COALESCE(min_order_amount, 0) * 100)`).Error; err != ni
 		}
 		return nil
 	})
+}
+
+func migrateUserConsumptionStats() error {
+	if DB == nil {
+		return nil
+	}
+
+	// Reuse the same migration registry table for idempotency.
+	if err := DB.Exec(`
+CREATE TABLE IF NOT EXISTS system_migrations (
+	name VARCHAR(100) PRIMARY KEY,
+	executed_at TIMESTAMP
+)`).Error; err != nil {
+		return err
+	}
+
+	const migrationName = "user_consumption_stats_v2"
+	var count int64
+	if err := DB.Table("system_migrations").Where("name = ?", migrationName).Count(&count).Error; err != nil {
+		return err
+	}
+	if count > 0 {
+		return nil
+	}
+
+	type consumptionAgg struct {
+		UserID          uint
+		TotalSpentMinor int64
+		TotalOrderCount int64
+	}
+
+	consumptionStatuses := []models.OrderStatus{
+		models.OrderStatusDraft,
+		models.OrderStatusNeedResubmit,
+		models.OrderStatusPending,
+		models.OrderStatusShipped,
+		models.OrderStatusCompleted,
+	}
+
+	return DB.Transaction(func(tx *gorm.DB) error {
+		sumExpr := orderTotalAmountSumExprForDialect(tx.Dialector.Name())
+		// Reset all active users to zero first.
+		if err := tx.Model(&models.User{}).
+			Updates(map[string]interface{}{
+				"total_spent_minor": 0,
+				"total_order_count": 0,
+			}).Error; err != nil {
+			return err
+		}
+
+		var aggregates []consumptionAgg
+		if err := tx.Model(&models.Order{}).
+			Select(fmt.Sprintf("user_id, %s as total_spent_minor, COUNT(*) as total_order_count", sumExpr)).
+			Where("user_id IS NOT NULL AND status IN ?", consumptionStatuses).
+			Group("user_id").
+			Scan(&aggregates).Error; err != nil {
+			return err
+		}
+
+		for _, agg := range aggregates {
+			if err := tx.Model(&models.User{}).
+				Where("id = ?", agg.UserID).
+				Updates(map[string]interface{}{
+					"total_spent_minor": agg.TotalSpentMinor,
+					"total_order_count": agg.TotalOrderCount,
+				}).Error; err != nil {
+				return err
+			}
+		}
+
+		if err := tx.Exec(
+			"INSERT INTO system_migrations(name, executed_at) VALUES(?, ?)",
+			migrationName, time.Now().UTC(),
+		).Error; err != nil {
+			return err
+		}
+		return nil
+	})
+}
+
+func orderTotalAmountSumExprForDialect(dialect string) string {
+	switch dialect {
+	case "postgres":
+		return "COALESCE(SUM(total_amount)::bigint, 0)"
+	case "mysql":
+		return "COALESCE(CAST(SUM(total_amount) AS SIGNED), 0)"
+	default: // sqlite and others
+		return "COALESCE(CAST(SUM(total_amount) AS INTEGER), 0)"
+	}
 }
 
 // migrateAPIKeySecretToHash 将现有API密钥从明文迁移到哈希存储

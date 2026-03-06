@@ -10,12 +10,15 @@ import {
   Package,
   User,
   Settings,
+  Bell,
   LogOut,
+  LogIn,
+  UserPlus,
   Shield,
   ShieldCheck,
   MessageSquare,
   BookOpen,
-  Megaphone
+  Megaphone,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useAuth } from '@/hooks/use-auth'
@@ -25,64 +28,35 @@ import { getPublicConfig } from '@/lib/api'
 import { LanguageSwitcher } from './language-switcher'
 import { clearToken } from '@/lib/auth'
 
-const getMenuItems = (t: any) => [
-  {
-    title: t.sidebar.productCenter,
-    href: '/products',
-    icon: ShoppingBag,
-  },
-  {
-    title: t.sidebar.cart || '购物车',
-    href: '/cart',
-    icon: ShoppingCart,
-  },
-  {
-    title: t.sidebar.myOrders,
-    href: '/orders',
-    icon: Package,
-  },
-  {
-    title: t.sidebar.serialVerify,
-    href: '/serial-verify',
-    icon: ShieldCheck,
-  },
-  {
-    title: t.sidebar.supportCenter || '客服中心',
-    href: '/tickets',
-    icon: MessageSquare,
-  },
-  {
-    title: t.sidebar.knowledgeBase || '知识库',
-    href: '/knowledge',
-    icon: BookOpen,
-  },
-  {
-    title: t.sidebar.announcements || '公告',
-    href: '/announcements',
-    icon: Megaphone,
-  },
-  {
-    title: t.sidebar.profile,
-    href: '/profile',
-    icon: User,
-  },
-  {
-    title: t.sidebar.accountSettings,
-    href: '/profile/settings',
-    icon: Settings,
-  },
+const getUserMenuItems = (t: any) => [
+  { title: t.sidebar.productCenter, href: '/products', icon: ShoppingBag },
+  { title: t.sidebar.cart || 'Cart', href: '/cart', icon: ShoppingCart },
+  { title: t.sidebar.myOrders, href: '/orders', icon: Package },
+  { title: t.sidebar.serialVerify, href: '/serial-verify', icon: ShieldCheck },
+  { title: t.sidebar.supportCenter || 'Support', href: '/tickets', icon: MessageSquare },
+  { title: t.sidebar.knowledgeBase || 'Knowledge', href: '/knowledge', icon: BookOpen },
+  { title: t.sidebar.announcements || 'Announcements', href: '/announcements', icon: Megaphone },
+  { title: t.sidebar.profile, href: '/profile', icon: User },
+  { title: t.sidebar.accountSettings, href: '/profile/settings', icon: Settings },
+]
+
+const getGuestMenuItems = (t: any) => [
+  { title: t.sidebar.productCenter, href: '/products', icon: ShoppingBag },
+  { title: t.sidebar.cart || 'Cart', href: '/cart', icon: ShoppingCart },
+  { title: t.sidebar.serialVerify, href: '/serial-verify', icon: ShieldCheck },
+  { title: t.sidebar.preferences, href: '/profile/preferences', icon: Bell },
 ]
 
 interface UserSidebarProps {
   className?: string
+  guestMode?: boolean
 }
 
-export function UserSidebar({ className }: UserSidebarProps) {
+export function UserSidebar({ className, guestMode = false }: UserSidebarProps) {
   const pathname = usePathname()
   const { user } = useAuth()
   const { locale, mounted } = useLocale()
   const t = getTranslations(locale)
-  const allMenuItems = getMenuItems(t)
 
   const { data: publicConfigData } = useQuery({
     queryKey: ['publicConfig'],
@@ -92,33 +66,38 @@ export function UserSidebar({ className }: UserSidebarProps) {
 
   const ticketEnabled = publicConfigData?.data?.ticket?.enabled ?? true
   const serialEnabled = publicConfigData?.data?.serial?.enabled ?? true
+  const filterMenuItems = (items: Array<{ title: string; href: string; icon: any }>) =>
+    items.filter((item) => {
+      if (item.href === '/serial-verify' && !serialEnabled) return false
+      if (!guestMode && item.href === '/tickets' && !ticketEnabled) return false
+      return true
+    })
 
-  // 根据配置过滤菜单项
-  const menuItems = allMenuItems.filter((item) => {
-    if (item.href === '/tickets' && !ticketEnabled) return false
-    if (item.href === '/serial-verify' && !serialEnabled) return false
-    return true
-  })
-
-  // 检查是否为管理员
+  const baseMenuItems = guestMode ? getGuestMenuItems(t) : getUserMenuItems(t)
+  const menuItems = filterMenuItems(baseMenuItems)
   const isAdmin = user?.role === 'admin' || user?.role === 'super_admin'
 
-  // 在客户端挂载前，使用默认中文避免 hydration 错误
   if (!mounted) {
     const defaultT = getTranslations('zh')
-    const defaultMenuItems = getMenuItems(defaultT)
+    const defaultMenuItems = filterMenuItems(
+      guestMode ? getGuestMenuItems(defaultT) : getUserMenuItems(defaultT)
+    )
 
     return (
       <div className={cn('w-64 border-r bg-card flex-col hidden md:flex', className)}>
         <div className="p-6">
-          <h2 className="text-lg font-bold">{defaultT.sidebar.userCenter}</h2>
-          <p className="text-sm text-muted-foreground">{defaultT.sidebar.welcome}</p>
+          <h2 className="text-lg font-bold">AuraLogic</h2>
+          <p className="text-sm text-muted-foreground">
+            {guestMode ? `${defaultT.auth.login} / ${defaultT.auth.register}` : defaultT.sidebar.welcome}
+          </p>
         </div>
 
         <nav className="space-y-1 px-3 flex-1 overflow-y-auto">
           {defaultMenuItems.map((item) => {
             const Icon = item.icon
-            const isActive = pathname === item.href
+            const isActive = guestMode
+              ? pathname === item.href || pathname.startsWith(item.href + '/')
+              : pathname === item.href
 
             return (
               <Link
@@ -140,20 +119,37 @@ export function UserSidebar({ className }: UserSidebarProps) {
 
         <div className="p-3 border-t space-y-2">
           <LanguageSwitcher />
-          <Button
-            variant="outline"
-            className="w-full justify-start"
-            size="sm"
-            onClick={() => {
-              if (typeof window !== 'undefined') {
-                clearToken()
-                window.location.href = '/login'
-              }
-            }}
-          >
-            <LogOut className="h-4 w-4 mr-2" />
-            {defaultT.auth.logout}
-          </Button>
+          {guestMode ? (
+            <>
+              <Button asChild variant="outline" className="w-full justify-start" size="sm">
+                <Link href="/login">
+                  <LogIn className="h-4 w-4 mr-2" />
+                  {defaultT.auth.login}
+                </Link>
+              </Button>
+              <Button asChild variant="outline" className="w-full justify-start" size="sm">
+                <Link href="/register">
+                  <UserPlus className="h-4 w-4 mr-2" />
+                  {defaultT.auth.register}
+                </Link>
+              </Button>
+            </>
+          ) : (
+            <Button
+              variant="outline"
+              className="w-full justify-start"
+              size="sm"
+              onClick={() => {
+                if (typeof window !== 'undefined') {
+                  clearToken()
+                  window.location.href = '/login'
+                }
+              }}
+            >
+              <LogOut className="h-4 w-4 mr-2" />
+              {defaultT.auth.logout}
+            </Button>
+          )}
         </div>
       </div>
     )
@@ -162,15 +158,18 @@ export function UserSidebar({ className }: UserSidebarProps) {
   return (
     <div className={cn('w-64 border-r bg-card flex-col hidden md:flex', className)}>
       <div className="p-6">
-        <h2 className="text-lg font-bold">{t.sidebar.userCenter}</h2>
-        <p className="text-sm text-muted-foreground">{t.sidebar.welcome}</p>
+        <h2 className="text-lg font-bold">AuraLogic</h2>
+        <p className="text-sm text-muted-foreground">
+          {guestMode ? `${t.auth.login} / ${t.auth.register}` : t.sidebar.welcome}
+        </p>
       </div>
 
       <nav className="space-y-1 px-3 flex-1 overflow-y-auto">
         {menuItems.map((item) => {
           const Icon = item.icon
-          // 精确匹配路由，避免 /profile/settings 同时激活 /profile
-          const isActive = pathname === item.href
+          const isActive = guestMode
+            ? pathname === item.href || pathname.startsWith(item.href + '/')
+            : pathname === item.href
 
           return (
             <Link
@@ -191,7 +190,7 @@ export function UserSidebar({ className }: UserSidebarProps) {
       </nav>
 
       <div className="p-3 border-t space-y-2">
-        {isAdmin && (
+        {!guestMode && isAdmin && (
           <Button asChild variant="outline" className="w-full justify-start" size="sm">
             <Link href="/admin/dashboard">
               <Shield className="h-4 w-4 mr-2" />
@@ -200,20 +199,37 @@ export function UserSidebar({ className }: UserSidebarProps) {
           </Button>
         )}
         <LanguageSwitcher />
-        <Button
-          variant="outline"
-          className="w-full justify-start"
-          size="sm"
-          onClick={() => {
-            if (typeof window !== 'undefined') {
-              localStorage.removeItem('auth_token')
-              window.location.href = '/login'
-            }
-          }}
-        >
-          <LogOut className="h-4 w-4 mr-2" />
-          {t.auth.logout}
-        </Button>
+        {guestMode ? (
+          <>
+            <Button asChild variant="outline" className="w-full justify-start" size="sm">
+              <Link href="/login">
+                <LogIn className="h-4 w-4 mr-2" />
+                {t.auth.login}
+              </Link>
+            </Button>
+            <Button asChild variant="outline" className="w-full justify-start" size="sm">
+              <Link href="/register">
+                <UserPlus className="h-4 w-4 mr-2" />
+                {t.auth.register}
+              </Link>
+            </Button>
+          </>
+        ) : (
+          <Button
+            variant="outline"
+            className="w-full justify-start"
+            size="sm"
+            onClick={() => {
+              if (typeof window !== 'undefined') {
+                clearToken()
+                window.location.href = '/login'
+              }
+            }}
+          >
+            <LogOut className="h-4 w-4 mr-2" />
+            {t.auth.logout}
+          </Button>
+        )}
       </div>
     </div>
   )

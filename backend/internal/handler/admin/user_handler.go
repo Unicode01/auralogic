@@ -17,37 +17,69 @@ import (
 )
 
 type UserHandler struct {
-	userRepo *repository.UserRepository
-	db       *gorm.DB
-	cfg      *config.Config
+	userRepo  *repository.UserRepository
+	orderRepo *repository.OrderRepository
+	db        *gorm.DB
+	cfg       *config.Config
 }
 
 func NewUserHandler(userRepo *repository.UserRepository, db *gorm.DB, cfg *config.Config) *UserHandler {
 	return &UserHandler{
-		userRepo: userRepo,
-		db:       db,
-		cfg:      cfg,
+		userRepo:  userRepo,
+		orderRepo: repository.NewOrderRepository(db),
+		db:        db,
+		cfg:       cfg,
+	}
+}
+
+var userConsumptionStatuses = []models.OrderStatus{
+	models.OrderStatusDraft,
+	models.OrderStatusNeedResubmit,
+	models.OrderStatusPending,
+	models.OrderStatusShipped,
+	models.OrderStatusCompleted,
+}
+
+func (h *UserHandler) enrichUserConsumptionStats(user *models.User) {
+	if user == nil || user.ID == 0 || h.orderRepo == nil {
+		return
+	}
+
+	orderCount, totalSpentMinor, err := h.orderRepo.GetUserConsumptionSummary(user.ID, userConsumptionStatuses)
+	if err != nil {
+		return
+	}
+
+	originalCount := user.TotalOrderCount
+	originalSpent := user.TotalSpentMinor
+	user.TotalOrderCount = orderCount
+	user.TotalSpentMinor = totalSpentMinor
+
+	if originalCount != orderCount || originalSpent != totalSpentMinor {
+		_ = h.userRepo.UpdateConsumptionStats(user.ID, totalSpentMinor, orderCount)
 	}
 }
 
 // userToResponse converts a User model to a safe response map with explicit fields
 func userToResponse(user *models.User) gin.H {
 	resp := gin.H{
-		"id":             user.ID,
-		"uuid":           user.UUID,
-		"email":          user.Email,
-		"name":           user.Name,
-		"avatar":         user.Avatar,
-		"role":           user.Role,
-		"is_active":      user.IsActive,
-		"email_verified": user.EmailVerified,
-		"locale":         user.Locale,
-		"last_login_ip":  user.LastLoginIP,
-		"register_ip":    user.RegisterIP,
-		"country":        user.Country,
-		"last_login_at":  user.LastLoginAt,
-		"created_at":     user.CreatedAt,
-		"updated_at":     user.UpdatedAt,
+		"id":                user.ID,
+		"uuid":              user.UUID,
+		"email":             user.Email,
+		"name":              user.Name,
+		"avatar":            user.Avatar,
+		"role":              user.Role,
+		"is_active":         user.IsActive,
+		"email_verified":    user.EmailVerified,
+		"locale":            user.Locale,
+		"last_login_ip":     user.LastLoginIP,
+		"register_ip":       user.RegisterIP,
+		"country":           user.Country,
+		"last_login_at":     user.LastLoginAt,
+		"total_spent_minor": user.TotalSpentMinor,
+		"total_order_count": user.TotalOrderCount,
+		"created_at":        user.CreatedAt,
+		"updated_at":        user.UpdatedAt,
 	}
 	if user.Phone != nil {
 		resp["phone"] = user.Phone
@@ -143,9 +175,48 @@ func (h *UserHandler) CreateUser(c *gin.Context) {
 // ListUsers - Get user list
 func (h *UserHandler) ListUsers(c *gin.Context) {
 	page, limit := response.GetPagination(c)
-	search := c.Query("search")
+	search := strings.TrimSpace(c.Query("search"))
+	role := strings.TrimSpace(c.Query("role"))
+	locale := strings.TrimSpace(c.Query("locale"))
+	country := strings.TrimSpace(c.Query("country"))
 
-	users, total, err := h.userRepo.List(page, limit, search)
+	isActive, ok := parseOptionalBoolQuery(c.Query("is_active"))
+	if !ok {
+		response.BadRequest(c, "Invalid is_active parameter")
+		return
+	}
+	emailVerified, ok := parseOptionalBoolQuery(c.Query("email_verified"))
+	if !ok {
+		response.BadRequest(c, "Invalid email_verified parameter")
+		return
+	}
+	emailNotifyMarketing, ok := parseOptionalBoolQuery(c.Query("email_notify_marketing"))
+	if !ok {
+		response.BadRequest(c, "Invalid email_notify_marketing parameter")
+		return
+	}
+	smsNotifyMarketing, ok := parseOptionalBoolQuery(c.Query("sms_notify_marketing"))
+	if !ok {
+		response.BadRequest(c, "Invalid sms_notify_marketing parameter")
+		return
+	}
+	hasPhone, ok := parseOptionalBoolQuery(c.Query("has_phone"))
+	if !ok {
+		response.BadRequest(c, "Invalid has_phone parameter")
+		return
+	}
+
+	users, total, err := h.userRepo.List(page, limit, repository.UserListFilters{
+		Search:               search,
+		Role:                 role,
+		IsActive:             isActive,
+		EmailVerified:        emailVerified,
+		EmailNotifyMarketing: emailNotifyMarketing,
+		SMSNotifyMarketing:   smsNotifyMarketing,
+		HasPhone:             hasPhone,
+		Locale:               locale,
+		Country:              country,
+	})
 	if err != nil {
 		response.InternalError(c, "Query failed")
 		return
@@ -154,6 +225,7 @@ func (h *UserHandler) ListUsers(c *gin.Context) {
 	// 为管理员用户附加权限信息
 	result := make([]gin.H, 0, len(users))
 	for _, user := range users {
+		h.enrichUserConsumptionStats(&user)
 		item := userToResponse(&user)
 
 		// 如果是管理员，获取权限
@@ -170,6 +242,21 @@ func (h *UserHandler) ListUsers(c *gin.Context) {
 	}
 
 	response.Paginated(c, result, page, limit, total)
+}
+
+// ListUserCountries returns distinct country codes from users.
+func (h *UserHandler) ListUserCountries(c *gin.Context) {
+	role := strings.TrimSpace(c.Query("role"))
+
+	countries, err := h.userRepo.ListCountries(role)
+	if err != nil {
+		response.InternalError(c, "Query failed")
+		return
+	}
+
+	response.Success(c, gin.H{
+		"countries": countries,
+	})
 }
 
 // GetUser - Get user details
@@ -189,6 +276,7 @@ func (h *UserHandler) GetUser(c *gin.Context) {
 		response.InternalError(c, "Query failed")
 		return
 	}
+	h.enrichUserConsumptionStats(user)
 
 	response.Success(c, userToResponse(user))
 }

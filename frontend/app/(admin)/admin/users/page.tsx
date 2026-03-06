@@ -2,11 +2,12 @@
 
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { getUsers, createUser, updateUser, deleteUser, getAdmins, createAdmin, updateAdmin, deleteAdmin, createAdminOrder, getVirtualInventories } from '@/lib/api'
+import { getUsers, createUser, updateUser, deleteUser, getAdmins, createAdmin, updateAdmin, deleteAdmin, createAdminOrder, getVirtualInventories, getPublicConfig } from '@/lib/api'
 import { DataTable } from '@/components/admin/data-table'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Card, CardContent } from '@/components/ui/card'
 import {
   Dialog,
   DialogContent,
@@ -43,14 +44,22 @@ import * as z from 'zod'
 import { useLocale } from '@/hooks/use-locale'
 import { getTranslations, translateBizError } from '@/lib/i18n'
 import { usePageTitle } from '@/hooks/use-page-title'
-import { parseMajorToMinor } from '@/lib/utils'
+import { formatPrice, parseMajorToMinor } from '@/lib/utils'
+import { usePermission } from '@/hooks/use-permission'
 
 type ViewMode = 'all' | 'users' | 'admins'
+type TriState = 'all' | 'true' | 'false'
 
 export default function AdminUsersPage() {
   const [page, setPage] = useState(1)
   const [search, setSearch] = useState('')
   const [viewMode, setViewMode] = useState<ViewMode>('all')
+  const [statusFilter, setStatusFilter] = useState<TriState>('all')
+  const [verifiedFilter, setVerifiedFilter] = useState<TriState>('all')
+  const [emailMarketingFilter, setEmailMarketingFilter] = useState<TriState>('all')
+  const [smsMarketingFilter, setSmsMarketingFilter] = useState<TriState>('all')
+  const [hasPhoneFilter, setHasPhoneFilter] = useState<TriState>('all')
+  const [localeFilter, setLocaleFilter] = useState('')
   const [openUser, setOpenUser] = useState(false)
   const [openAdmin, setOpenAdmin] = useState(false)
   const [editingUser, setEditingUser] = useState<any>(null)
@@ -64,12 +73,35 @@ export default function AdminUsersPage() {
   const queryClient = useQueryClient()
   const toast = useToast()
   const { locale } = useLocale()
+  const { hasPermission } = usePermission()
   const t = getTranslations(locale)
   usePageTitle(t.pageTitle.adminUsers)
+  const canViewUsers = hasPermission('user.view')
+
+  const parseTriState = (value: TriState): boolean | undefined => {
+    if (value === 'all') return undefined
+    return value === 'true'
+  }
+  const cleanFilterLabel = (label: string) => label
+    .replace(/^筛选[:：]\s*/u, '')
+    .replace(/^Filter:\s*/u, '')
+  const roleFilter = viewMode === 'users' ? 'users' : viewMode === 'admins' ? 'admins' : undefined
 
   const { data: usersData, isLoading: usersLoading } = useQuery({
-    queryKey: ['adminUsers', page, search],
-    queryFn: () => getUsers({ page, limit: 20, search }),
+    queryKey: ['adminUsers', page, search, viewMode, statusFilter, verifiedFilter, emailMarketingFilter, smsMarketingFilter, hasPhoneFilter, localeFilter],
+    queryFn: () => getUsers({
+      page,
+      limit: 20,
+      search: search || undefined,
+      role: roleFilter,
+      is_active: parseTriState(statusFilter),
+      email_verified: parseTriState(verifiedFilter),
+      email_notify_marketing: parseTriState(emailMarketingFilter),
+      sms_notify_marketing: parseTriState(smsMarketingFilter),
+      has_phone: parseTriState(hasPhoneFilter),
+      locale: localeFilter || undefined,
+    }),
+    enabled: canViewUsers,
   })
 
   const { data: adminsData, isLoading: adminsLoading } = useQuery({
@@ -81,6 +113,12 @@ export default function AdminUsersPage() {
     queryKey: ['virtualInventories'],
     queryFn: () => getVirtualInventories({ limit: 100 }),
   })
+  const { data: publicConfigData } = useQuery({
+    queryKey: ['publicConfig'],
+    queryFn: getPublicConfig,
+    staleTime: 5 * 60 * 1000,
+  })
+  const currency = publicConfigData?.data?.currency || 'CNY'
 
   const userForm = useForm({
     resolver: zodResolver(createUserSchema),
@@ -226,19 +264,22 @@ export default function AdminUsersPage() {
     }
   }
 
-  const allUsers = usersData?.data?.items || []
-  const allAdmins = adminsData?.data?.items || []
-
-  let displayData = []
-  if (viewMode === 'all') {
-    displayData = allUsers
-  } else if (viewMode === 'users') {
-    displayData = allUsers.filter((u: any) => u.role === 'user')
-  } else {
-    displayData = allUsers.filter((u: any) => u.role === 'admin' || u.role === 'super_admin')
-  }
+  const displayData = canViewUsers ? (usersData?.data?.items || []) : []
 
   const isLoading = usersLoading
+
+  if (!canViewUsers) {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl md:text-3xl font-bold">{t.admin.userManagement}</h1>
+            <p className="text-sm text-muted-foreground mt-1">{t.message.noPermission}</p>
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   const columns = [
     {
@@ -269,6 +310,20 @@ export default function AdminUsersPage() {
         const permCount = row.original.permissions?.length || 0
         return isAdmin ? <span className="text-sm text-muted-foreground">{t.admin.permissionCount.replace('{count}', String(permCount))}</span> : '-'
       },
+    },
+    {
+      header: t.admin.totalSpent,
+      cell: ({ row }: { row: { original: any } }) => (
+        <span className="font-medium">
+          {formatPrice(Number(row.original.total_spent_minor || 0), currency)}
+        </span>
+      ),
+    },
+    {
+      header: t.admin.orderCount,
+      cell: ({ row }: { row: { original: any } }) => (
+        <span>{Number(row.original.total_order_count || 0)}</span>
+      ),
     },
     {
       header: t.admin.status,
@@ -613,40 +668,150 @@ export default function AdminUsersPage() {
         </div>
       </div>
 
-      <div className="flex items-center gap-4">
-        <div className="flex gap-2">
-          <Button
-            variant={viewMode === 'all' ? 'active' : 'outline'}
-            size="sm"
-            onClick={() => setViewMode('all')}
-          >
-            {t.admin.all}
-          </Button>
-          <Button
-            variant={viewMode === 'users' ? 'active' : 'outline'}
-            size="sm"
-            onClick={() => setViewMode('users')}
-          >
-            {t.admin.users}
-          </Button>
-          <Button
-            variant={viewMode === 'admins' ? 'active' : 'outline'}
-            size="sm"
-            onClick={() => setViewMode('admins')}
-          >
-            {t.admin.admins}
-          </Button>
-        </div>
-        <div className="relative flex-1 max-w-md">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input
-            placeholder={t.admin.searchEmailOrName}
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="pl-10"
-          />
-        </div>
+      <div className="flex items-center gap-2">
+        <Button
+          variant={viewMode === 'all' ? 'active' : 'outline'}
+          size="sm"
+          onClick={() => {
+            setViewMode('all')
+            setPage(1)
+          }}
+        >
+          {t.admin.all}
+        </Button>
+        <Button
+          variant={viewMode === 'users' ? 'active' : 'outline'}
+          size="sm"
+          onClick={() => {
+            setViewMode('users')
+            setPage(1)
+          }}
+        >
+          {t.admin.users}
+        </Button>
+        <Button
+          variant={viewMode === 'admins' ? 'active' : 'outline'}
+          size="sm"
+          onClick={() => {
+            setViewMode('admins')
+            setPage(1)
+          }}
+        >
+          {t.admin.admins}
+        </Button>
       </div>
+
+      <Card>
+        <CardContent className="pt-6">
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <div className="space-y-2">
+              <label className="text-sm font-medium">{t.admin.userFilterSearch}</label>
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder={t.admin.userFilterSearchPlaceholder}
+                  value={search}
+                  onChange={(e) => {
+                    setSearch(e.target.value)
+                    setPage(1)
+                  }}
+                  className="pl-10"
+                />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium">{cleanFilterLabel(t.admin.userFilterStatus)}</label>
+              <Select value={statusFilter} onValueChange={(v) => { setStatusFilter(v as TriState); setPage(1) }}>
+                <SelectTrigger>
+                  <SelectValue placeholder={cleanFilterLabel(t.admin.userFilterStatus)} />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">{t.common.all}</SelectItem>
+                  <SelectItem value="true">{t.admin.active}</SelectItem>
+                  <SelectItem value="false">{t.admin.inactive}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium">{cleanFilterLabel(t.admin.userFilterEmailVerified)}</label>
+              <Select value={verifiedFilter} onValueChange={(v) => { setVerifiedFilter(v as TriState); setPage(1) }}>
+                <SelectTrigger>
+                  <SelectValue placeholder={cleanFilterLabel(t.admin.userFilterEmailVerified)} />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">{t.common.all}</SelectItem>
+                  <SelectItem value="true">{t.admin.verified}</SelectItem>
+                  <SelectItem value="false">{t.admin.unverified}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium">{cleanFilterLabel(t.admin.userFilterHasPhone)}</label>
+              <Select value={hasPhoneFilter} onValueChange={(v) => { setHasPhoneFilter(v as TriState); setPage(1) }}>
+                <SelectTrigger>
+                  <SelectValue placeholder={cleanFilterLabel(t.admin.userFilterHasPhone)} />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">{t.common.all}</SelectItem>
+                  <SelectItem value="true">{t.admin.withPhone}</SelectItem>
+                  <SelectItem value="false">{t.admin.withoutPhone}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium">{cleanFilterLabel(t.admin.userFilterEmailMarketing)}</label>
+              <Select value={emailMarketingFilter} onValueChange={(v) => { setEmailMarketingFilter(v as TriState); setPage(1) }}>
+                <SelectTrigger>
+                  <SelectValue placeholder={cleanFilterLabel(t.admin.userFilterEmailMarketing)} />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">{t.common.all}</SelectItem>
+                  <SelectItem value="true">{t.admin.enabled}</SelectItem>
+                  <SelectItem value="false">{t.admin.disabled}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium">{cleanFilterLabel(t.admin.userFilterSmsMarketing)}</label>
+              <Select value={smsMarketingFilter} onValueChange={(v) => { setSmsMarketingFilter(v as TriState); setPage(1) }}>
+                <SelectTrigger>
+                  <SelectValue placeholder={cleanFilterLabel(t.admin.userFilterSmsMarketing)} />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">{t.common.all}</SelectItem>
+                  <SelectItem value="true">{t.admin.enabled}</SelectItem>
+                  <SelectItem value="false">{t.admin.disabled}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium">{cleanFilterLabel(t.admin.userFilterLocale)}</label>
+              <Select
+                value={localeFilter || 'all'}
+                onValueChange={(value) => {
+                  setLocaleFilter(value === 'all' ? '' : value)
+                  setPage(1)
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder={t.common.all} />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">{t.common.all}</SelectItem>
+                  <SelectItem value="zh">{t.language.zh}</SelectItem>
+                  <SelectItem value="en">{t.language.en}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
       <DataTable
         columns={columns}

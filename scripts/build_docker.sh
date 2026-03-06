@@ -838,6 +838,7 @@ generate_configs() {
     "login": {
       "allow_password_login": true,
       "allow_registration": true,
+      "allow_guest_product_browse": false,
       "require_email_verification": false,
       "allow_email_login": false,
       "allow_password_reset": false,

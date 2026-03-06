@@ -412,7 +412,19 @@ func (h *OrderHandler) RefundOrder(c *gin.Context) {
 		remark += "[Refund] " + req.Reason
 		updates["admin_remark"] = remark
 	}
-	db.Model(order).Updates(updates)
+	if err := db.Model(order).Updates(updates).Error; err != nil {
+		response.InternalError(c, "Failed to update order status")
+		return
+	}
+	if order.UserID != nil {
+		if err := h.orderService.SyncUserConsumptionStats(*order.UserID); err != nil {
+			logger.LogOrderOperation(db, c, "sync_user_consumption_stats_failed", order.ID, map[string]interface{}{
+				"order_no": order.OrderNo,
+				"user_id":  *order.UserID,
+				"error":    err.Error(),
+			})
+		}
+	}
 
 	// 记录操作日志
 	logger.LogOrderOperation(db, c, "refund", order.ID, map[string]interface{}{
@@ -468,7 +480,17 @@ func (h *OrderHandler) DeliverVirtualStock(c *gin.Context) {
 		return
 	}
 
-	if err := h.orderService.DeliverVirtualStock(uint(orderID), adminID); err != nil {
+	var req struct {
+		MarkOnlyShipped  bool `json:"mark_only_shipped"`
+		MarkOnlyComplete bool `json:"mark_only_complete"` // backward compatibility
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		// 允许不传 body，默认执行完整发货流程
+	}
+
+	markOnlyShipped := req.MarkOnlyShipped || req.MarkOnlyComplete
+
+	if err := h.orderService.DeliverVirtualStock(uint(orderID), adminID, markOnlyShipped); err != nil {
 		response.BadRequest(c, err.Error())
 		return
 	}
@@ -478,15 +500,21 @@ func (h *OrderHandler) DeliverVirtualStock(c *gin.Context) {
 	// 记录操作日志
 	db := database.GetDB()
 	logger.LogOrderOperation(db, c, "deliver_virtual_stock", order.ID, map[string]interface{}{
-		"order_no":     order.OrderNo,
-		"delivered_by": adminID,
-		"status":       order.Status,
+		"order_no":          order.OrderNo,
+		"delivered_by":      adminID,
+		"mark_only_shipped": markOnlyShipped,
+		"status":            order.Status,
 	})
+
+	message := "Virtual goods shipped"
+	if markOnlyShipped {
+		message = "Virtual script goods marked as shipped (script skipped)"
+	}
 
 	response.Success(c, gin.H{
 		"order_no": order.OrderNo,
 		"status":   order.Status,
-		"message":  "Virtual goods shipped",
+		"message":  message,
 	})
 }
 

@@ -544,6 +544,7 @@ func (s *OrderService) CreateAdminOrder(req AdminOrderRequest) (*models.Order, e
 		order.VirtualInventoryBindings = virtualInventoryBindings
 		s.OrderRepo.Update(order)
 	}
+	s.syncUserConsumptionStatsBestEffort(order.UserID, "create_admin_order")
 
 	// 发送订单创建通知邮件
 	if s.emailService != nil {
@@ -1204,6 +1205,7 @@ func (s *OrderService) SubmitShippingForm(formToken string, receiverInfo map[str
 	if err := s.OrderRepo.Update(order); err != nil {
 		return nil, nil, false, err
 	}
+	s.syncUserConsumptionStatsBestEffort(order.UserID, "submit_shipping_form")
 
 	// 注意：虚拟产品在 MarkAsPaid 时已经发货，这里不需要再次发货
 	// SubmitShippingForm 只用于实物订单填写收货信息
@@ -1321,7 +1323,8 @@ func (s *OrderService) AssignTracking(orderID uint, trackingNo string) error {
 }
 
 // DeliverVirtualStock 手动发货虚拟商品库存（用于 auto_delivery=false 的商品）
-func (s *OrderService) DeliverVirtualStock(orderID uint, deliveredBy uint) error {
+// markOnlyShipped=true 时仅标记脚本虚拟库存为已发货，不执行脚本。
+func (s *OrderService) DeliverVirtualStock(orderID uint, deliveredBy uint, markOnlyShipped bool) error {
 	order, err := s.OrderRepo.FindByID(orderID)
 	if err != nil {
 		return err
@@ -1345,9 +1348,16 @@ func (s *OrderService) DeliverVirtualStock(orderID uint, deliveredBy uint) error
 		return errors.New("No pending virtual stock to deliver")
 	}
 
-	// 发货所有剩余的预留虚拟库存
-	if err := s.virtualProductSvc.DeliverStock(order.ID, order.OrderNo, &deliveredBy); err != nil {
-		return fmt.Errorf("Failed to deliver virtual stock: %v", err)
+	if markOnlyShipped {
+		// 仅标记脚本虚拟库存为已发货（跳过脚本执行）
+		if err := s.virtualProductSvc.MarkScriptStockDeliveredWithoutExecution(order.ID, order.OrderNo, &deliveredBy); err != nil {
+			return fmt.Errorf("Failed to mark script virtual stock as shipped: %v", err)
+		}
+	} else {
+		// 发货所有剩余的预留虚拟库存
+		if err := s.virtualProductSvc.DeliverStock(order.ID, order.OrderNo, &deliveredBy); err != nil {
+			return fmt.Errorf("Failed to deliver virtual stock: %v", err)
+		}
 	}
 
 	// 判断订单是否为纯虚拟商品订单
@@ -1413,6 +1423,7 @@ func (s *OrderService) CompleteOrder(orderID uint, completedBy uint, feedback, a
 	if err := s.OrderRepo.Update(order); err != nil {
 		return err
 	}
+	s.syncUserConsumptionStatsBestEffort(order.UserID, "complete_order")
 
 	// 发送完成邮件通知
 	if s.emailService != nil {
@@ -1501,8 +1512,11 @@ func (s *OrderService) DeleteOrder(orderID uint) error {
 			fmt.Printf("Warning: Order %s failed to delete serial numbers: %v\n", order.OrderNo, err)
 		}
 	}
-
-	return s.OrderRepo.Delete(orderID)
+	if err := s.OrderRepo.Delete(orderID); err != nil {
+		return err
+	}
+	s.syncUserConsumptionStatsBestEffort(order.UserID, "delete_order")
+	return nil
 }
 
 // UpdateOrder UpdateOrderInfo
@@ -1573,6 +1587,7 @@ func (s *OrderService) CancelOrder(orderID uint, reason string) error {
 	if err := s.OrderRepo.Update(order); err != nil {
 		return err
 	}
+	s.syncUserConsumptionStatsBestEffort(order.UserID, "cancel_order")
 
 	// 发送Order取消邮件
 	if s.emailService != nil {
@@ -1682,6 +1697,7 @@ func (s *OrderService) MarkAsPaid(orderID uint) error {
 	if err := s.OrderRepo.Update(order); err != nil {
 		return err
 	}
+	s.syncUserConsumptionStatsBestEffort(order.UserID, "mark_as_paid")
 
 	// 发送付款成功邮件
 	if s.emailService != nil {

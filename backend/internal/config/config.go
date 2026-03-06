@@ -142,6 +142,7 @@ type CORSConfig struct {
 type LoginConfig struct {
 	AllowPasswordLogin       bool `json:"allow_password_login"`
 	AllowRegistration        bool `json:"allow_registration"`
+	AllowGuestProductBrowse  bool `json:"allow_guest_product_browse"`
 	RequireEmailVerification bool `json:"require_email_verification"`
 	AllowEmailLogin          bool `json:"allow_email_login"`
 	AllowPasswordReset       bool `json:"allow_password_reset"`

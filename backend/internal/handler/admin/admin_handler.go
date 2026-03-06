@@ -4,8 +4,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 	"auralogic/internal/config"
 	"auralogic/internal/middleware"
 	"auralogic/internal/models"
@@ -13,6 +11,8 @@ import (
 	"auralogic/internal/pkg/password"
 	"auralogic/internal/pkg/response"
 	"auralogic/internal/repository"
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
@@ -107,14 +107,16 @@ func (h *AdminHandler) GetAdmin(c *gin.Context) {
 	}
 
 	response.Success(c, gin.H{
-		"user_id":     admin.ID,
-		"uuid":        admin.UUID,
-		"email":       admin.Email,
-		"name":        admin.Name,
-		"role":        admin.Role,
-		"is_active":   admin.IsActive,
-		"permissions": permissions,
-		"created_at":  admin.CreatedAt,
+		"user_id":           admin.ID,
+		"uuid":              admin.UUID,
+		"email":             admin.Email,
+		"name":              admin.Name,
+		"role":              admin.Role,
+		"is_active":         admin.IsActive,
+		"total_spent_minor": admin.TotalSpentMinor,
+		"total_order_count": admin.TotalOrderCount,
+		"permissions":       permissions,
+		"created_at":        admin.CreatedAt,
 	})
 }
 
@@ -194,14 +196,16 @@ func (h *AdminHandler) CreateAdmin(c *gin.Context) {
 		if err := h.db.Create(perm).Error; err != nil {
 			// PermissionCreateFailed不影响AdminCreate
 			response.Success(c, gin.H{
-				"user_id":     admin.ID,
-				"uuid":        admin.UUID,
-				"email":       admin.Email,
-				"name":        admin.Name,
-				"role":        admin.Role,
-				"permissions": []string{},
-				"created_at":  admin.CreatedAt,
-				"message":     "Admin created successfully, but permission creation failed. Please assign permissions manually",
+				"user_id":           admin.ID,
+				"uuid":              admin.UUID,
+				"email":             admin.Email,
+				"name":              admin.Name,
+				"role":              admin.Role,
+				"total_spent_minor": admin.TotalSpentMinor,
+				"total_order_count": admin.TotalOrderCount,
+				"permissions":       []string{},
+				"created_at":        admin.CreatedAt,
+				"message":           "Admin created successfully, but permission creation failed. Please assign permissions manually",
 			})
 			return
 		}
@@ -216,13 +220,15 @@ func (h *AdminHandler) CreateAdmin(c *gin.Context) {
 	})
 
 	response.Success(c, gin.H{
-		"user_id":     admin.ID,
-		"uuid":        admin.UUID,
-		"email":       admin.Email,
-		"name":        admin.Name,
-		"role":        admin.Role,
-		"permissions": req.Permissions,
-		"created_at":  admin.CreatedAt,
+		"user_id":           admin.ID,
+		"uuid":              admin.UUID,
+		"email":             admin.Email,
+		"name":              admin.Name,
+		"role":              admin.Role,
+		"total_spent_minor": admin.TotalSpentMinor,
+		"total_order_count": admin.TotalOrderCount,
+		"permissions":       req.Permissions,
+		"created_at":        admin.CreatedAt,
 	})
 }
 
@@ -354,14 +360,16 @@ func (h *AdminHandler) UpdateAdmin(c *gin.Context) {
 	logger.LogAdminOperation(h.db, c, "update", admin.ID, details)
 
 	response.Success(c, gin.H{
-		"id":          admin.ID,
-		"uuid":        admin.UUID,
-		"email":       admin.Email,
-		"name":        admin.Name,
-		"role":        admin.Role,
-		"is_active":   admin.IsActive,
-		"permissions": permissions,
-		"updated_at":  admin.UpdatedAt,
+		"id":                admin.ID,
+		"uuid":              admin.UUID,
+		"email":             admin.Email,
+		"name":              admin.Name,
+		"role":              admin.Role,
+		"is_active":         admin.IsActive,
+		"total_spent_minor": admin.TotalSpentMinor,
+		"total_order_count": admin.TotalOrderCount,
+		"permissions":       permissions,
+		"updated_at":        admin.UpdatedAt,
 	})
 }
 
