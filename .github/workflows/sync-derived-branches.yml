@@ -1,0 +1,65 @@
+name: sync-derived-branches
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-derived-branches
+  cancel-in-progress: false
+
+jobs:
+  merge-master-into-derived-branches:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target_branch:
+          - feat/market-registry
+          - feat/official-packages
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Configure Git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Fetch source and target branches
+        run: git fetch origin master "${{ matrix.target_branch }}" --no-tags --prune
+
+      - name: Merge master into target branch
+        id: merge
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          target_branch="${{ matrix.target_branch }}"
+          work_branch="sync/${target_branch//\//-}"
+
+          git checkout -B "${work_branch}" "origin/${target_branch}"
+
+          if ! git merge --no-ff --no-edit origin/master; then
+            git merge --abort || true
+            echo "failed to merge origin/master into ${target_branch}" >&2
+            exit 1
+          fi
+
+          if git diff --quiet "origin/${target_branch}..HEAD"; then
+            echo "changed=false" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          echo "changed=true" >> "${GITHUB_OUTPUT}"
+
+      - name: Push updated target branch
+        if: steps.merge.outputs.changed == 'true'
+        run: git push origin HEAD:${{ matrix.target_branch }}

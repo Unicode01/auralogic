@@ -209,6 +209,15 @@ pnpm dev
 
 ## 配置说明
 
+## 派生分支自动同步
+
+`master` 上的宿主更改会通过 `.github/workflows/sync-derived-branches.yml` 自动 merge 到以下派生分支：
+
+- `feat/market-registry`
+- `feat/official-packages`
+
+如果自动 merge 遇到冲突，workflow 会失败，此时需要手动在对应分支解决冲突后再继续推送。
+
 ### 后端配置 (config/config.json)
 
 ```json

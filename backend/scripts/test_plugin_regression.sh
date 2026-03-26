@@ -1,4 +1,4 @@
-#!/usr/bin/env sh
+#!/usr/bin/env bash
 set -eu
 set -o pipefail 2>/dev/null || true
 
@@ -6,7 +6,8 @@ ROOT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 cd "${ROOT_DIR}"
 
 TEST_PATTERN='Plugin|plugin|Hook|hook|Bootstrap|Extensions|JS|js|Upload'
-PACKAGES="./internal/service ./internal/handler/admin ./internal/pluginhooks ./internal/router"
+# Let Go resolve the current package graph so directory refactors do not break CI.
+PACKAGES="./internal/..."
 
 echo "[plugin-regression] running plugin baseline tests..."
 echo "[plugin-regression] pattern: ${TEST_PATTERN}"

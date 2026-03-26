@@ -5,7 +5,12 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   getMarketingBatch,
   getMarketingBatches,
+  getMarketingUserCountries,
   getMarketingUsers,
+  type MarketingAudienceField,
+  type MarketingAudienceMode,
+  type MarketingAudienceNode,
+  type MarketingAudienceOperator,
   type MarketingBatchItem,
   previewAdminMarketing,
   type PreviewAdminMarketingResult,
@@ -30,7 +35,7 @@ import {
 import { Separator } from '@/components/ui/separator'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { MarkdownEditor } from '@/components/ui/markdown-editor'
-import { Loader2, Mail, MessageSquare, Search, Send, Users } from 'lucide-react'
+import { Loader2, Mail, MessageSquare, Plus, Search, Send, Trash2, Users } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { useLocale } from '@/hooks/use-locale'
 import { getTranslations } from '@/lib/i18n'
@@ -41,8 +46,35 @@ import { PluginExtensionList } from '@/components/plugins/plugin-extension-list'
 import { PluginSlot } from '@/components/plugins/plugin-slot'
 import { usePluginExtensionBatch } from '@/lib/plugin-extension-batch'
 
-type RecipientMode = 'all' | 'selected'
+type RecipientMode = MarketingAudienceMode
 type TriState = 'all' | 'true' | 'false'
+type MarketingTranslations = ReturnType<typeof getTranslations>
+type AudienceFieldValueKind = 'string' | 'number' | 'boolean' | 'datetime'
+
+interface AudienceFieldOption {
+  value: MarketingAudienceField
+  labelKey: keyof MarketingTranslations['admin']
+  kind: AudienceFieldValueKind
+  operators: MarketingAudienceOperator[]
+  placeholderKey?: keyof MarketingTranslations['admin']
+}
+
+interface AudienceBuilderGroup {
+  id: string
+  type: 'group'
+  combinator: 'and' | 'or'
+  rules: AudienceBuilderNode[]
+}
+
+interface AudienceBuilderCondition {
+  id: string
+  type: 'condition'
+  field: MarketingAudienceField
+  operator: MarketingAudienceOperator
+  value?: string | boolean
+}
+
+type AudienceBuilderNode = AudienceBuilderGroup | AudienceBuilderCondition
 
 interface AdminUserItem {
   id: number
@@ -60,6 +92,539 @@ interface AdminUserItem {
 
 const EMPTY_MARKETING_USERS: AdminUserItem[] = []
 const EMPTY_MARKETING_BATCHES: MarketingBatchItem[] = []
+const MARKETING_AUDIENCE_OPERATORS: Array<{
+  value: MarketingAudienceOperator
+  labelKey: keyof MarketingTranslations['admin']
+}> = [
+  { value: 'eq', labelKey: 'marketingAudienceOperatorEq' },
+  { value: 'neq', labelKey: 'marketingAudienceOperatorNeq' },
+  { value: 'contains', labelKey: 'marketingAudienceOperatorContains' },
+  { value: 'not_contains', labelKey: 'marketingAudienceOperatorNotContains' },
+  { value: 'in', labelKey: 'marketingAudienceOperatorIn' },
+  { value: 'not_in', labelKey: 'marketingAudienceOperatorNotIn' },
+  { value: 'gte', labelKey: 'marketingAudienceOperatorGte' },
+  { value: 'lte', labelKey: 'marketingAudienceOperatorLte' },
+  { value: 'is_empty', labelKey: 'marketingAudienceOperatorIsEmpty' },
+  { value: 'is_not_empty', labelKey: 'marketingAudienceOperatorIsNotEmpty' },
+]
+const MARKETING_AUDIENCE_FIELDS: AudienceFieldOption[] = [
+  {
+    value: 'id',
+    labelKey: 'marketingAudienceFieldId',
+    kind: 'number',
+    operators: ['eq', 'neq', 'gte', 'lte', 'in', 'not_in'],
+    placeholderKey: 'marketingAudiencePlaceholderNumber',
+  },
+  {
+    value: 'email',
+    labelKey: 'marketingAudienceFieldEmail',
+    kind: 'string',
+    operators: [
+      'eq',
+      'neq',
+      'contains',
+      'not_contains',
+      'in',
+      'not_in',
+      'is_empty',
+      'is_not_empty',
+    ],
+    placeholderKey: 'marketingAudiencePlaceholderText',
+  },
+  {
+    value: 'name',
+    labelKey: 'marketingAudienceFieldName',
+    kind: 'string',
+    operators: [
+      'eq',
+      'neq',
+      'contains',
+      'not_contains',
+      'in',
+      'not_in',
+      'is_empty',
+      'is_not_empty',
+    ],
+    placeholderKey: 'marketingAudiencePlaceholderText',
+  },
+  {
+    value: 'phone',
+    labelKey: 'marketingAudienceFieldPhone',
+    kind: 'string',
+    operators: [
+      'eq',
+      'neq',
+      'contains',
+      'not_contains',
+      'in',
+      'not_in',
+      'is_empty',
+      'is_not_empty',
+    ],
+    placeholderKey: 'marketingAudiencePlaceholderText',
+  },
+  {
+    value: 'is_active',
+    labelKey: 'marketingAudienceFieldIsActive',
+    kind: 'boolean',
+    operators: ['eq', 'neq'],
+  },
+  {
+    value: 'email_verified',
+    labelKey: 'marketingAudienceFieldEmailVerified',
+    kind: 'boolean',
+    operators: ['eq', 'neq'],
+  },
+  {
+    value: 'email_notify_marketing',
+    labelKey: 'marketingAudienceFieldEmailNotifyMarketing',
+    kind: 'boolean',
+    operators: ['eq', 'neq'],
+  },
+  {
+    value: 'sms_notify_marketing',
+    labelKey: 'marketingAudienceFieldSmsNotifyMarketing',
+    kind: 'boolean',
+    operators: ['eq', 'neq'],
+  },
+  {
+    value: 'locale',
+    labelKey: 'marketingAudienceFieldLocale',
+    kind: 'string',
+    operators: [
+      'eq',
+      'neq',
+      'contains',
+      'not_contains',
+      'in',
+      'not_in',
+      'is_empty',
+      'is_not_empty',
+    ],
+    placeholderKey: 'marketingAudiencePlaceholderText',
+  },
+  {
+    value: 'country',
+    labelKey: 'marketingAudienceFieldCountry',
+    kind: 'string',
+    operators: [
+      'eq',
+      'neq',
+      'contains',
+      'not_contains',
+      'in',
+      'not_in',
+      'is_empty',
+      'is_not_empty',
+    ],
+    placeholderKey: 'marketingAudiencePlaceholderText',
+  },
+  {
+    value: 'total_order_count',
+    labelKey: 'marketingAudienceFieldTotalOrderCount',
+    kind: 'number',
+    operators: ['eq', 'neq', 'gte', 'lte', 'in', 'not_in'],
+    placeholderKey: 'marketingAudiencePlaceholderNumber',
+  },
+  {
+    value: 'total_spent_minor',
+    labelKey: 'marketingAudienceFieldTotalSpentMinor',
+    kind: 'number',
+    operators: ['eq', 'neq', 'gte', 'lte', 'in', 'not_in'],
+    placeholderKey: 'marketingAudiencePlaceholderNumber',
+  },
+  {
+    value: 'last_login_at',
+    labelKey: 'marketingAudienceFieldLastLoginAt',
+    kind: 'datetime',
+    operators: ['eq', 'neq', 'gte', 'lte', 'is_empty', 'is_not_empty'],
+    placeholderKey: 'marketingAudiencePlaceholderDatetime',
+  },
+  {
+    value: 'created_at',
+    labelKey: 'marketingAudienceFieldCreatedAt',
+    kind: 'datetime',
+    operators: ['eq', 'neq', 'gte', 'lte'],
+    placeholderKey: 'marketingAudiencePlaceholderDatetime',
+  },
+]
+
+function createAudienceBuilderId() {
+  return Math.random().toString(36).slice(2, 10)
+}
+
+function getAudienceFieldOption(field: MarketingAudienceField) {
+  return (
+    MARKETING_AUDIENCE_FIELDS.find((item) => item.value === field) ?? MARKETING_AUDIENCE_FIELDS[0]
+  )
+}
+
+function audienceOperatorRequiresValue(operator: MarketingAudienceOperator) {
+  return operator !== 'is_empty' && operator !== 'is_not_empty'
+}
+
+function getDefaultAudienceValue(
+  field: AudienceFieldOption,
+  operator: MarketingAudienceOperator
+): string | boolean | undefined {
+  if (!audienceOperatorRequiresValue(operator)) return undefined
+  if (field.kind === 'boolean') return true
+  return ''
+}
+
+function createDefaultAudienceCondition(
+  field: MarketingAudienceField = 'email_notify_marketing'
+): AudienceBuilderCondition {
+  const fieldOption = getAudienceFieldOption(field)
+  const operator = fieldOption.operators[0]
+  return {
+    id: createAudienceBuilderId(),
+    type: 'condition',
+    field,
+    operator,
+    value: getDefaultAudienceValue(fieldOption, operator),
+  }
+}
+
+function createDefaultAudienceGroup(): AudienceBuilderGroup {
+  return {
+    id: createAudienceBuilderId(),
+    type: 'group',
+    combinator: 'and',
+    rules: [createDefaultAudienceCondition()],
+  }
+}
+
+function updateAudienceBuilderNode(
+  node: AudienceBuilderNode,
+  targetId: string,
+  updater: (current: AudienceBuilderNode) => AudienceBuilderNode
+): AudienceBuilderNode {
+  if (node.id === targetId) {
+    return updater(node)
+  }
+  if (node.type !== 'group') {
+    return node
+  }
+  return {
+    ...node,
+    rules: node.rules.map((child) => updateAudienceBuilderNode(child, targetId, updater)),
+  }
+}
+
+function appendAudienceBuilderNode(
+  node: AudienceBuilderNode,
+  parentId: string,
+  nextNode: AudienceBuilderNode
+): AudienceBuilderNode {
+  if (node.type !== 'group') {
+    return node
+  }
+  if (node.id === parentId) {
+    return {
+      ...node,
+      rules: [...node.rules, nextNode],
+    }
+  }
+  return {
+    ...node,
+    rules: node.rules.map((child) => appendAudienceBuilderNode(child, parentId, nextNode)),
+  }
+}
+
+function removeAudienceBuilderNode(
+  node: AudienceBuilderGroup,
+  targetId: string
+): AudienceBuilderGroup {
+  return {
+    ...node,
+    rules: node.rules
+      .filter((child) => child.id !== targetId)
+      .map((child) => {
+        if (child.type !== 'group') return child
+        return removeAudienceBuilderNode(child, targetId)
+      }),
+  }
+}
+
+function countAudienceBuilderRules(node: AudienceBuilderNode): number {
+  if (node.type === 'condition') return 1
+  return node.rules.reduce((total, child) => total + countAudienceBuilderRules(child), 0)
+}
+
+function isAudienceBuilderNodeComplete(node: AudienceBuilderNode): boolean {
+  if (node.type === 'condition') {
+    if (!audienceOperatorRequiresValue(node.operator)) {
+      return true
+    }
+    const fieldOption = getAudienceFieldOption(node.field)
+    if (fieldOption.kind === 'boolean') {
+      return typeof node.value === 'boolean'
+    }
+    const raw = String(node.value ?? '').trim()
+    if (raw === '') {
+      return false
+    }
+    if (node.operator === 'in' || node.operator === 'not_in') {
+      return (
+        raw
+          .split(',')
+          .map((item) => item.trim())
+          .filter(Boolean).length > 0
+      )
+    }
+    return true
+  }
+
+  if (node.rules.length === 0) {
+    return false
+  }
+
+  return node.rules.every((child) => isAudienceBuilderNodeComplete(child))
+}
+
+function buildMarketingAudiencePayload(node: AudienceBuilderNode): MarketingAudienceNode {
+  if (node.type === 'condition') {
+    const payload: MarketingAudienceNode = {
+      type: 'condition',
+      field: node.field,
+      operator: node.operator,
+    }
+    if (audienceOperatorRequiresValue(node.operator)) {
+      if (node.operator === 'in' || node.operator === 'not_in') {
+        const raw = String(node.value ?? '')
+        payload.value = raw
+          .split(',')
+          .map((item) => item.trim())
+          .filter(Boolean)
+      } else {
+        payload.value = node.value
+      }
+    }
+    return payload
+  }
+
+  return {
+    type: 'group',
+    combinator: node.combinator,
+    rules: node.rules.map((child) => buildMarketingAudiencePayload(child)),
+  }
+}
+
+function getMarketingAudienceModeText(mode: RecipientMode | undefined, t: MarketingTranslations) {
+  switch (mode) {
+    case 'selected':
+      return t.admin.marketingTargetSelected
+    case 'rules':
+      return t.admin.marketingTargetRules
+    case 'all':
+    default:
+      return t.admin.marketingTargetAll
+  }
+}
+
+function MarketingAudienceGroupEditor({
+  group,
+  isRoot,
+  t,
+  onChangeCombinator,
+  onAddCondition,
+  onAddGroup,
+  onRemove,
+  onConditionFieldChange,
+  onConditionOperatorChange,
+  onConditionValueChange,
+}: {
+  group: AudienceBuilderGroup
+  isRoot?: boolean
+  t: MarketingTranslations
+  onChangeCombinator: (groupId: string, combinator: 'and' | 'or') => void
+  onAddCondition: (groupId: string) => void
+  onAddGroup: (groupId: string) => void
+  onRemove: (nodeId: string) => void
+  onConditionFieldChange: (conditionId: string, field: MarketingAudienceField) => void
+  onConditionOperatorChange: (conditionId: string, operator: MarketingAudienceOperator) => void
+  onConditionValueChange: (conditionId: string, value: string | boolean | undefined) => void
+}) {
+  const adminText = t.admin as unknown as Record<string, string>
+
+  return (
+    <div className={`space-y-3 rounded-xl border p-3 ${isRoot ? 'bg-muted/20' : 'bg-background'}`}>
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-2">
+          <Badge variant="secondary">
+            {isRoot ? t.admin.marketingAudienceRootGroup : t.admin.marketingAudienceChildGroup}
+          </Badge>
+          <Select
+            value={group.combinator}
+            onValueChange={(value) => onChangeCombinator(group.id, value as 'and' | 'or')}
+          >
+            <SelectTrigger className="w-[140px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="and">{t.admin.marketingAudienceCombinatorAnd}</SelectItem>
+              <SelectItem value="or">{t.admin.marketingAudienceCombinatorOr}</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => onAddCondition(group.id)}
+          >
+            <Plus className="mr-2 h-4 w-4" />
+            {t.admin.marketingAudienceAddCondition}
+          </Button>
+          <Button type="button" variant="outline" size="sm" onClick={() => onAddGroup(group.id)}>
+            <Plus className="mr-2 h-4 w-4" />
+            {t.admin.marketingAudienceAddGroup}
+          </Button>
+          {!isRoot ? (
+            <Button type="button" variant="ghost" size="icon" onClick={() => onRemove(group.id)}>
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          ) : null}
+        </div>
+      </div>
+
+      {group.rules.length === 0 ? (
+        <div className="rounded-lg border border-dashed px-3 py-6 text-center text-sm text-muted-foreground">
+          {t.admin.marketingAudienceRulesEmpty}
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {group.rules.map((rule) => {
+            if (rule.type === 'group') {
+              return (
+                <MarketingAudienceGroupEditor
+                  key={rule.id}
+                  group={rule}
+                  t={t}
+                  onChangeCombinator={onChangeCombinator}
+                  onAddCondition={onAddCondition}
+                  onAddGroup={onAddGroup}
+                  onRemove={onRemove}
+                  onConditionFieldChange={onConditionFieldChange}
+                  onConditionOperatorChange={onConditionOperatorChange}
+                  onConditionValueChange={onConditionValueChange}
+                />
+              )
+            }
+
+            const fieldOption = getAudienceFieldOption(rule.field)
+            const operatorOptions = MARKETING_AUDIENCE_OPERATORS.filter((item) =>
+              fieldOption.operators.includes(item.value)
+            )
+            const requiresValue = audienceOperatorRequiresValue(rule.operator)
+
+            return (
+              <div key={rule.id} className="rounded-lg border p-3">
+                <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_180px_minmax(0,1fr)_44px]">
+                  <div className="space-y-2">
+                    <Label>{t.admin.marketingAudienceField}</Label>
+                    <Select
+                      value={rule.field}
+                      onValueChange={(value) =>
+                        onConditionFieldChange(rule.id, value as MarketingAudienceField)
+                      }
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {MARKETING_AUDIENCE_FIELDS.map((field) => (
+                          <SelectItem key={field.value} value={field.value}>
+                            {adminText[field.labelKey]}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>{t.admin.marketingAudienceOperator}</Label>
+                    <Select
+                      value={rule.operator}
+                      onValueChange={(value) =>
+                        onConditionOperatorChange(rule.id, value as MarketingAudienceOperator)
+                      }
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {operatorOptions.map((operator) => (
+                          <SelectItem key={operator.value} value={operator.value}>
+                            {adminText[operator.labelKey]}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>{t.admin.marketingAudienceValue}</Label>
+                    {requiresValue ? (
+                      fieldOption.kind === 'boolean' ? (
+                        <Select
+                          value={String(rule.value ?? true)}
+                          onValueChange={(value) =>
+                            onConditionValueChange(rule.id, value === 'true')
+                          }
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="true">true</SelectItem>
+                            <SelectItem value="false">false</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      ) : (
+                        <Input
+                          type={
+                            fieldOption.kind === 'number'
+                              ? 'number'
+                              : fieldOption.kind === 'datetime'
+                                ? 'datetime-local'
+                                : 'text'
+                          }
+                          value={String(rule.value ?? '')}
+                          onChange={(event) => onConditionValueChange(rule.id, event.target.value)}
+                          placeholder={
+                            fieldOption.placeholderKey ? adminText[fieldOption.placeholderKey] : ''
+                          }
+                        />
+                      )
+                    ) : (
+                      <div className="flex h-10 items-center rounded-md border bg-muted/30 px-3 text-sm text-muted-foreground">
+                        {t.admin.marketingAudienceNoValueNeeded}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex items-end">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => onRemove(rule.id)}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
 
 function formatDateTime(dateString?: string, locale?: string) {
   if (!dateString) return '-'
@@ -95,6 +660,8 @@ function buildAdminMarketingBatchSummary(batch: MarketingBatchItem) {
     send_email: batch.send_email,
     send_sms: batch.send_sms,
     target_all: batch.target_all,
+    audience_mode: batch.audience_mode,
+    audience_query: batch.audience_query,
     requested_user_count: batch.requested_user_count,
     targeted_users: batch.targeted_users,
     email_sent: batch.email_sent,
@@ -141,6 +708,9 @@ export default function AdminMarketingPage() {
   const [sendEmail, setSendEmail] = useState(true)
   const [sendSms, setSendSms] = useState(false)
   const [recipientMode, setRecipientMode] = useState<RecipientMode>('all')
+  const [audienceBuilder, setAudienceBuilder] = useState<AudienceBuilderGroup>(
+    createDefaultAudienceGroup()
+  )
   const [selectedUserIds, setSelectedUserIds] = useState<number[]>([])
   const [searchInput, setSearchInput] = useState('')
   const [search, setSearch] = useState('')
@@ -150,6 +720,7 @@ export default function AdminMarketingPage() {
   const [userSmsMarketingFilter, setUserSmsMarketingFilter] = useState<TriState>('all')
   const [userHasPhoneFilter, setUserHasPhoneFilter] = useState<TriState>('all')
   const [userLocaleFilter, setUserLocaleFilter] = useState('')
+  const [userCountryFilter, setUserCountryFilter] = useState('')
   const [userPage, setUserPage] = useState(1)
   const [batchPage, setBatchPage] = useState(1)
   const [lastBatchId, setLastBatchId] = useState<number | null>(null)
@@ -197,6 +768,7 @@ export default function AdminMarketingPage() {
       userSmsMarketingFilter,
       userHasPhoneFilter,
       userLocaleFilter,
+      userCountryFilter,
     ],
     queryFn: () =>
       getMarketingUsers({
@@ -209,13 +781,20 @@ export default function AdminMarketingPage() {
         sms_notify_marketing: parseTriState(userSmsMarketingFilter),
         has_phone: parseTriState(userHasPhoneFilter),
         locale: userLocaleFilter || undefined,
+        country: userCountryFilter || undefined,
       }),
     enabled: canViewRecipientUsers && recipientMode === 'selected',
+  })
+  const countriesQuery = useQuery({
+    queryKey: ['marketingUserCountries'],
+    queryFn: () => getMarketingUserCountries(),
+    enabled: canViewRecipientUsers,
   })
 
   const users: AdminUserItem[] = usersQuery.data?.data?.items ?? EMPTY_MARKETING_USERS
   const userPagination = usersQuery.data?.data?.pagination
   const totalUserPages = Math.max(userPagination?.total_pages || 1, 1)
+  const marketingCountries: string[] = countriesQuery.data?.data?.countries ?? []
 
   useEffect(() => {
     if (recipientMode !== 'selected') return
@@ -223,6 +802,109 @@ export default function AdminMarketingPage() {
       setUserPage(totalUserPages)
     }
   }, [recipientMode, userPage, totalUserPages])
+
+  const audienceRuleCount = useMemo(
+    () => countAudienceBuilderRules(audienceBuilder),
+    [audienceBuilder]
+  )
+  const audienceRulesComplete = useMemo(
+    () => isAudienceBuilderNodeComplete(audienceBuilder),
+    [audienceBuilder]
+  )
+  const audienceQueryPayload = useMemo(
+    () => buildMarketingAudiencePayload(audienceBuilder),
+    [audienceBuilder]
+  )
+  const hasPreviewMessage = previewTitle.trim().length > 0 || previewContent.trim().length > 0
+  const previewQueryEnabled =
+    canSendMarketing &&
+    (recipientMode !== 'rules' || (audienceRuleCount > 0 && audienceRulesComplete))
+
+  const handleAudienceCombinatorChange = (groupId: string, combinator: 'and' | 'or') => {
+    setAudienceBuilder(
+      (prev) =>
+        updateAudienceBuilderNode(prev, groupId, (current) =>
+          current.type === 'group' ? { ...current, combinator } : current
+        ) as AudienceBuilderGroup
+    )
+  }
+
+  const handleAudienceAddCondition = (groupId: string) => {
+    setAudienceBuilder(
+      (prev) =>
+        appendAudienceBuilderNode(
+          prev,
+          groupId,
+          createDefaultAudienceCondition()
+        ) as AudienceBuilderGroup
+    )
+  }
+
+  const handleAudienceAddGroup = (groupId: string) => {
+    setAudienceBuilder(
+      (prev) =>
+        appendAudienceBuilderNode(
+          prev,
+          groupId,
+          createDefaultAudienceGroup()
+        ) as AudienceBuilderGroup
+    )
+  }
+
+  const handleAudienceRemoveNode = (nodeId: string) => {
+    setAudienceBuilder((prev) => removeAudienceBuilderNode(prev, nodeId))
+  }
+
+  const handleAudienceConditionFieldChange = (
+    conditionId: string,
+    field: MarketingAudienceField
+  ) => {
+    const fieldOption = getAudienceFieldOption(field)
+    const nextOperator = fieldOption.operators[0]
+    setAudienceBuilder(
+      (prev) =>
+        updateAudienceBuilderNode(prev, conditionId, (current) =>
+          current.type === 'condition'
+            ? {
+                ...current,
+                field,
+                operator: nextOperator,
+                value: getDefaultAudienceValue(fieldOption, nextOperator),
+              }
+            : current
+        ) as AudienceBuilderGroup
+    )
+  }
+
+  const handleAudienceConditionOperatorChange = (
+    conditionId: string,
+    operator: MarketingAudienceOperator
+  ) => {
+    setAudienceBuilder(
+      (prev) =>
+        updateAudienceBuilderNode(prev, conditionId, (current) => {
+          if (current.type !== 'condition') return current
+          const fieldOption = getAudienceFieldOption(current.field)
+          return {
+            ...current,
+            operator,
+            value: getDefaultAudienceValue(fieldOption, operator),
+          }
+        }) as AudienceBuilderGroup
+    )
+  }
+
+  const handleAudienceConditionValueChange = (
+    conditionId: string,
+    value: string | boolean | undefined
+  ) => {
+    setAudienceBuilder(
+      (prev) =>
+        updateAudienceBuilderNode(prev, conditionId, (current) =>
+          current.type === 'condition' ? { ...current, value } : current
+        ) as AudienceBuilderGroup
+    )
+  }
 
   const previewUserId = useMemo(() => {
     if (recipientMode === 'selected' && selectedUserIds.length > 0) {
@@ -232,20 +914,31 @@ export default function AdminMarketingPage() {
   }, [recipientMode, selectedUserIds])
 
   const previewQuery = useQuery({
-    queryKey: ['marketingPreview', previewTitle, previewContent, previewUserId],
+    queryKey: [
+      'marketingPreview',
+      previewTitle,
+      previewContent,
+      previewUserId,
+      recipientMode,
+      selectedUserIds,
+      audienceQueryPayload,
+    ],
     queryFn: () =>
       previewAdminMarketing({
         title: previewTitle.trim(),
         content: previewContent,
+        audience_mode: recipientMode,
+        audience_query: recipientMode === 'rules' ? audienceQueryPayload : undefined,
         user_id: previewUserId,
+        user_ids: recipientMode === 'selected' ? selectedUserIds : undefined,
+        sample_limit: 6,
       }),
-    enabled:
-      canSendMarketing &&
-      contentTab === 'preview' &&
-      (previewTitle.trim().length > 0 || previewContent.trim().length > 0),
+    enabled: previewQueryEnabled,
+    retry: false,
   })
 
   const previewData = previewQuery.data?.data as PreviewAdminMarketingResult | undefined
+  const audiencePreview = previewData?.audience
 
   const batchesQuery = useQuery({
     queryKey: ['marketingBatches', batchPage],
@@ -316,7 +1009,8 @@ export default function AdminMarketingPage() {
     Number(userEmailMarketingFilter !== 'all') +
     Number(userSmsMarketingFilter !== 'all') +
     Number(userHasPhoneFilter !== 'all') +
-    Number(Boolean(userLocaleFilter))
+    Number(Boolean(userLocaleFilter)) +
+    Number(Boolean(userCountryFilter))
   const adminMarketingPluginContext = {
     view: 'admin_marketing',
     permissions: {
@@ -330,6 +1024,7 @@ export default function AdminMarketingPage() {
       send_email: sendEmail,
       send_sms: sendSms,
       recipient_mode: recipientMode,
+      audience_rule_count: audienceRuleCount,
     },
     filters: {
       search: search || undefined,
@@ -339,6 +1034,7 @@ export default function AdminMarketingPage() {
       sms_notify_marketing: parseTriState(userSmsMarketingFilter),
       has_phone: parseTriState(userHasPhoneFilter),
       locale: userLocaleFilter || undefined,
+      country: userCountryFilter || undefined,
     },
     pagination: {
       user_page: userPage,
@@ -347,6 +1043,9 @@ export default function AdminMarketingPage() {
       batch_total_pages: totalBatchPages,
     },
     selection: {
+      recipient_mode: recipientMode,
+      audience_query: recipientMode === 'rules' ? audienceQueryPayload : undefined,
+      audience_rule_count: audienceRuleCount,
       selected_user_count: selectedUserIds.length,
       selected_user_ids: selectedUserIds.slice(0, 20),
     },
@@ -358,6 +1057,9 @@ export default function AdminMarketingPage() {
     summary: {
       active_filter_count: marketingActiveFilterCount,
       preview_ready: Boolean(previewData),
+      preview_audience_matched_users: audiencePreview?.matched_users,
+      preview_audience_emailable_users: audiencePreview?.emailable_users,
+      preview_audience_sms_reachable_users: audiencePreview?.sms_reachable_users,
     },
   }
   const adminMarketingRecipientActionItems =
@@ -471,6 +1173,14 @@ export default function AdminMarketingPage() {
       toast.error(t.admin.marketingRecipientRequired)
       return
     }
+    if (recipientMode === 'rules' && audienceRuleCount === 0) {
+      toast.error(t.admin.marketingAudienceRulesRequired)
+      return
+    }
+    if (recipientMode === 'rules' && !audienceRulesComplete) {
+      toast.error(t.admin.marketingAudienceRuleIncomplete)
+      return
+    }
 
     const payload: SendAdminMarketingData = {
       title: title.trim(),
@@ -478,9 +1188,13 @@ export default function AdminMarketingPage() {
       send_email: sendEmail,
       send_sms: sendSms,
       target_all: recipientMode === 'all',
+      audience_mode: recipientMode,
     }
     if (recipientMode === 'selected') {
       payload.user_ids = selectedUserIds
+    }
+    if (recipientMode === 'rules') {
+      payload.audience_query = audienceQueryPayload
     }
 
     sendMutation.mutate(payload)
@@ -579,7 +1293,18 @@ export default function AdminMarketingPage() {
                 </TabsContent>
 
                 <TabsContent value="preview" className="mt-2 space-y-3">
-                  {previewQuery.isLoading || previewQuery.isFetching ? (
+                  {!hasPreviewMessage ? (
+                    <div className="rounded-lg border p-6 text-center text-sm text-muted-foreground">
+                      {t.admin.marketingPreviewEmpty}
+                    </div>
+                  ) : recipientMode === 'rules' &&
+                    (!audienceRulesComplete || audienceRuleCount === 0) ? (
+                    <div className="rounded-lg border p-6 text-center text-sm text-muted-foreground">
+                      {audienceRuleCount === 0
+                        ? t.admin.marketingAudienceRulesRequired
+                        : t.admin.marketingAudienceRuleIncomplete}
+                    </div>
+                  ) : previewQuery.isLoading || previewQuery.isFetching ? (
                     <div className="flex items-center justify-center rounded-lg border p-6 text-sm text-muted-foreground">
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                       {t.admin.marketingPreviewLoading}
@@ -611,33 +1336,29 @@ export default function AdminMarketingPage() {
                           </pre>
                         </div>
                       ) : null}
-
-                      <div className="rounded-lg border border-dashed p-3">
-                        <p className="text-xs text-muted-foreground">
-                          {t.admin.marketingPlaceholderHint}
-                        </p>
-                        {previewData.supported_placeholders &&
-                        previewData.supported_placeholders.length > 0 ? (
-                          <p className="mt-1 break-all text-[11px] text-muted-foreground">
-                            {previewData.supported_placeholders.join('  ')}
-                          </p>
-                        ) : null}
-                        <p className="mt-2 text-xs text-muted-foreground">
-                          {t.admin.marketingTemplateVariableHint}
-                        </p>
-                        {previewData.supported_template_variables &&
-                        previewData.supported_template_variables.length > 0 ? (
-                          <p className="mt-1 break-all text-[11px] text-muted-foreground">
-                            {previewData.supported_template_variables.join('  ')}
-                          </p>
-                        ) : null}
-                      </div>
                     </>
-                  ) : (
-                    <div className="rounded-lg border p-6 text-center text-sm text-muted-foreground">
-                      {t.admin.marketingPreviewEmpty}
-                    </div>
-                  )}
+                  ) : null}
+
+                  <div className="rounded-lg border border-dashed p-3">
+                    <p className="text-xs text-muted-foreground">
+                      {t.admin.marketingPlaceholderHint}
+                    </p>
+                    {previewData?.supported_placeholders &&
+                    previewData.supported_placeholders.length > 0 ? (
+                      <p className="mt-1 break-all text-[11px] text-muted-foreground">
+                        {previewData.supported_placeholders.join('  ')}
+                      </p>
+                    ) : null}
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      {t.admin.marketingTemplateVariableHint}
+                    </p>
+                    {previewData?.supported_template_variables &&
+                    previewData.supported_template_variables.length > 0 ? (
+                      <p className="mt-1 break-all text-[11px] text-muted-foreground">
+                        {previewData.supported_template_variables.join('  ')}
+                      </p>
+                    ) : null}
+                  </div>
                 </TabsContent>
               </Tabs>
             </div>
@@ -680,13 +1401,20 @@ export default function AdminMarketingPage() {
             <CardDescription>{t.admin.marketingRecipientsDesc}</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid gap-2 md:grid-cols-3">
               <Button
                 type="button"
                 variant={recipientMode === 'all' ? 'default' : 'outline'}
                 onClick={() => setRecipientMode('all')}
               >
                 {t.admin.marketingTargetAll}
+              </Button>
+              <Button
+                type="button"
+                variant={recipientMode === 'rules' ? 'default' : 'outline'}
+                onClick={() => setRecipientMode('rules')}
+              >
+                {t.admin.marketingTargetRules}
               </Button>
               <Button
                 type="button"
@@ -701,12 +1429,39 @@ export default function AdminMarketingPage() {
               </Button>
             </div>
             {!canViewRecipientUsers ? (
-              <p className="text-xs text-muted-foreground">{t.message.noPermission}</p>
+              <p className="text-xs text-muted-foreground">
+                {t.admin.marketingTargetSelectedPermissionHint}
+              </p>
             ) : null}
 
             {recipientMode === 'all' ? (
               <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
                 {t.admin.marketingTargetAllHint}
+              </div>
+            ) : recipientMode === 'rules' ? (
+              <div className="space-y-3">
+                <div className="rounded-lg border border-dashed p-4">
+                  <p className="text-sm font-medium">{t.admin.marketingTargetRulesHint}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {t.admin.marketingAudienceRuleCount.replace(
+                      '{count}',
+                      String(audienceRuleCount)
+                    )}
+                  </p>
+                </div>
+
+                <MarketingAudienceGroupEditor
+                  group={audienceBuilder}
+                  isRoot
+                  t={t}
+                  onChangeCombinator={handleAudienceCombinatorChange}
+                  onAddCondition={handleAudienceAddCondition}
+                  onAddGroup={handleAudienceAddGroup}
+                  onRemove={handleAudienceRemoveNode}
+                  onConditionFieldChange={handleAudienceConditionFieldChange}
+                  onConditionOperatorChange={handleAudienceConditionOperatorChange}
+                  onConditionValueChange={handleAudienceConditionValueChange}
+                />
               </div>
             ) : (
               <div className="space-y-3">
@@ -865,6 +1620,31 @@ export default function AdminMarketingPage() {
                           </SelectContent>
                         </Select>
                       </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">
+                          {cleanFilterLabel(t.admin.userFilterCountry)}
+                        </label>
+                        <Select
+                          value={userCountryFilter || 'all'}
+                          onValueChange={(value) => {
+                            setUserCountryFilter(value === 'all' ? '' : value)
+                            setUserPage(1)
+                          }}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder={t.common.all} />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="all">{t.common.all}</SelectItem>
+                            {marketingCountries.map((country) => (
+                              <SelectItem key={country} value={country}>
+                                {country}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
                     </div>
                   </CardContent>
                 </Card>
@@ -1007,6 +1787,110 @@ export default function AdminMarketingPage() {
                 ) : null}
               </div>
             )}
+
+            <div className="rounded-xl border">
+              <div className="border-b bg-muted/30 px-4 py-3">
+                <p className="text-sm font-medium">{t.admin.marketingAudiencePreview}</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {t.admin.marketingAudiencePreviewDesc}
+                </p>
+              </div>
+              <div className="space-y-3 p-4">
+                {!canSendMarketing ? (
+                  <p className="text-sm text-muted-foreground">
+                    {t.admin.marketingNoSendPermission}
+                  </p>
+                ) : recipientMode === 'rules' && audienceRuleCount === 0 ? (
+                  <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
+                    {t.admin.marketingAudienceRulesRequired}
+                  </div>
+                ) : recipientMode === 'rules' && !audienceRulesComplete ? (
+                  <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
+                    {t.admin.marketingAudienceRuleIncomplete}
+                  </div>
+                ) : previewQuery.isLoading || previewQuery.isFetching ? (
+                  <div className="flex items-center justify-center rounded-lg border p-6 text-sm text-muted-foreground">
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    {t.admin.marketingAudiencePreviewLoading}
+                  </div>
+                ) : previewQuery.error ? (
+                  <div className="rounded-lg border border-dashed p-4 text-sm text-destructive">
+                    {t.admin.marketingAudiencePreviewFailed}
+                  </div>
+                ) : audiencePreview ? (
+                  <>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge variant="secondary">
+                        {t.admin.marketingAudienceModeLabel}:{' '}
+                        {getMarketingAudienceModeText(audiencePreview.mode, t)}
+                      </Badge>
+                    </div>
+                    <div className="grid gap-3 sm:grid-cols-3">
+                      <div className="rounded-lg border p-3">
+                        <p className="text-xs text-muted-foreground">
+                          {t.admin.marketingAudienceMatchedUsers}
+                        </p>
+                        <p className="mt-1 text-xl font-semibold">
+                          {audiencePreview.matched_users}
+                        </p>
+                      </div>
+                      <div className="rounded-lg border p-3">
+                        <p className="text-xs text-muted-foreground">
+                          {t.admin.marketingAudienceEmailableUsers}
+                        </p>
+                        <p className="mt-1 text-xl font-semibold">
+                          {audiencePreview.emailable_users}
+                        </p>
+                      </div>
+                      <div className="rounded-lg border p-3">
+                        <p className="text-xs text-muted-foreground">
+                          {t.admin.marketingAudienceSmsReachableUsers}
+                        </p>
+                        <p className="mt-1 text-xl font-semibold">
+                          {audiencePreview.sms_reachable_users}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <p className="text-sm font-medium">{t.admin.marketingAudienceSampleUsers}</p>
+                      {audiencePreview.sample_users.length === 0 ? (
+                        <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
+                          {canViewRecipientUsers
+                            ? t.admin.marketingAudienceSampleUsersEmpty
+                            : t.admin.marketingAudienceSampleUsersRestricted}
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          {audiencePreview.sample_users.map((user) => (
+                            <div
+                              key={user.id}
+                              className="rounded-lg border p-3 text-sm text-muted-foreground"
+                            >
+                              <div className="flex flex-wrap items-center gap-2">
+                                <p className="font-medium text-foreground">
+                                  {user.name || user.email || `#${user.id}`}
+                                </p>
+                                <Badge variant="outline">#{user.id}</Badge>
+                              </div>
+                              <p className="mt-1 truncate">{user.email || '-'}</p>
+                              <p className="truncate">{user.phone || '-'}</p>
+                              <p className="truncate">
+                                {user.locale || '-'} / {user.country || '-'}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </>
+                ) : (
+                  <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
+                    {t.admin.marketingAudiencePreviewEmpty}
+                  </div>
+                )}
+              </div>
+            </div>
           </CardContent>
         </Card>
       </div>
@@ -1018,7 +1902,7 @@ export default function AdminMarketingPage() {
             <CardDescription>{t.admin.marketingResultDesc}</CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-8">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-9">
               <div className="rounded-lg border p-3">
                 <p className="text-xs text-muted-foreground">{t.admin.marketingBatchNo}</p>
                 <p className="mt-1 break-all text-sm font-semibold">
@@ -1046,6 +1930,14 @@ export default function AdminMarketingPage() {
               <div className="rounded-lg border p-3">
                 <p className="text-xs text-muted-foreground">{t.admin.marketingProgress}</p>
                 <p className="mt-1 text-sm font-semibold">{activeBatchProgress}</p>
+              </div>
+              <div className="rounded-lg border p-3">
+                <p className="text-xs text-muted-foreground">
+                  {t.admin.marketingAudienceModeLabel}
+                </p>
+                <p className="mt-1 text-sm font-semibold">
+                  {getMarketingAudienceModeText(activeBatch.audience_mode, t)}
+                </p>
               </div>
               <div className="rounded-lg border p-3">
                 <p className="text-xs text-muted-foreground">{t.admin.marketingTargetedUsers}</p>
@@ -1119,6 +2011,10 @@ export default function AdminMarketingPage() {
                     </span>
                     <span>
                       {t.admin.marketingProgress}: {batch.processed_tasks}/{batch.total_tasks}
+                    </span>
+                    <span>
+                      {t.admin.marketingAudienceModeLabel}:{' '}
+                      {getMarketingAudienceModeText(batch.audience_mode, t)}
                     </span>
                     <span>
                       {t.admin.marketingTargetedUsers}: {batch.targeted_users}
