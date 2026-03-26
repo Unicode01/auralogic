@@ -22,6 +22,25 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            plugins/sdk/package-lock.json
+            plugins/js_market/package-lock.json
+
+      - name: Install plugin SDK dependencies
+        working-directory: plugins/sdk
+        run: npm ci
+
+      - name: Build js_market bundle
+        working-directory: plugins/js_market
+        run: |
+          npm ci
+          npm run build
+
       - name: Setup Go
         uses: actions/setup-go@v6
         with:
