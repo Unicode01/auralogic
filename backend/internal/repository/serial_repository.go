@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"fmt"
 	"time"
 
 	"auralogic/internal/models"
@@ -30,6 +31,31 @@ func (r *SerialRepository) FindBySerialNumber(serialNumber string) (*models.Prod
 		return nil, err
 	}
 	return &serial, nil
+}
+
+// FindByID 根据ID查找序列号
+func (r *SerialRepository) FindByID(id uint) (*models.ProductSerial, error) {
+	var serial models.ProductSerial
+	err := r.db.Preload("Product").Preload("Order").
+		First(&serial, id).Error
+	if err != nil {
+		return nil, err
+	}
+	return &serial, nil
+}
+
+// FindByIDs 根据ID列表查找序列号
+func (r *SerialRepository) FindByIDs(ids []uint) ([]models.ProductSerial, error) {
+	if len(ids) == 0 {
+		return []models.ProductSerial{}, nil
+	}
+
+	var serials []models.ProductSerial
+	err := r.db.Preload("Product").Preload("Order").
+		Where("id IN ?", ids).
+		Order("created_at DESC").
+		Find(&serials).Error
+	return serials, err
 }
 
 // FindByOrderID 根据订单ID查找所有序列号
@@ -115,6 +141,29 @@ func (r *SerialRepository) List(page, limit int, filters map[string]interface{})
 // BatchCreate 批量创建序列号
 func (r *SerialRepository) BatchCreate(serials []models.ProductSerial) error {
 	return r.db.Create(&serials).Error
+}
+
+func (r *SerialRepository) CountByOrderIDGroupedByProduct(orderID uint) (map[uint]int, error) {
+	rows, err := r.db.Model(&models.ProductSerial{}).
+		Select("product_id, COUNT(*) AS total").
+		Where("order_id = ?", orderID).
+		Group("product_id").
+		Rows()
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	counts := make(map[uint]int)
+	for rows.Next() {
+		var productID uint
+		var total int
+		if scanErr := rows.Scan(&productID, &total); scanErr != nil {
+			return nil, fmt.Errorf("scan order serial counts: %w", scanErr)
+		}
+		counts[productID] = total
+	}
+	return counts, rows.Err()
 }
 
 // GetStatistics 获取统计信息

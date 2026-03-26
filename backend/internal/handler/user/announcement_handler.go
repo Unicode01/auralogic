@@ -1,22 +1,47 @@
 package user
 
 import (
+	"log"
 	"strconv"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"auralogic/internal/middleware"
 	"auralogic/internal/models"
 	"auralogic/internal/pkg/response"
+	"auralogic/internal/service"
+	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
 
 type AnnouncementHandler struct {
-	db *gorm.DB
+	db            *gorm.DB
+	pluginManager *service.PluginManagerService
 }
 
-func NewAnnouncementHandler(db *gorm.DB) *AnnouncementHandler {
-	return &AnnouncementHandler{db: db}
+func NewAnnouncementHandler(db *gorm.DB, pluginManager *service.PluginManagerService) *AnnouncementHandler {
+	return &AnnouncementHandler{
+		db:            db,
+		pluginManager: pluginManager,
+	}
+}
+
+func buildUserAnnouncementHookPayload(announcement *models.Announcement) map[string]interface{} {
+	if announcement == nil {
+		return map[string]interface{}{}
+	}
+
+	return map[string]interface{}{
+		"announcement_id":   announcement.ID,
+		"title":             announcement.Title,
+		"content":           announcement.Content,
+		"category":          announcement.Category,
+		"send_email":        announcement.SendEmail,
+		"send_sms":          announcement.SendSMS,
+		"is_mandatory":      announcement.IsMandatory,
+		"require_full_read": announcement.RequireFullRead,
+		"created_at":        announcement.CreatedAt,
+		"updated_at":        announcement.UpdatedAt,
+	}
 }
 
 // ListAnnouncements 公告列表（带已读状态）
@@ -98,6 +123,26 @@ func (h *AnnouncementHandler) GetAnnouncement(c *gin.Context) {
 		Announcement: announcement,
 		IsRead:       isRead,
 	})
+	if h.pluginManager != nil {
+		payload := buildUserAnnouncementHookPayload(&announcement)
+		payload["user_id"] = userID
+		payload["is_read"] = isRead
+		payload["source"] = "user_api"
+		go func(execCtx *service.ExecutionContext, hookPayload map[string]interface{}, announcementID uint, uid uint) {
+			_, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+				Hook:    "announcement.view.after",
+				Payload: hookPayload,
+			}, execCtx)
+			if hookErr != nil {
+				log.Printf("announcement.view.after hook execution failed: user=%d announcement=%d err=%v", uid, announcementID, hookErr)
+			}
+		}(cloneUserHookExecutionContext(buildUserHookExecutionContext(c, userID, map[string]string{
+			"hook_resource":   "announcement",
+			"hook_source":     "user_api",
+			"hook_action":     "view",
+			"announcement_id": strconv.FormatUint(id, 10),
+		})), payload, announcement.ID, userID)
+	}
 }
 
 // GetUnreadMandatory 获取未读的强制公告
@@ -135,6 +180,8 @@ func (h *AnnouncementHandler) MarkAsRead(c *gin.Context) {
 		response.NotFound(c, "Announcement not found")
 		return
 	}
+	var existingRead models.AnnouncementRead
+	alreadyRead := h.db.Where("announcement_id = ? AND user_id = ?", uint(id), userID).First(&existingRead).Error == nil
 
 	// 创建已读记录（忽略重复）
 	readRecord := models.AnnouncementRead{
@@ -145,6 +192,30 @@ func (h *AnnouncementHandler) MarkAsRead(c *gin.Context) {
 	// 使用 FirstOrCreate 避免重复插入
 	h.db.Where("announcement_id = ? AND user_id = ?", uint(id), userID).
 		FirstOrCreate(&readRecord)
+	if alreadyRead {
+		readRecord = existingRead
+	}
+	if h.pluginManager != nil {
+		payload := buildUserAnnouncementHookPayload(&announcement)
+		payload["user_id"] = userID
+		payload["already_read"] = alreadyRead
+		payload["read_at"] = readRecord.ReadAt
+		payload["source"] = "user_api"
+		go func(execCtx *service.ExecutionContext, hookPayload map[string]interface{}, announcementID uint, uid uint) {
+			_, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+				Hook:    "announcement.read.after",
+				Payload: hookPayload,
+			}, execCtx)
+			if hookErr != nil {
+				log.Printf("announcement.read.after hook execution failed: user=%d announcement=%d err=%v", uid, announcementID, hookErr)
+			}
+		}(cloneUserHookExecutionContext(buildUserHookExecutionContext(c, userID, map[string]string{
+			"hook_resource":   "announcement",
+			"hook_source":     "user_api",
+			"hook_action":     "read",
+			"announcement_id": strconv.FormatUint(id, 10),
+		})), payload, announcement.ID, userID)
+	}
 
 	response.Success(c, gin.H{"message": "Marked as read"})
 }

@@ -1,22 +1,53 @@
 'use client'
+/* eslint-disable @next/next/no-img-element */
 
-import { useState, useMemo, useEffect, useCallback } from 'react'
+import { useState, useMemo, useEffect, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCart } from '@/contexts/cart-context'
-import { createOrder, validatePromoCode, getPublicConfig, getProduct, getProductAvailableStock, type CartItem } from '@/lib/api'
+import {
+  createOrder,
+  validatePromoCode,
+  getPublicConfig,
+  getProduct,
+  getProductAvailableStock,
+} from '@/lib/api'
+import { resolveApiErrorMessage } from '@/lib/api-error'
 import { Card, CardContent, CardHeader, CardFooter } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Trash2, Minus, Plus, ShoppingCart, Package, AlertCircle, RefreshCw, LayoutGrid, LayoutList, Loader2 } from 'lucide-react'
+import { Badge } from '@/components/ui/badge'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
+import {
+  Trash2,
+  Minus,
+  Plus,
+  ShoppingCart,
+  Package,
+  AlertCircle,
+  RefreshCw,
+  LayoutGrid,
+  LayoutList,
+  Loader2,
+} from 'lucide-react'
 import Link from 'next/link'
 import { useAuth } from '@/hooks/use-auth'
 import { useLocale } from '@/hooks/use-locale'
 import { usePageTitle } from '@/hooks/use-page-title'
-import { getTranslations, translateBizError } from '@/lib/i18n'
+import { getTranslations } from '@/lib/i18n'
 import toast from 'react-hot-toast'
 import { Checkbox } from '@/components/ui/checkbox'
 import { useCurrency, formatPrice } from '@/contexts/currency-context'
+import { PluginSlot } from '@/components/plugins/plugin-slot'
 import {
   getGuestCart,
   getGuestCartItemKey,
@@ -24,19 +55,31 @@ import {
   removeGuestCartItemByKey,
   updateGuestCartItemQuantityByKey,
 } from '@/lib/guest-cart'
+import {
+  clearCachedGuestCartDisplayItems,
+  getGuestDisplayItemId,
+  getRestorableGuestCartDisplayItems,
+  hydrateGuestCartDisplayItems,
+  setCachedGuestCartDisplayItems,
+  type GuestCartDisplayItem,
+} from '@/lib/guest-cart-display'
+import {
+  clearAuthReturnState,
+  readAuthReturnState,
+  setAuthReturnState,
+} from '@/lib/auth-return-state'
 
-type GuestCartDisplayItem = CartItem & {
-  guest_key: string
-}
-
-function getGuestDisplayItemId(key: string): number {
-  let hash = 0
-  for (let i = 0; i < key.length; i++) {
-    hash = ((hash << 5) - hash + key.charCodeAt(i)) | 0
-  }
-  const normalized = Math.abs(hash)
-  return normalized === 0 ? 1 : normalized
-}
+type CartConfirmAction =
+  | {
+      type: 'remove_item'
+      itemId: number
+      itemName: string
+    }
+  | {
+      type: 'clear_selected'
+      count: number
+    }
+  | null
 
 export default function CartPage() {
   const router = useRouter()
@@ -49,6 +92,7 @@ export default function CartPage() {
   const {
     items: serverItems,
     isLoading: serverCartLoading,
+    isError: isServerCartError,
     updateQuantity,
     removeItem,
     removeItems,
@@ -63,7 +107,12 @@ export default function CartPage() {
   const maxOrderItems = publicConfig?.data?.max_order_items || 100
   const [guestItems, setGuestItems] = useState<GuestCartDisplayItem[]>([])
   const [isGuestItemsLoading, setIsGuestItemsLoading] = useState(false)
+  const [hasGuestItemsLoaded, setHasGuestItemsLoaded] = useState(false)
+  const [guestRefreshWarning, setGuestRefreshWarning] = useState(false)
+  const [guestRefreshWarningMessage, setGuestRefreshWarningMessage] = useState('')
   const [selectedItems, setSelectedItems] = useState<Set<number>>(new Set())
+  const guestRefreshRequestIdRef = useRef(0)
+  const hasRestoredAuthReturnStateRef = useRef(false)
   const [viewMode, setViewMode] = useState<'list' | 'card'>(() => {
     if (typeof window !== 'undefined') {
       const saved = localStorage.getItem('cart-view-mode')
@@ -71,77 +120,109 @@ export default function CartPage() {
     }
     return 'list'
   })
+  const [confirmAction, setConfirmAction] = useState<CartConfirmAction>(null)
+  const [isConfirmPending, setIsConfirmPending] = useState(false)
   const isGuestMode = !isAuthenticated
+  const cartLoadFailed = !isGuestMode && isServerCartError
+
+  const getCartScrollTop = useCallback(() => {
+    if (typeof document === 'undefined' || typeof window === 'undefined') {
+      return 0
+    }
+    const mainElement = document.querySelector('main')
+    if (mainElement instanceof HTMLElement) {
+      return Math.max(0, mainElement.scrollTop)
+    }
+    return Math.max(0, window.scrollY)
+  }, [])
+
+  const restoreCartScrollTop = useCallback((scrollTop: number) => {
+    if (typeof document === 'undefined' || typeof window === 'undefined') {
+      return
+    }
+    const nextScrollTop = Math.max(0, Number(scrollTop) || 0)
+    window.requestAnimationFrame(() => {
+      const mainElement = document.querySelector('main')
+      if (mainElement instanceof HTMLElement) {
+        mainElement.scrollTo({ top: nextScrollTop })
+        return
+      }
+      window.scrollTo({ top: nextScrollTop })
+    })
+  }, [])
 
   const refreshGuestItems = useCallback(async () => {
+    const requestId = guestRefreshRequestIdRef.current + 1
+    guestRefreshRequestIdRef.current = requestId
     const localItems = getGuestCart()
     if (!localItems.length) {
+      clearCachedGuestCartDisplayItems()
       setGuestItems([])
+      setIsGuestItemsLoading(false)
+      setGuestRefreshWarning(false)
+      setGuestRefreshWarningMessage('')
+      setHasGuestItemsLoaded(true)
       return
     }
 
+    const restorableItems = getRestorableGuestCartDisplayItems(localItems)
+    if (restorableItems.length > 0) {
+      setGuestItems(restorableItems)
+      setHasGuestItemsLoaded(true)
+    }
+
     setIsGuestItemsLoading(true)
+    setGuestRefreshWarning(false)
+    setGuestRefreshWarningMessage('')
     try {
-      const enrichedItems = await Promise.all(
-        localItems.map(async (localItem): Promise<GuestCartDisplayItem> => {
-          const guestKey = getGuestCartItemKey(localItem)
-          const fallback: GuestCartDisplayItem = {
-            id: getGuestDisplayItemId(guestKey),
-            guest_key: guestKey,
-            product_id: localItem.product_id,
-            sku: `guest-${localItem.product_id}`,
-            name: `#${localItem.product_id}`,
-            price_minor: 0,
-            image_url: '',
-            product_type: 'physical',
-            quantity: Math.max(1, localItem.quantity),
-            attributes: localItem.attributes || {},
-            available_stock: 0,
-            is_available: false,
-          }
+      const { items: enrichedItems, hasFailures } = await hydrateGuestCartDisplayItems({
+        localItems,
+        maxItemQuantity,
+        concurrency: 4,
+        fetchProduct: (productId) =>
+          queryClient.fetchQuery({
+            queryKey: ['guest-cart-product', productId],
+            queryFn: async () => {
+              const result = await getProduct(productId)
+              return result?.data ?? null
+            },
+            staleTime: 1000 * 60 * 2,
+            gcTime: 1000 * 60 * 10,
+            retry: false,
+          }),
+        fetchStock: (productId, attributes) =>
+          queryClient.fetchQuery({
+            queryKey: ['guest-cart-stock', productId, JSON.stringify(attributes || {})],
+            queryFn: async () => {
+              const result = await getProductAvailableStock(productId, attributes)
+              return result?.data ?? null
+            },
+            staleTime: 1000 * 30,
+            gcTime: 1000 * 60 * 5,
+            retry: false,
+          }),
+      })
 
-          try {
-            const [productResult, stockResult] = await Promise.allSettled([
-              getProduct(localItem.product_id),
-              getProductAvailableStock(localItem.product_id, localItem.attributes),
-            ])
-
-            const product = productResult.status === 'fulfilled' ? productResult.value?.data : null
-            const stockData = stockResult.status === 'fulfilled' ? stockResult.value?.data : null
-            const primaryImage = product?.images?.find((img: any) => img.is_primary || img.isPrimary)?.url
-              || product?.images?.[0]?.url
-              || ''
-            const isUnlimitedStock = stockData?.is_unlimited === true
-            const availableStock = isUnlimitedStock
-              ? maxItemQuantity
-              : Math.max(0, Number(stockData?.available_stock ?? product?.stock ?? 0))
-            const isAvailable = Boolean(product)
-              && (isUnlimitedStock || availableStock > 0)
-              && product?.status !== 'inactive'
-              && product?.status !== 'draft'
-
-            return {
-              ...fallback,
-              sku: product?.sku || fallback.sku,
-              name: product?.name || fallback.name,
-              price_minor: Number(product?.price_minor || 0),
-              image_url: primaryImage,
-              product_type: product?.product_type || product?.productType || 'physical',
-              available_stock: availableStock,
-              is_available: isAvailable,
-              product: product || undefined,
-            }
-          } catch {
-            return fallback
-          }
-        })
-      )
+      if (requestId !== guestRefreshRequestIdRef.current) return
 
       setGuestItems(enrichedItems)
+      setGuestRefreshWarning(hasFailures)
+      setGuestRefreshWarningMessage(hasFailures ? t.cart.guestRefreshWarning : '')
+      setHasGuestItemsLoaded(true)
+      if (!hasFailures) {
+        setCachedGuestCartDisplayItems(enrichedItems)
+      }
+    } catch (error) {
+      if (requestId !== guestRefreshRequestIdRef.current) return
+      setGuestRefreshWarning(true)
+      setGuestRefreshWarningMessage(resolveApiErrorMessage(error, t, t.cart.guestRefreshWarning))
+      setHasGuestItemsLoaded(true)
     } finally {
-      setIsGuestItemsLoading(false)
+      if (requestId === guestRefreshRequestIdRef.current) {
+        setIsGuestItemsLoading(false)
+      }
     }
-  }, [maxItemQuantity])
+  }, [maxItemQuantity, queryClient, t])
 
   useEffect(() => {
     if (!isGuestMode) return
@@ -162,7 +243,7 @@ export default function CartPage() {
     min_order_amount_minor: number
   } | null>(null)
   const items = isGuestMode ? guestItems : serverItems
-  const isLoading = authLoading || (isGuestMode ? isGuestItemsLoading : serverCartLoading)
+  const isLoading = authLoading || (isGuestMode ? !hasGuestItemsLoaded : serverCartLoading)
 
   const refetchCart = useCallback(() => {
     if (isGuestMode) {
@@ -172,10 +253,27 @@ export default function CartPage() {
     refetch()
   }, [isGuestMode, refreshGuestItems, refetch])
 
+  const redirectGuestToLogin = useCallback(() => {
+    const selectedGuestKeys = items.flatMap((item) => {
+      if (!selectedItems.has(item.id)) return []
+      const guestItem = item as GuestCartDisplayItem | undefined
+      return guestItem?.guest_key ? [guestItem.guest_key] : []
+    })
+
+    setAuthReturnState({
+      redirectPath: '/cart',
+      cart: {
+        selectedGuestKeys,
+        scrollTop: getCartScrollTop(),
+      },
+    })
+    router.push('/login')
+  }, [getCartScrollTop, items, router, selectedItems])
+
   useEffect(() => {
-    setSelectedItems(prev => {
+    setSelectedItems((prev) => {
       if (prev.size === 0) return prev
-      const validIds = new Set(items.map(item => item.id))
+      const validIds = new Set(items.filter((item) => item.is_available).map((item) => item.id))
       const next = new Set<number>()
       for (const id of prev) {
         if (validIds.has(id)) next.add(id)
@@ -183,6 +281,35 @@ export default function CartPage() {
       return next.size === prev.size ? prev : next
     })
   }, [items])
+
+  useEffect(() => {
+    if (isGuestMode || authLoading || serverCartLoading || hasRestoredAuthReturnStateRef.current) {
+      return
+    }
+
+    const pendingReturnState = readAuthReturnState()
+    if (!pendingReturnState || pendingReturnState.redirectPath !== '/cart') {
+      return
+    }
+
+    hasRestoredAuthReturnStateRef.current = true
+    const selectedGuestKeys = new Set(pendingReturnState.cart?.selectedGuestKeys || [])
+    const nextSelectedItems = new Set<number>()
+    for (const item of serverItems) {
+      const itemKey = getGuestCartItemKey({
+        product_id: item.product_id,
+        quantity: item.quantity,
+        attributes: item.attributes,
+      })
+      if (selectedGuestKeys.has(itemKey) && item.is_available) {
+        nextSelectedItems.add(item.id)
+      }
+    }
+
+    setSelectedItems(nextSelectedItems)
+    restoreCartScrollTop(pendingReturnState.cart?.scrollTop || 0)
+    clearAuthReturnState()
+  }, [authLoading, isGuestMode, restoreCartScrollTop, serverCartLoading, serverItems])
 
   const handleViewModeChange = (mode: 'list' | 'card') => {
     setViewMode(mode)
@@ -193,7 +320,7 @@ export default function CartPage() {
   const handleApplyPromoCode = async () => {
     if (isGuestMode) {
       toast.error(t.cart.loginForPromoCode)
-      setTimeout(() => router.push('/login'), 1000)
+      setTimeout(redirectGuestToLogin, 1000)
       return
     }
 
@@ -201,9 +328,14 @@ export default function CartPage() {
 
     setIsValidatingPromo(true)
     try {
-      const selectedCartItems = items.filter(item => selectedItems.has(item.id) && item.is_available)
-      const productIds = selectedCartItems.map(item => item.product_id)
-      const amount = selectedCartItems.reduce((sum, item) => sum + item.price_minor * item.quantity, 0)
+      const selectedCartItems = items.filter(
+        (item) => selectedItems.has(item.id) && item.is_available
+      )
+      const productIds = selectedCartItems.map((item) => item.product_id)
+      const amount = selectedCartItems.reduce(
+        (sum, item) => sum + item.price_minor * item.quantity,
+        0
+      )
 
       const response = await validatePromoCode({
         code: promoCodeInput.trim(),
@@ -227,8 +359,7 @@ export default function CartPage() {
           .replace('{discount}', formatPrice(data.discount_minor, currency))
       )
     } catch (error: any) {
-      const msg = error?.message || t.promoCode.invalidCode
-      toast.error(msg)
+      toast.error(resolveApiErrorMessage(error, t, t.promoCode.invalidCode))
     } finally {
       setIsValidatingPromo(false)
     }
@@ -257,16 +388,13 @@ export default function CartPage() {
       router.push(`/orders/${orderNo}`)
     },
     onError: (error: any) => {
-      if (error.code === 40010 && error.data?.error_key) {
-        toast.error(translateBizError(t, error.data.error_key, error.data.params, error.message))
-      } else {
-        toast.error(error.message || t.cart.orderFailed)
-      }
+      toast.error(resolveApiErrorMessage(error, t, t.cart.orderFailed))
     },
   })
 
   const getItemMaxQuantity = (item: any) => {
-    const productMaxPurchaseLimit = item?.product?.max_purchase_limit ?? item?.product?.maxPurchaseLimit ?? 0
+    const productMaxPurchaseLimit =
+      item?.product?.max_purchase_limit ?? item?.product?.maxPurchaseLimit ?? 0
     return Math.min(
       item?.available_stock ?? 0,
       maxItemQuantity,
@@ -276,19 +404,25 @@ export default function CartPage() {
 
   // 处理数量变化
   const handleQuantityChange = async (itemId: number, newQuantity: number) => {
-    const item = items.find(i => i.id === itemId)
+    const item = items.find((i) => i.id === itemId)
     const itemMaxQuantity = item ? getItemMaxQuantity(item) : maxItemQuantity
     if (newQuantity < 1 || newQuantity > itemMaxQuantity) return
     if (isGuestMode) {
       const guestItem = item as GuestCartDisplayItem | undefined
       if (!guestItem) return
-      const result = updateGuestCartItemQuantityByKey(guestItem.guest_key, newQuantity, maxItemQuantity)
+      const result = updateGuestCartItemQuantityByKey(
+        guestItem.guest_key,
+        newQuantity,
+        maxItemQuantity
+      )
       if (result.updated) {
-        setGuestItems(prev => prev.map((existing) => (
+        const nextGuestItems = guestItems.map((existing) =>
           existing.guest_key === guestItem.guest_key
             ? { ...existing, quantity: newQuantity }
             : existing
-        )))
+        )
+        setGuestItems(nextGuestItems)
+        setCachedGuestCartDisplayItems(nextGuestItems)
       }
       return
     }
@@ -300,25 +434,33 @@ export default function CartPage() {
   }
 
   // 处理删除
-  const handleRemove = async (itemId: number) => {
-    if (!window.confirm(t.cart.confirmDeleteCartItem)) return
+  const removeCartItem = async (itemId: number) => {
     if (isGuestMode) {
-      const guestItem = items.find(i => i.id === itemId) as GuestCartDisplayItem | undefined
+      const guestItem = items.find((i) => i.id === itemId) as GuestCartDisplayItem | undefined
       if (!guestItem) return
       const result = removeGuestCartItemByKey(guestItem.guest_key)
       if (result.removed) {
-        setGuestItems(prev => prev.filter((existing) => existing.guest_key !== guestItem.guest_key))
+        const nextGuestItems = guestItems.filter(
+          (existing) => existing.guest_key !== guestItem.guest_key
+        )
+        setGuestItems(nextGuestItems)
+        if (nextGuestItems.length > 0) {
+          setCachedGuestCartDisplayItems(nextGuestItems)
+        } else {
+          clearCachedGuestCartDisplayItems()
+        }
       }
-      setSelectedItems(prev => {
+      setSelectedItems((prev) => {
         const next = new Set(prev)
         next.delete(itemId)
         return next
       })
+      toast.success(t.cart.removedFromCart)
       return
     }
     try {
       await removeItem(itemId)
-      setSelectedItems(prev => {
+      setSelectedItems((prev) => {
         const next = new Set(prev)
         next.delete(itemId)
         return next
@@ -328,20 +470,85 @@ export default function CartPage() {
     }
   }
 
+  const clearSelectedItems = async () => {
+    const selectedItemSet = new Set(selectedItems)
+    if (selectedItemSet.size === 0) {
+      toast.error(t.cart.noItemsSelected)
+      return
+    }
+
+    if (isGuestMode) {
+      const remainingGuestItems = getGuestCart().filter((item) => {
+        const itemId = getGuestDisplayItemId(getGuestCartItemKey(item))
+        return !selectedItemSet.has(itemId)
+      })
+      setGuestCart(remainingGuestItems)
+      const nextGuestItems = guestItems.filter((item) => !selectedItemSet.has(item.id))
+      setGuestItems(nextGuestItems)
+      if (nextGuestItems.length > 0) {
+        setCachedGuestCartDisplayItems(nextGuestItems)
+      } else {
+        clearCachedGuestCartDisplayItems()
+      }
+      toast.success(t.cart.selectedItemsRemoved)
+    } else {
+      await removeItems(Array.from(selectedItemSet))
+    }
+
+    setSelectedItems(new Set())
+  }
+
+  const requestRemoveItem = (itemId: number) => {
+    const item = items.find((cartItem) => cartItem.id === itemId)
+    if (!item) return
+    setConfirmAction({
+      type: 'remove_item',
+      itemId,
+      itemName: item.name,
+    })
+  }
+
+  const requestClearSelected = () => {
+    if (selectedItems.size === 0) {
+      toast.error(t.cart.noItemsSelected)
+      return
+    }
+    setConfirmAction({
+      type: 'clear_selected',
+      count: selectedItems.size,
+    })
+  }
+
+  const handleConfirmAction = async () => {
+    if (!confirmAction) return
+    setIsConfirmPending(true)
+    try {
+      if (confirmAction.type === 'remove_item') {
+        await removeCartItem(confirmAction.itemId)
+      } else {
+        await clearSelectedItems()
+      }
+      setConfirmAction(null)
+    } finally {
+      setIsConfirmPending(false)
+    }
+  }
+
   // 处理全选
   const handleSelectAll = () => {
-    const availableItems = items.filter(item => item.is_available)
-    const allAvailableSelected = availableItems.length > 0 && availableItems.every(item => selectedItems.has(item.id))
+    const availableItems = items.filter((item) => item.is_available)
+    const allAvailableSelected =
+      availableItems.length > 0 && availableItems.every((item) => selectedItems.has(item.id))
     if (allAvailableSelected) {
       setSelectedItems(new Set())
     } else {
-      setSelectedItems(new Set(availableItems.map(item => item.id)))
+      setSelectedItems(new Set(availableItems.map((item) => item.id)))
     }
   }
 
   // 处理单选
   const handleSelectItem = (itemId: number) => {
-    setSelectedItems(prev => {
+    setSelectedItems((prev) => {
       const next = new Set(prev)
       if (next.has(itemId)) {
         next.delete(itemId)
@@ -354,19 +561,28 @@ export default function CartPage() {
 
   // 计算选中商品的总价
   const selectedTotalPrice = items
-    .filter(item => selectedItems.has(item.id) && item.is_available)
+    .filter((item) => selectedItems.has(item.id) && item.is_available)
     .reduce((sum, item) => sum + item.price_minor * item.quantity, 0)
 
   const selectedTotalQuantity = items
-    .filter(item => selectedItems.has(item.id) && item.is_available)
+    .filter((item) => selectedItems.has(item.id) && item.is_available)
     .reduce((sum, item) => sum + item.quantity, 0)
+  const availableItemCount = items.filter((item) => item.is_available).length
+  const unavailableItemCount = items.length - availableItemCount
+  const allAvailableItemsSelected =
+    availableItemCount > 0 &&
+    items.filter((item) => item.is_available).every((item) => selectedItems.has(item.id))
+  const clearSelectedLabel =
+    selectedItems.size > 0
+      ? `${t.cart.clearSelected} (${selectedItems.size})`
+      : t.cart.clearSelected
 
   // 实时计算优惠码折扣
   const promoDiscount = useMemo(() => {
     if (!appliedPromo || selectedTotalPrice <= 0) return 0
 
     if (appliedPromo.discount_type === 'percentage') {
-      let discount = selectedTotalPrice * appliedPromo.discount_value_minor / 10000
+      let discount = (selectedTotalPrice * appliedPromo.discount_value_minor) / 10000
       if (appliedPromo.max_discount_minor > 0 && discount > appliedPromo.max_discount_minor) {
         discount = appliedPromo.max_discount_minor
       }
@@ -375,16 +591,71 @@ export default function CartPage() {
       return Math.min(appliedPromo.discount_value_minor, selectedTotalPrice)
     }
   }, [appliedPromo, selectedTotalPrice])
+  const userCartPluginContext = {
+    view: 'user_cart',
+    summary: {
+      item_count: items.length,
+      available_item_count: availableItemCount,
+      unavailable_item_count: unavailableItemCount,
+      selected_item_count: selectedItems.size,
+      selected_item_ids: Array.from(selectedItems),
+      selected_total_quantity: selectedTotalQuantity,
+      selected_total_amount_minor: selectedTotalPrice,
+      payable_total_amount_minor: Math.max(0, selectedTotalPrice - promoDiscount),
+      all_available_items_selected: allAvailableItemsSelected,
+      is_guest_mode: isGuestMode,
+      is_loading: isLoading,
+    },
+    promo: {
+      expanded: promoCodeExpanded,
+      applied: Boolean(appliedPromo),
+      code: appliedPromo?.code,
+      name: appliedPromo?.name,
+      discount_type: appliedPromo?.discount_type,
+      discount_value_minor: appliedPromo?.discount_value_minor,
+      discount_amount_minor: promoDiscount,
+      min_order_amount_minor: appliedPromo?.min_order_amount_minor,
+      max_discount_minor: appliedPromo?.max_discount_minor,
+    },
+    display: {
+      view_mode: viewMode,
+      currency,
+    },
+    limits: {
+      max_item_quantity: maxItemQuantity,
+      max_order_items: maxOrderItems,
+    },
+    confirm: {
+      open: Boolean(confirmAction),
+      type: confirmAction?.type,
+      item_id: confirmAction?.type === 'remove_item' ? confirmAction.itemId : undefined,
+      item_name: confirmAction?.type === 'remove_item' ? confirmAction.itemName : undefined,
+      count: confirmAction?.type === 'clear_selected' ? confirmAction.count : undefined,
+    },
+    state: {
+      load_failed: cartLoadFailed && items.length === 0,
+      empty: !cartLoadFailed && items.length === 0,
+      has_selection: selectedItems.size > 0,
+      promo_expanded: promoCodeExpanded,
+      promo_applied: Boolean(appliedPromo),
+      promo_validating: isValidatingPromo,
+      checkout_submitting: createOrderMutation.isPending,
+      confirm_open: Boolean(confirmAction),
+      confirm_pending: isConfirmPending,
+    },
+  }
 
   // 提交订单
   const handleCheckout = () => {
     if (isGuestMode) {
       toast.error(t.cart.loginForCheckout)
-      setTimeout(() => router.push('/login'), 1000)
+      setTimeout(redirectGuestToLogin, 1000)
       return
     }
 
-    const selectedCartItems = items.filter(item => selectedItems.has(item.id) && item.is_available)
+    const selectedCartItems = items.filter(
+      (item) => selectedItems.has(item.id) && item.is_available
+    )
 
     if (selectedCartItems.length === 0) {
       toast.error(t.cart.selectItems)
@@ -396,7 +667,7 @@ export default function CartPage() {
       return
     }
 
-    const orderItems = selectedCartItems.map(item => ({
+    const orderItems = selectedCartItems.map((item) => ({
       sku: item.sku,
       name: item.name,
       quantity: item.quantity,
@@ -414,18 +685,16 @@ export default function CartPage() {
   if (isLoading) {
     return (
       <div className="space-y-6">
-        <h1 className="text-2xl md:text-3xl font-bold">
-          {t.cart.title}
-        </h1>
+        <h1 className="text-2xl font-bold md:text-3xl">{t.cart.title}</h1>
         <div className="space-y-4">
           {[...Array(3)].map((_, i) => (
             <Card key={i} className="animate-pulse">
               <CardContent className="p-4">
                 <div className="flex gap-4">
-                  <div className="w-20 h-20 bg-muted rounded" />
+                  <div className="h-20 w-20 rounded bg-muted" />
                   <div className="flex-1 space-y-2">
-                    <div className="h-4 bg-muted rounded w-3/4" />
-                    <div className="h-4 bg-muted rounded w-1/2" />
+                    <div className="h-4 w-3/4 rounded bg-muted" />
+                    <div className="h-4 w-1/2 rounded bg-muted" />
                   </div>
                 </div>
               </CardContent>
@@ -436,21 +705,55 @@ export default function CartPage() {
     )
   }
 
+  if (cartLoadFailed && items.length === 0) {
+    return (
+      <div className="flex min-h-[60vh] items-center justify-center">
+        <Card className="w-full max-w-xl border-dashed bg-muted/15">
+          <CardContent className="py-12 text-center">
+            <AlertCircle className="mx-auto mb-4 h-16 w-16 text-muted-foreground" />
+            <h1 className="mb-2 text-xl font-bold md:text-2xl">{t.cart.cartLoadFailedTitle}</h1>
+            <p className="mx-auto mb-6 max-w-md text-sm text-muted-foreground md:text-base">
+              {t.cart.cartLoadFailedDesc}
+            </p>
+            <div className="flex flex-col justify-center gap-3 sm:flex-row">
+              <Button variant="outline" onClick={refetchCart}>
+                <RefreshCw className="mr-2 h-4 w-4" />
+                {t.common.refresh}
+              </Button>
+              <Button asChild>
+                <Link href="/products">{t.cart.goShopping}</Link>
+              </Button>
+            </div>
+            <PluginSlot
+              slot="user.cart.load_failed"
+              context={{ ...userCartPluginContext, section: 'load_failed' }}
+            />
+          </CardContent>
+        </Card>
+      </div>
+    )
+  }
+
   if (items.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[60vh]">
-        <ShoppingCart className="w-16 h-16 text-muted-foreground mb-4" />
-        <h1 className="text-xl md:text-2xl font-bold mb-2">
-          {t.cart.empty}
-        </h1>
-        <p className="text-muted-foreground mb-6">
-          {t.cart.emptyDesc}
-        </p>
-        <Button asChild>
-          <Link href="/products">
-            {t.cart.goShopping}
-          </Link>
-        </Button>
+      <div className="flex min-h-[60vh] items-center justify-center">
+        <Card className="w-full max-w-xl border-dashed bg-muted/15">
+          <CardContent className="py-12 text-center">
+            <ShoppingCart className="mx-auto mb-4 h-16 w-16 text-muted-foreground" />
+            <h1 className="mb-2 text-xl font-bold md:text-2xl">{t.cart.empty}</h1>
+            <div className="mt-6 flex flex-col justify-center gap-3 sm:flex-row">
+              <Button asChild>
+                <Link href="/products">{t.cart.goShopping}</Link>
+              </Button>
+              <Button asChild variant="outline">
+                <Link href={isGuestMode ? '/login' : '/orders'}>
+                  {isGuestMode ? t.cart.loginToCheckout : t.sidebar.myOrders}
+                </Link>
+              </Button>
+            </div>
+            <PluginSlot slot="user.cart.empty" context={{ ...userCartPluginContext, section: 'empty' }} />
+          </CardContent>
+        </Card>
       </div>
     )
   }
@@ -458,70 +761,92 @@ export default function CartPage() {
   return (
     <div className="space-y-6 pb-28 md:pb-24">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl md:text-3xl font-bold">
+        <h1 className="text-2xl font-bold md:text-3xl">
           {t.cart.title}
-          <span className="hidden md:inline text-lg font-normal text-muted-foreground ml-2">
+          <span className="ml-2 hidden text-lg font-normal text-muted-foreground md:inline">
             ({items.length} {t.cart.items})
           </span>
         </h1>
         <div className="flex items-center gap-2">
-          <div className="hidden md:flex items-center border rounded-lg p-0.5">
+          <div className="hidden items-center rounded-lg border p-0.5 md:flex">
             <Button
               variant={viewMode === 'list' ? 'secondary' : 'ghost'}
               size="sm"
               className="h-7 px-2"
               onClick={() => handleViewModeChange('list')}
+              aria-pressed={viewMode === 'list'}
+              aria-label={t.cart.listView}
+              title={t.cart.listView}
             >
               <LayoutList className="h-4 w-4" />
+              <span className="sr-only">{t.cart.listView}</span>
             </Button>
             <Button
               variant={viewMode === 'card' ? 'secondary' : 'ghost'}
               size="sm"
               className="h-7 px-2"
               onClick={() => handleViewModeChange('card')}
+              aria-pressed={viewMode === 'card'}
+              aria-label={t.cart.cardView}
+              title={t.cart.cardView}
             >
               <LayoutGrid className="h-4 w-4" />
+              <span className="sr-only">{t.cart.cardView}</span>
             </Button>
           </div>
-          <Button variant="outline" size="sm" onClick={refetchCart}>
-            <RefreshCw className="h-4 w-4 md:mr-2" />
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={refetchCart}
+            disabled={isGuestMode && isGuestItemsLoading}
+            aria-label={t.cart.refresh}
+            title={t.cart.refresh}
+          >
+            <RefreshCw className={`h-4 w-4 md:mr-2 ${isGuestItemsLoading ? 'animate-spin' : ''}`} />
             <span className="hidden md:inline">{t.cart.refresh}</span>
+            <span className="sr-only md:hidden">{t.cart.refresh}</span>
           </Button>
           <Button
             variant="outline"
             size="sm"
-            onClick={() => {
-              if (selectedItems.size === 0) {
-                toast.error(t.cart.noItemsSelected)
-                return
-              }
-              if (!window.confirm(t.cart.confirmClearSelected)) return
-              if (isGuestMode) {
-                const selectedItemSet = new Set(selectedItems)
-                const remainingGuestItems = getGuestCart().filter((item) => {
-                  const itemId = getGuestDisplayItemId(getGuestCartItemKey(item))
-                  return !selectedItemSet.has(itemId)
-                })
-                setGuestCart(remainingGuestItems)
-                setGuestItems(prev => prev.filter(item => !selectedItemSet.has(item.id)))
-              } else {
-                removeItems(Array.from(selectedItems))
-              }
-              setSelectedItems(new Set())
-            }}
+            onClick={requestClearSelected}
             disabled={selectedItems.size === 0}
+            aria-label={clearSelectedLabel}
+            title={clearSelectedLabel}
           >
             <Trash2 className="h-4 w-4 md:mr-2" />
-            <span className="hidden md:inline">{t.cart.clearSelected}</span>
+            <span className="hidden md:inline">{clearSelectedLabel}</span>
+            <span className="sr-only md:hidden">{clearSelectedLabel}</span>
           </Button>
         </div>
       </div>
 
-      {/* 购物车列表 - 列表视图 */}
-      {isGuestMode && (
-        <Card className="border-dashed">
-          <CardContent className="p-3 text-sm text-muted-foreground">
-            {t.cart.guestModeNotice}
+      <PluginSlot slot="user.cart.top" context={userCartPluginContext} />
+
+      {unavailableItemCount > 0 ? (
+        <div className="flex flex-wrap gap-2">
+          <Badge variant="destructive">
+            {t.cart.unavailableItems}: {unavailableItemCount}
+          </Badge>
+        </div>
+      ) : null}
+
+      {isGuestMode && guestRefreshWarning && (
+        <Card className="border-amber-200 bg-amber-50/60 dark:border-amber-500/40 dark:bg-amber-950/30">
+          <CardContent className="flex flex-col gap-3 p-3 text-sm text-amber-800 dark:text-amber-200 md:flex-row md:items-start md:justify-between">
+            <div className="flex items-start gap-2">
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+              <span>{guestRefreshWarningMessage || t.cart.guestRefreshWarning}</span>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              className="border-amber-300 bg-transparent text-amber-800 hover:bg-amber-100 hover:text-amber-900 dark:border-amber-500/40 dark:text-amber-200 dark:hover:bg-amber-900/40 dark:hover:text-amber-100"
+              onClick={refetchCart}
+              disabled={isGuestItemsLoading}
+            >
+              {t.common.refresh}
+            </Button>
           </CardContent>
         </Card>
       )}
@@ -544,65 +869,109 @@ export default function CartPage() {
                     </div>
                     <Link href={`/products/${item.product_id}`} className="shrink-0">
                       {item.image_url ? (
-                        <img src={item.image_url} alt={item.name} className="w-16 h-16 object-cover rounded"
+                        <img
+                          src={item.image_url}
+                          alt={item.name}
+                          className="h-16 w-16 rounded object-cover"
                           onError={(e) => {
                             e.currentTarget.style.display = 'none'
-                            e.currentTarget.parentElement?.querySelector('.img-fallback')?.classList.remove('hidden')
+                            e.currentTarget.parentElement
+                              ?.querySelector('.img-fallback')
+                              ?.classList.remove('hidden')
                           }}
                         />
                       ) : null}
-                      <div className={`img-fallback w-16 h-16 bg-muted rounded flex items-center justify-center ${item.image_url ? 'hidden' : ''}`}>
-                        <Package className="w-6 h-6 text-muted-foreground" />
+                      <div
+                        className={`img-fallback flex h-16 w-16 items-center justify-center rounded bg-muted ${item.image_url ? 'hidden' : ''}`}
+                      >
+                        <Package className="h-6 w-6 text-muted-foreground" />
                       </div>
                     </Link>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex justify-between items-start gap-2">
-                        <Link href={`/products/${item.product_id}`} className="flex-1 min-w-0">
-                          <h3 className="font-semibold text-sm line-clamp-2 hover:text-primary">{item.name}</h3>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-start justify-between gap-2">
+                        <Link href={`/products/${item.product_id}`} className="min-w-0 flex-1">
+                          <h3 className="line-clamp-2 text-sm font-semibold hover:text-primary">
+                            {item.name}
+                          </h3>
                         </Link>
-                        <Button variant="ghost" size="icon" className="shrink-0 text-muted-foreground hover:text-red-500 -mt-1 -mr-2 h-7 w-7" onClick={() => handleRemove(item.id)}>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="-mr-2 -mt-1 h-7 w-7 shrink-0 text-muted-foreground hover:text-red-500"
+                          onClick={() => requestRemoveItem(item.id)}
+                          aria-label={t.cart.removeItem}
+                          title={t.cart.removeItem}
+                        >
                           <Trash2 className="h-4 w-4" />
+                          <span className="sr-only">{t.cart.removeItem}</span>
                         </Button>
                       </div>
                       {item.attributes && Object.keys(item.attributes).length > 0 && (
-                        <div className="flex flex-wrap gap-1 mt-1">
+                        <div className="mt-1 flex flex-wrap gap-1">
                           {Object.entries(item.attributes).map(([key, value]) => (
-                            <span key={key} className="text-xs px-1.5 py-0.5 bg-muted rounded">{key}: {value}</span>
+                            <span key={key} className="rounded bg-muted px-1.5 py-0.5 text-xs">
+                              {key}: {value}
+                            </span>
                           ))}
                         </div>
                       )}
                       {!item.is_available && (
-                        <div className="flex items-center gap-1 mt-1 text-red-500 text-xs">
-                          <AlertCircle className="w-3 h-3" />
+                        <div className="mt-1 flex items-center gap-1 text-xs text-red-500">
+                          <AlertCircle className="h-3 w-3" />
                           {t.cart.outOfStock}
                         </div>
                       )}
                     </div>
                   </div>
                   {/* 第二行：价格 + 数量控制 */}
-                  <div className="flex items-center justify-between mt-2 pl-7">
-                    <span className="text-red-600 font-bold">{formatPrice(item.price_minor, currency)}</span>
+                  <div className="mt-2 flex items-center justify-between pl-7">
+                    <span className="font-bold text-red-600">
+                      {formatPrice(item.price_minor, currency)}
+                    </span>
                     <div className="flex items-center gap-1">
-                      <Button variant="outline" size="icon" className="h-7 w-7" onClick={() => handleQuantityChange(item.id, item.quantity - 1)} disabled={item.quantity <= 1}>
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        className="h-7 w-7"
+                        onClick={() => handleQuantityChange(item.id, item.quantity - 1)}
+                        disabled={item.quantity <= 1}
+                        aria-label={t.cart.decreaseQuantity}
+                        title={t.cart.decreaseQuantity}
+                      >
                         <Minus className="h-3 w-3" />
+                        <span className="sr-only">{t.cart.decreaseQuantity}</span>
                       </Button>
                       <Input
                         type="number"
                         value={item.quantity}
-                        onChange={(e) => { const val = parseInt(e.target.value); if (!isNaN(val) && val >= 1 && val <= getItemMaxQuantity(item)) handleQuantityChange(item.id, val) }}
-                        className="w-10 h-7 text-center px-0 text-sm"
+                        onChange={(e) => {
+                          const val = parseInt(e.target.value)
+                          if (!isNaN(val) && val >= 1 && val <= getItemMaxQuantity(item))
+                            handleQuantityChange(item.id, val)
+                        }}
+                        className="h-7 w-10 px-0 text-center text-sm"
                         min={1}
                         max={getItemMaxQuantity(item)}
+                        aria-label={t.cart.items}
                       />
-                      <Button variant="outline" size="icon" className="h-7 w-7" onClick={() => handleQuantityChange(item.id, item.quantity + 1)} disabled={item.quantity >= getItemMaxQuantity(item)}>
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        className="h-7 w-7"
+                        onClick={() => handleQuantityChange(item.id, item.quantity + 1)}
+                        disabled={item.quantity >= getItemMaxQuantity(item)}
+                        aria-label={t.cart.increaseQuantity}
+                        title={t.cart.increaseQuantity}
+                      >
                         <Plus className="h-3 w-3" />
+                        <span className="sr-only">{t.cart.increaseQuantity}</span>
                       </Button>
                     </div>
                   </div>
                 </div>
 
                 {/* 桌面端布局 */}
-                <div className="hidden md:flex gap-4">
+                <div className="hidden gap-4 md:flex">
                   <div className="flex items-center">
                     <Checkbox
                       checked={selectedItems.has(item.id)}
@@ -612,56 +981,100 @@ export default function CartPage() {
                   </div>
                   <Link href={`/products/${item.product_id}`} className="shrink-0">
                     {item.image_url ? (
-                      <img src={item.image_url} alt={item.name} className="w-20 h-20 object-cover rounded"
+                      <img
+                        src={item.image_url}
+                        alt={item.name}
+                        className="h-20 w-20 rounded object-cover"
                         onError={(e) => {
                           e.currentTarget.style.display = 'none'
-                          e.currentTarget.parentElement?.querySelector('.img-fallback')?.classList.remove('hidden')
+                          e.currentTarget.parentElement
+                            ?.querySelector('.img-fallback')
+                            ?.classList.remove('hidden')
                         }}
                       />
                     ) : null}
-                    <div className={`img-fallback w-20 h-20 bg-muted rounded flex items-center justify-center ${item.image_url ? 'hidden' : ''}`}>
-                      <Package className="w-8 h-8 text-muted-foreground" />
+                    <div
+                      className={`img-fallback flex h-20 w-20 items-center justify-center rounded bg-muted ${item.image_url ? 'hidden' : ''}`}
+                    >
+                      <Package className="h-8 w-8 text-muted-foreground" />
                     </div>
                   </Link>
-                  <div className="flex-1 min-w-0">
+                  <div className="min-w-0 flex-1">
                     <Link href={`/products/${item.product_id}`}>
-                      <h3 className="font-semibold text-base line-clamp-2 hover:text-primary">{item.name}</h3>
+                      <h3 className="line-clamp-2 text-base font-semibold hover:text-primary">
+                        {item.name}
+                      </h3>
                     </Link>
                     {item.attributes && Object.keys(item.attributes).length > 0 && (
-                      <div className="flex flex-wrap gap-1 mt-1">
+                      <div className="mt-1 flex flex-wrap gap-1">
                         {Object.entries(item.attributes).map(([key, value]) => (
-                          <span key={key} className="text-xs px-2 py-0.5 bg-muted rounded">{key}: {value}</span>
+                          <span key={key} className="rounded bg-muted px-2 py-0.5 text-xs">
+                            {key}: {value}
+                          </span>
                         ))}
                       </div>
                     )}
                     {!item.is_available && (
-                      <div className="flex items-center gap-1 mt-1 text-red-500 text-xs">
-                        <AlertCircle className="w-3 h-3" />
+                      <div className="mt-1 flex items-center gap-1 text-xs text-red-500">
+                        <AlertCircle className="h-3 w-3" />
                         {t.cart.outOfStock}
                       </div>
                     )}
-                    <div className="flex items-center justify-between mt-2">
-                      <span className="text-red-600 font-bold">{formatPrice(item.price_minor, currency)}</span>
+                    <div className="mt-2 flex items-center justify-between">
+                      <span className="font-bold text-red-600">
+                        {formatPrice(item.price_minor, currency)}
+                      </span>
                       <div className="flex items-center gap-2">
-                        <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => handleQuantityChange(item.id, item.quantity - 1)} disabled={item.quantity <= 1}>
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          className="h-8 w-8"
+                          onClick={() => handleQuantityChange(item.id, item.quantity - 1)}
+                          disabled={item.quantity <= 1}
+                          aria-label={t.cart.decreaseQuantity}
+                          title={t.cart.decreaseQuantity}
+                        >
                           <Minus className="h-4 w-4" />
+                          <span className="sr-only">{t.cart.decreaseQuantity}</span>
                         </Button>
                         <Input
                           type="number"
                           value={item.quantity}
-                          onChange={(e) => { const val = parseInt(e.target.value); if (!isNaN(val) && val >= 1 && val <= getItemMaxQuantity(item)) handleQuantityChange(item.id, val) }}
-                          className="w-16 h-8 text-center"
+                          onChange={(e) => {
+                            const val = parseInt(e.target.value)
+                            if (!isNaN(val) && val >= 1 && val <= getItemMaxQuantity(item))
+                              handleQuantityChange(item.id, val)
+                          }}
+                          className="h-8 w-16 text-center"
                           min={1}
                           max={getItemMaxQuantity(item)}
+                          aria-label={t.cart.items}
                         />
-                        <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => handleQuantityChange(item.id, item.quantity + 1)} disabled={item.quantity >= getItemMaxQuantity(item)}>
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          className="h-8 w-8"
+                          onClick={() => handleQuantityChange(item.id, item.quantity + 1)}
+                          disabled={item.quantity >= getItemMaxQuantity(item)}
+                          aria-label={t.cart.increaseQuantity}
+                          title={t.cart.increaseQuantity}
+                        >
                           <Plus className="h-4 w-4" />
+                          <span className="sr-only">{t.cart.increaseQuantity}</span>
                         </Button>
                       </div>
                     </div>
                   </div>
-                  <Button variant="ghost" size="icon" className="shrink-0 text-muted-foreground hover:text-red-500" onClick={() => handleRemove(item.id)}>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="shrink-0 text-muted-foreground hover:text-red-500"
+                    onClick={() => requestRemoveItem(item.id)}
+                    aria-label={t.cart.removeItem}
+                    title={t.cart.removeItem}
+                  >
                     <Trash2 className="h-4 w-4" />
+                    <span className="sr-only">{t.cart.removeItem}</span>
                   </Button>
                 </div>
               </CardContent>
@@ -672,25 +1085,26 @@ export default function CartPage() {
 
       {/* 购物车列表 - 卡片视图 */}
       {viewMode === 'card' && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
           {items.map((item) => (
-            <Card key={item.id} className={`hover:shadow-lg transition-all flex flex-col h-full ${!item.is_available ? 'opacity-60' : ''}`}>
+            <Card
+              key={item.id}
+              className={`flex h-full flex-col transition-all hover:shadow-lg ${!item.is_available ? 'opacity-60' : ''}`}
+            >
               <CardHeader className="pb-3">
                 <div className="flex items-center justify-between gap-2">
-                  <label className="flex items-center gap-2 cursor-pointer">
+                  <label className="flex cursor-pointer items-center gap-2">
                     <Checkbox
                       checked={selectedItems.has(item.id)}
                       onCheckedChange={() => handleSelectItem(item.id)}
                       disabled={!item.is_available}
                     />
-                    <span className="text-xs text-muted-foreground">
-                      {t.cart.select}
-                    </span>
+                    <span className="text-xs text-muted-foreground">{t.cart.select}</span>
                   </label>
                   <div className="flex items-center gap-1">
                     {!item.is_available && (
-                      <span className="text-xs text-red-500 flex items-center gap-1">
-                        <AlertCircle className="w-3 h-3" />
+                      <span className="flex items-center gap-1 text-xs text-red-500">
+                        <AlertCircle className="h-3 w-3" />
                         {t.cart.outOfStock}
                       </span>
                     )}
@@ -698,70 +1112,109 @@ export default function CartPage() {
                       variant="ghost"
                       size="icon"
                       className="h-7 w-7 text-muted-foreground hover:text-red-500"
-                      onClick={() => handleRemove(item.id)}
+                      onClick={() => requestRemoveItem(item.id)}
+                      aria-label={t.cart.removeItem}
+                      title={t.cart.removeItem}
                     >
                       <Trash2 className="h-4 w-4" />
+                      <span className="sr-only">{t.cart.removeItem}</span>
                     </Button>
                   </div>
                 </div>
               </CardHeader>
 
-              <CardContent className="space-y-3 flex-1">
+              <CardContent className="flex-1 space-y-3">
                 {/* 商品信息 */}
                 <div className="flex items-start gap-3">
                   {/* 商品图片 */}
                   <Link href={`/products/${item.product_id}`} className="shrink-0">
                     {item.image_url ? (
-                      <div className="w-16 h-16 rounded overflow-hidden bg-muted">
-                        <img src={item.image_url} alt={item.name} className="w-full h-full object-cover"
+                      <div className="h-16 w-16 overflow-hidden rounded bg-muted">
+                        <img
+                          src={item.image_url}
+                          alt={item.name}
+                          className="h-full w-full object-cover"
                           onError={(e) => {
                             e.currentTarget.style.display = 'none'
-                            e.currentTarget.parentElement?.querySelector('.img-fallback')?.classList.remove('hidden')
+                            e.currentTarget.parentElement
+                              ?.querySelector('.img-fallback')
+                              ?.classList.remove('hidden')
                           }}
                         />
-                        <div className="img-fallback w-full h-full flex items-center justify-center hidden">
-                          <Package className="w-8 h-8 text-muted-foreground" />
+                        <div className="img-fallback flex hidden h-full w-full items-center justify-center">
+                          <Package className="h-8 w-8 text-muted-foreground" />
                         </div>
                       </div>
                     ) : (
-                      <div className="w-16 h-16 rounded bg-muted flex items-center justify-center">
-                        <Package className="w-8 h-8 text-muted-foreground" />
+                      <div className="flex h-16 w-16 items-center justify-center rounded bg-muted">
+                        <Package className="h-8 w-8 text-muted-foreground" />
                       </div>
                     )}
                   </Link>
 
                   {/* 商品详情 */}
-                  <div className="flex-1 min-w-0">
+                  <div className="min-w-0 flex-1">
                     <Link href={`/products/${item.product_id}`}>
-                      <h3 className="font-medium text-sm line-clamp-2 hover:text-primary mb-1">{item.name}</h3>
+                      <h3 className="mb-1 line-clamp-2 text-sm font-medium hover:text-primary">
+                        {item.name}
+                      </h3>
                     </Link>
                     {item.attributes && Object.keys(item.attributes).length > 0 && (
                       <div className="flex flex-wrap gap-1">
-                        {Object.entries(item.attributes).slice(0, 2).map(([key, value]) => (
-                          <span key={key} className="text-xs px-1.5 py-0.5 bg-muted rounded">{key}: {value}</span>
-                        ))}
+                        {Object.entries(item.attributes)
+                          .slice(0, 2)
+                          .map(([key, value]) => (
+                            <span key={key} className="rounded bg-muted px-1.5 py-0.5 text-xs">
+                              {key}: {value}
+                            </span>
+                          ))}
                       </div>
                     )}
                   </div>
                 </div>
 
                 {/* 价格和数量 */}
-                <div className="flex items-center justify-between pt-2 border-t">
-                  <span className="text-red-600 font-bold">{formatPrice(item.price_minor, currency)}</span>
+                <div className="flex items-center justify-between border-t pt-2">
+                  <span className="font-bold text-red-600">
+                    {formatPrice(item.price_minor, currency)}
+                  </span>
                   <div className="flex items-center gap-1">
-                    <Button variant="outline" size="icon" className="h-7 w-7" onClick={() => handleQuantityChange(item.id, item.quantity - 1)} disabled={item.quantity <= 1}>
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      className="h-7 w-7"
+                      onClick={() => handleQuantityChange(item.id, item.quantity - 1)}
+                      disabled={item.quantity <= 1}
+                      aria-label={t.cart.decreaseQuantity}
+                      title={t.cart.decreaseQuantity}
+                    >
                       <Minus className="h-3 w-3" />
+                      <span className="sr-only">{t.cart.decreaseQuantity}</span>
                     </Button>
                     <Input
                       type="number"
                       value={item.quantity}
-                      onChange={(e) => { const val = parseInt(e.target.value); if (!isNaN(val) && val >= 1 && val <= getItemMaxQuantity(item)) handleQuantityChange(item.id, val) }}
-                      className="w-12 h-7 text-center px-1 text-sm"
+                      onChange={(e) => {
+                        const val = parseInt(e.target.value)
+                        if (!isNaN(val) && val >= 1 && val <= getItemMaxQuantity(item))
+                          handleQuantityChange(item.id, val)
+                      }}
+                      className="h-7 w-12 px-1 text-center text-sm"
                       min={1}
                       max={getItemMaxQuantity(item)}
+                      aria-label={t.cart.items}
                     />
-                    <Button variant="outline" size="icon" className="h-7 w-7" onClick={() => handleQuantityChange(item.id, item.quantity + 1)} disabled={item.quantity >= getItemMaxQuantity(item)}>
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      className="h-7 w-7"
+                      onClick={() => handleQuantityChange(item.id, item.quantity + 1)}
+                      disabled={item.quantity >= getItemMaxQuantity(item)}
+                      aria-label={t.cart.increaseQuantity}
+                      title={t.cart.increaseQuantity}
+                    >
                       <Plus className="h-3 w-3" />
+                      <span className="sr-only">{t.cart.increaseQuantity}</span>
                     </Button>
                   </div>
                 </div>
@@ -769,15 +1222,15 @@ export default function CartPage() {
                 {/* 小计 */}
                 <div className="flex items-center justify-between text-sm">
                   <span className="text-muted-foreground">{t.cart.subtotal}</span>
-                  <span className="font-semibold text-primary">{formatPrice(item.price_minor * item.quantity, currency)}</span>
+                  <span className="font-semibold text-primary">
+                    {formatPrice(item.price_minor * item.quantity, currency)}
+                  </span>
                 </div>
               </CardContent>
 
               <CardFooter className="pt-3">
                 <Button asChild variant="outline" size="sm" className="w-full">
-                  <Link href={`/products/${item.product_id}`}>
-                    {t.cart.viewProduct}
-                  </Link>
+                  <Link href={`/products/${item.product_id}`}>{t.cart.viewProduct}</Link>
                 </Button>
               </CardFooter>
             </Card>
@@ -785,19 +1238,25 @@ export default function CartPage() {
         </div>
       )}
 
+      <PluginSlot slot="user.cart.before_checkout" context={userCartPluginContext} />
+
       {/* 结算栏 - 悬浮卡片固定在底部 */}
-      <div className="fixed bottom-16 md:bottom-6 left-0 md:left-64 right-0 z-40 px-0 md:px-6">
-        <Card className="rounded-none md:rounded-lg border-x-0 md:border shadow-lg md:shadow-xl">
+      <div className="fixed bottom-16 left-0 right-0 z-40 px-0 md:bottom-6 md:left-64 md:px-6">
+        <Card className="rounded-none border-x-0 shadow-lg md:rounded-lg md:border md:shadow-xl">
           <CardContent className="p-3 md:p-4">
+            <PluginSlot
+              slot="user.cart.checkout.top"
+              context={{ ...userCartPluginContext, section: 'checkout' }}
+            />
             {/* 移动端：优惠码输入行（展开时显示在上方） */}
             {promoCodeExpanded && !appliedPromo && (
-              <div className="flex items-center gap-2 mb-2 md:hidden">
+              <div className="mb-2 flex items-center gap-2 md:hidden">
                 <div className="relative flex-1">
                   <Input
                     value={promoCodeInput}
                     onChange={(e) => setPromoCodeInput(e.target.value)}
                     placeholder={t.promoCode.promoCodePlaceholder}
-                    className="pr-20 h-8 text-sm"
+                    className="h-8 pr-20 text-sm"
                     maxLength={50}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter') handleApplyPromoCode()
@@ -808,14 +1267,21 @@ export default function CartPage() {
                     onClick={handleApplyPromoCode}
                     disabled={isGuestMode || !promoCodeInput.trim() || isValidatingPromo}
                     size="sm"
-                    className="absolute right-0.5 top-1/2 -translate-y-1/2 h-7 text-xs px-3"
+                    className="absolute right-0.5 top-1/2 h-7 -translate-y-1/2 px-3 text-xs"
                   >
-                    {isValidatingPromo ? <Loader2 className="h-3 w-3 animate-spin" /> : t.promoCode.apply}
+                    {isValidatingPromo ? (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : (
+                      t.promoCode.apply
+                    )}
                   </Button>
                 </div>
                 <button
-                  className="text-xs text-muted-foreground hover:text-foreground shrink-0"
-                  onClick={() => { setPromoCodeExpanded(false); setPromoCodeInput('') }}
+                  className="shrink-0 text-xs text-muted-foreground hover:text-foreground"
+                  onClick={() => {
+                    setPromoCodeExpanded(false)
+                    setPromoCodeInput('')
+                  }}
                 >
                   {t.common.cancel}
                 </button>
@@ -823,34 +1289,37 @@ export default function CartPage() {
             )}
             {/* 移动端：已应用优惠码信息 */}
             {appliedPromo && (
-              <div className="flex items-center gap-2 mb-2 md:hidden">
-                <span className="text-xs text-green-600 dark:text-green-400 font-medium">
+              <div className="mb-2 flex items-center gap-2 md:hidden">
+                <span className="text-xs font-medium text-green-600 dark:text-green-400">
                   {appliedPromo.code}: -{formatPrice(promoDiscount, currency)}
                 </span>
                 <button
-                  className="text-xs text-red-500 hover:text-red-600 underline"
+                  className="text-xs text-red-500 underline hover:text-red-600"
                   onClick={handleRemovePromoCode}
                 >
                   {t.promoCode.remove}
                 </button>
               </div>
             )}
+            <PluginSlot
+              slot="user.cart.checkout.promo.after"
+              context={{ ...userCartPluginContext, section: 'checkout_promo' }}
+            />
+            <PluginSlot
+              slot="user.cart.checkout.submit.before"
+              context={{ ...userCartPluginContext, section: 'checkout_submit' }}
+            />
             <div className="flex items-center justify-between gap-2 md:gap-4">
               {/* 左侧：全选 + 优惠码 */}
-              <div className="flex items-center gap-2 md:gap-3 min-w-0">
-                <label className="flex items-center gap-2 cursor-pointer shrink-0">
-                  <Checkbox
-                    checked={(() => { const avail = items.filter(i => i.is_available); return avail.length > 0 && avail.every(i => selectedItems.has(i.id)) })()}
-                    onCheckedChange={handleSelectAll}
-                  />
-                  <span className="text-xs md:text-sm">
-                    {t.cart.selectAll}
-                  </span>
+              <div className="flex min-w-0 items-center gap-2 md:gap-3">
+                <label className="flex shrink-0 cursor-pointer items-center gap-2">
+                  <Checkbox checked={allAvailableItemsSelected} onCheckedChange={handleSelectAll} />
+                  <span className="text-xs md:text-sm">{t.cart.selectAll}</span>
                 </label>
                 {/* 优惠码触发文字（未展开且未应用时显示） */}
                 {!promoCodeExpanded && !appliedPromo && (
                   <button
-                    className="text-xs md:text-sm text-primary hover:text-primary/80 font-medium whitespace-nowrap truncate"
+                    className="truncate whitespace-nowrap text-xs font-medium text-primary hover:text-primary/80 md:text-sm"
                     onClick={() => setPromoCodeExpanded(true)}
                   >
                     {t.cart.havePromoCode}
@@ -858,13 +1327,13 @@ export default function CartPage() {
                 )}
                 {/* PC端：优惠码输入框内联显示 */}
                 {promoCodeExpanded && !appliedPromo && (
-                  <div className="hidden md:flex items-center gap-2">
+                  <div className="hidden items-center gap-2 md:flex">
                     <div className="relative">
                       <Input
                         value={promoCodeInput}
                         onChange={(e) => setPromoCodeInput(e.target.value)}
                         placeholder={t.promoCode.promoCodePlaceholder}
-                        className="pr-20 h-8 text-sm w-52"
+                        className="h-8 w-52 pr-20 text-sm"
                         maxLength={50}
                         onKeyDown={(e) => {
                           if (e.key === 'Enter') handleApplyPromoCode()
@@ -875,14 +1344,21 @@ export default function CartPage() {
                         onClick={handleApplyPromoCode}
                         disabled={isGuestMode || !promoCodeInput.trim() || isValidatingPromo}
                         size="sm"
-                        className="absolute right-0.5 top-1/2 -translate-y-1/2 h-7 text-xs px-3"
+                        className="absolute right-0.5 top-1/2 h-7 -translate-y-1/2 px-3 text-xs"
                       >
-                        {isValidatingPromo ? <Loader2 className="h-3 w-3 animate-spin" /> : t.promoCode.apply}
+                        {isValidatingPromo ? (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        ) : (
+                          t.promoCode.apply
+                        )}
                       </Button>
                     </div>
                     <button
-                      className="text-xs text-muted-foreground hover:text-foreground shrink-0"
-                      onClick={() => { setPromoCodeExpanded(false); setPromoCodeInput('') }}
+                      className="shrink-0 text-xs text-muted-foreground hover:text-foreground"
+                      onClick={() => {
+                        setPromoCodeExpanded(false)
+                        setPromoCodeInput('')
+                      }}
                     >
                       {t.common.cancel}
                     </button>
@@ -890,12 +1366,12 @@ export default function CartPage() {
                 )}
                 {/* PC端：已应用优惠码内联显示 */}
                 {appliedPromo && (
-                  <div className="hidden md:flex items-center gap-2">
-                    <span className="text-sm text-green-600 dark:text-green-400 font-medium">
+                  <div className="hidden items-center gap-2 md:flex">
+                    <span className="text-sm font-medium text-green-600 dark:text-green-400">
                       {appliedPromo.code}: -{formatPrice(promoDiscount, currency)}
                     </span>
                     <button
-                      className="text-xs text-red-500 hover:text-red-600 underline"
+                      className="text-xs text-red-500 underline hover:text-red-600"
                       onClick={handleRemovePromoCode}
                     >
                       {t.promoCode.remove}
@@ -906,24 +1382,26 @@ export default function CartPage() {
 
               {/* 右侧：合计和结算按钮 */}
               <div className="flex items-center gap-2 md:gap-4">
-                <div className="text-right min-w-0">
-                  <span className="text-xs text-muted-foreground hidden sm:inline">
-                    {t.cart.selected}: {selectedItems.size}/{items.length}
-                    ({selectedTotalQuantity} {t.cart.pcs})
+                <div className="min-w-0 text-right">
+                  <span className="hidden text-xs text-muted-foreground sm:inline">
+                    {t.cart.selected}: {selectedItems.size}/{items.length}({selectedTotalQuantity}{' '}
+                    {t.cart.pcs})
                   </span>
-                  <div className="text-sm md:text-lg font-bold whitespace-nowrap">
+                  <div className="whitespace-nowrap text-sm font-bold md:text-lg">
                     <span className="hidden sm:inline">{t.cart.total}:</span>
                     {appliedPromo ? (
                       <>
-                        <span className="text-muted-foreground line-through text-xs ml-1 font-normal">
+                        <span className="ml-1 text-xs font-normal text-muted-foreground line-through">
                           {formatPrice(selectedTotalPrice, currency)}
                         </span>
-                        <span className="text-red-600 ml-1">
+                        <span className="ml-1 text-red-600">
                           {formatPrice(Math.max(0, selectedTotalPrice - promoDiscount), currency)}
                         </span>
                       </>
                     ) : (
-                      <span className="text-red-600 ml-1">{formatPrice(selectedTotalPrice, currency)}</span>
+                      <span className="ml-1 text-red-600">
+                        {formatPrice(selectedTotalPrice, currency)}
+                      </span>
                     )}
                   </div>
                 </div>
@@ -931,17 +1409,62 @@ export default function CartPage() {
                   size="default"
                   className="shrink-0"
                   onClick={handleCheckout}
-                  disabled={selectedItems.size === 0 || (!isGuestMode && createOrderMutation.isPending)}
+                  disabled={
+                    selectedItems.size === 0 || (!isGuestMode && createOrderMutation.isPending)
+                  }
                 >
                   {!isGuestMode && createOrderMutation.isPending
                     ? t.cart.submitting
-                    : (isGuestMode ? t.cart.loginToCheckout : t.cart.checkout)}
+                    : isGuestMode
+                      ? t.cart.loginToCheckout
+                      : t.cart.checkout}
                 </Button>
               </div>
             </div>
           </CardContent>
         </Card>
       </div>
+      <PluginSlot slot="user.cart.bottom" context={userCartPluginContext} />
+
+      <AlertDialog
+        open={!!confirmAction}
+        onOpenChange={(open) => {
+          if (!open && !isConfirmPending) {
+            setConfirmAction(null)
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {confirmAction?.type === 'clear_selected'
+                ? t.cart.confirmClearSelected
+                : t.cart.confirmDeleteCartItem}
+            </AlertDialogTitle>
+          <AlertDialogDescription>
+            {confirmAction?.type === 'remove_item'
+              ? confirmAction.itemName
+              : `${confirmAction?.count || 0} ${t.cart.items}`}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <PluginSlot
+          slot="user.cart.confirm_dialog.before"
+          context={{ ...userCartPluginContext, section: 'confirm_dialog' }}
+        />
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={isConfirmPending}>{t.common.cancel}</AlertDialogCancel>
+          <AlertDialogAction
+              disabled={isConfirmPending}
+              onClick={(event) => {
+                event.preventDefault()
+                void handleConfirmAction()
+              }}
+            >
+              {isConfirmPending ? t.common.processing : t.common.confirm}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

@@ -3,9 +3,20 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { getApiKeys, createApiKey, deleteApiKey } from '@/lib/api'
+import { resolveApiErrorMessage } from '@/lib/api-error'
 import { DataTable } from '@/components/admin/data-table'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Card, CardContent } from '@/components/ui/card'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import {
   Dialog,
   DialogContent,
@@ -25,27 +36,59 @@ import {
 import { Checkbox } from '@/components/ui/checkbox'
 import { useForm } from 'react-hook-form'
 import { useToast } from '@/hooks/use-toast'
-import { Key, Plus, Trash2 } from 'lucide-react'
+import { Copy, Plus, Trash2 } from 'lucide-react'
 import { formatDate } from '@/lib/utils'
 import { PERMISSIONS, PERMISSIONS_BY_CATEGORY, CATEGORY_LABEL_KEYS } from '@/lib/constants'
 import { useLocale } from '@/hooks/use-locale'
 import { getTranslations } from '@/lib/i18n'
 import { usePageTitle } from '@/hooks/use-page-title'
+import { PluginExtensionList } from '@/components/plugins/plugin-extension-list'
+import { PluginSlot } from '@/components/plugins/plugin-slot'
+import { usePluginExtensionBatch } from '@/lib/plugin-extension-batch'
+
+interface ApiKeyItem {
+  id: number
+  key_name: string
+  api_key: string
+  platform?: string
+  scopes?: string[]
+  rate_limit?: number
+  created_at?: string
+}
+
+function buildAdminApiKeySummary(apiKey: ApiKeyItem) {
+  return {
+    id: apiKey.id,
+    key_name: apiKey.key_name,
+    api_key: apiKey.api_key,
+    platform: apiKey.platform,
+    scopes: Array.isArray(apiKey.scopes) ? apiKey.scopes : [],
+    scopes_count: Array.isArray(apiKey.scopes) ? apiKey.scopes.length : 0,
+    rate_limit: apiKey.rate_limit,
+    created_at: apiKey.created_at,
+  }
+}
 
 export default function ApiKeysPage() {
   const [open, setOpen] = useState(false)
   const [secretDialogOpen, setSecretDialogOpen] = useState(false)
   const [newSecret, setNewSecret] = useState('')
+  const [deleteTarget, setDeleteTarget] = useState<any>(null)
   const queryClient = useQueryClient()
   const toast = useToast()
   const { locale } = useLocale()
   const t = getTranslations(locale)
   usePageTitle(t.pageTitle.adminApiKeys)
+  const getAdminLabel = (key: string, fallback: string) => {
+    const value = t.admin[key as keyof typeof t.admin]
+    return typeof value === 'string' ? value : fallback
+  }
 
   const { data, isLoading } = useQuery({
     queryKey: ['apiKeys'],
     queryFn: getApiKeys,
   })
+  const apiKeys: ApiKeyItem[] = data?.data?.items || []
 
   const form = useForm({
     defaultValues: {
@@ -70,7 +113,7 @@ export default function ApiKeysPage() {
       }
     },
     onError: (error: any) => {
-      toast.error(error.message || t.common.failed)
+      toast.error(resolveApiErrorMessage(error, t, t.common.failed))
     },
   })
 
@@ -79,14 +122,54 @@ export default function ApiKeysPage() {
     onSuccess: () => {
       toast.success(t.admin.apiKeyDeleted)
       queryClient.invalidateQueries({ queryKey: ['apiKeys'] })
+      setDeleteTarget(null)
     },
     onError: (error: any) => {
-      toast.error(error.message || t.common.failed)
+      toast.error(resolveApiErrorMessage(error, t, t.common.failed))
     },
   })
 
   function onSubmit(values: any) {
     createMutation.mutate(values)
+  }
+
+  const adminApiKeysPluginContext = {
+    view: 'admin_api_keys',
+    summary: {
+      total_keys: apiKeys.length,
+      create_dialog_open: open,
+      secret_dialog_open: secretDialogOpen,
+      selected_scope_count: form.watch('scopes')?.length || 0,
+    },
+  }
+  const adminApiKeyRowActionItems = apiKeys.map((apiKey: ApiKeyItem, index: number) => ({
+    key: String(apiKey.id),
+    slot: 'admin.api_keys.row_actions',
+    path: '/admin/api-keys',
+    hostContext: {
+      view: 'admin_api_keys_row',
+      api_key: buildAdminApiKeySummary(apiKey),
+      row: {
+        index: index + 1,
+      },
+      summary: adminApiKeysPluginContext.summary,
+    },
+  }))
+  const adminApiKeyRowActionExtensions = usePluginExtensionBatch({
+    scope: 'admin',
+    path: '/admin/api-keys',
+    items: adminApiKeyRowActionItems,
+    enabled: adminApiKeyRowActionItems.length > 0,
+  })
+  const adminApiKeyCreatePluginContext = {
+    view: 'admin_api_key_create',
+    form: {
+      key_name: form.watch('key_name') || undefined,
+      platform: form.watch('platform') || undefined,
+      rate_limit: form.watch('rate_limit') || undefined,
+      selected_scopes: form.watch('scopes') || [],
+    },
+    summary: adminApiKeysPluginContext.summary,
   }
 
   const columns = [
@@ -101,9 +184,7 @@ export default function ApiKeysPage() {
     {
       header: 'API Key',
       cell: ({ row }: { row: { original: any } }) => (
-        <code className="text-xs bg-muted px-2 py-1 rounded">
-          {row.original.api_key}
-        </code>
+        <code className="rounded bg-muted px-2 py-1 text-xs">{row.original.api_key}</code>
       ),
     },
     {
@@ -123,26 +204,32 @@ export default function ApiKeysPage() {
     },
     {
       header: t.admin.actions,
-      cell: ({ row }: { row: { original: any } }) => (
-        <Button
-          size="sm"
-          variant="destructive"
-          onClick={() => {
-            if (confirm(t.admin.confirmDeleteApiKey)) {
-              deleteMutation.mutate(row.original.id)
-            }
-          }}
-        >
-          <Trash2 className="h-4 w-4" />
-        </Button>
-      ),
+      cell: ({ row }: { row: { original: ApiKeyItem } }) => {
+        const rowExtensions = adminApiKeyRowActionExtensions[String(row.original.id)] || []
+        return (
+          <div className="flex items-center gap-2">
+            <Button size="sm" variant="destructive" onClick={() => setDeleteTarget(row.original)}>
+              <Trash2 className="h-4 w-4" />
+            </Button>
+            {rowExtensions.length > 0 ? (
+              <PluginExtensionList extensions={rowExtensions} display="inline" />
+            ) : null}
+          </div>
+        )
+      },
     },
   ]
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold">{t.admin.apiKeyManagement}</h1>
+      <PluginSlot slot="admin.api_keys.top" context={adminApiKeysPluginContext} />
+      <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+        <div>
+          <h1 className="text-3xl font-bold">{t.admin.apiKeyManagement}</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {apiKeys.length > 0 ? t.admin.apiSecretOnce : t.admin.createApiKey}
+          </p>
+        </div>
         <Dialog open={open} onOpenChange={setOpen}>
           <DialogTrigger asChild>
             <Button>
@@ -154,6 +241,7 @@ export default function ApiKeysPage() {
             <DialogHeader>
               <DialogTitle>{t.admin.createApiKey}</DialogTitle>
             </DialogHeader>
+            <PluginSlot slot="admin.api_keys.create.top" context={adminApiKeyCreatePluginContext} />
             <Form {...form}>
               <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
                 <FormField
@@ -206,14 +294,19 @@ export default function ApiKeysPage() {
                   control={form.control}
                   name="scopes"
                   render={() => (
-                    <FormItem className="flex flex-col min-h-0">
+                    <FormItem className="flex min-h-0 flex-col">
                       <FormLabel className="shrink-0">{t.admin.scopesRequired}</FormLabel>
-                      <div className="flex gap-2 mb-2">
+                      <div className="mb-2 flex gap-2">
                         <Button
                           type="button"
                           variant="outline"
                           size="sm"
-                          onClick={() => form.setValue('scopes', PERMISSIONS.map(p => p.value))}
+                          onClick={() =>
+                            form.setValue(
+                              'scopes',
+                              PERMISSIONS.map((p) => p.value)
+                            )
+                          }
                         >
                           {t.admin.permSelectAll}
                         </Button>
@@ -231,18 +324,21 @@ export default function ApiKeysPage() {
                           size="sm"
                           onClick={() => {
                             const current = form.getValues('scopes') || []
-                            const allValues = PERMISSIONS.map(p => p.value)
-                            form.setValue('scopes', allValues.filter(v => !current.includes(v)))
+                            const allValues = PERMISSIONS.map((p) => p.value)
+                            form.setValue(
+                              'scopes',
+                              allValues.filter((v) => !current.includes(v))
+                            )
                           }}
                         >
                           {t.admin.permInvertSelection}
                         </Button>
                       </div>
-                      <div className="border rounded-md p-4 h-64 overflow-y-auto space-y-4">
+                      <div className="h-64 space-y-4 overflow-y-auto rounded-md border p-4">
                         {Object.entries(PERMISSIONS_BY_CATEGORY).map(([category, perms]) => (
                           <div key={category} className="space-y-2">
-                            <div className="font-medium text-sm text-primary border-b pb-1 flex items-center justify-between">
-                              <span>{t.admin[CATEGORY_LABEL_KEYS[category] as keyof typeof t.admin] || category}</span>
+                            <div className="flex items-center justify-between border-b pb-1 text-sm font-medium text-primary">
+                              <span>{getAdminLabel(CATEGORY_LABEL_KEYS[category], category)}</span>
                               <Button
                                 type="button"
                                 variant="ghost"
@@ -250,16 +346,28 @@ export default function ApiKeysPage() {
                                 className="h-5 px-1.5 text-xs"
                                 onClick={() => {
                                   const current = form.getValues('scopes') || []
-                                  const categoryValues = perms.map(p => p.value)
-                                  const allSelected = categoryValues.every(v => current.includes(v))
+                                  const categoryValues = perms.map((p) => p.value)
+                                  const allSelected = categoryValues.every((v) =>
+                                    current.includes(v)
+                                  )
                                   if (allSelected) {
-                                    form.setValue('scopes', current.filter(v => !categoryValues.includes(v)))
+                                    form.setValue(
+                                      'scopes',
+                                      current.filter((v) => !categoryValues.includes(v))
+                                    )
                                   } else {
-                                    form.setValue('scopes', [...new Set([...current, ...categoryValues])])
+                                    form.setValue('scopes', [
+                                      ...new Set([...current, ...categoryValues]),
+                                    ])
                                   }
                                 }}
                               >
-                                {(form.watch('scopes') || []).length > 0 && perms.map(p => p.value).every(v => (form.watch('scopes') || []).includes(v)) ? t.admin.permDeselectAll : t.admin.permSelectAll}
+                                {(form.watch('scopes') || []).length > 0 &&
+                                perms
+                                  .map((p) => p.value)
+                                  .every((v) => (form.watch('scopes') || []).includes(v))
+                                  ? t.admin.permDeselectAll
+                                  : t.admin.permSelectAll}
                               </Button>
                             </div>
                             <div className="grid grid-cols-2 gap-2 pl-2">
@@ -279,13 +387,15 @@ export default function ApiKeysPage() {
                                             if (checked) {
                                               field.onChange([...currentValue, permValue])
                                             } else {
-                                              field.onChange(currentValue.filter((v: string) => v !== permValue))
+                                              field.onChange(
+                                                currentValue.filter((v: string) => v !== permValue)
+                                              )
                                             }
                                           }}
                                         />
                                       </FormControl>
-                                      <FormLabel className="text-sm font-normal cursor-pointer leading-tight">
-                                        {t.admin[permission.labelKey as keyof typeof t.admin] || permission.value}
+                                      <FormLabel className="cursor-pointer text-sm font-normal leading-tight">
+                                        {getAdminLabel(permission.labelKey, permission.value)}
                                       </FormLabel>
                                     </FormItem>
                                   )}
@@ -295,8 +405,11 @@ export default function ApiKeysPage() {
                           </div>
                         ))}
                       </div>
-                      <p className="text-xs text-muted-foreground mt-2">
-                        {t.admin.selectedPermissions.replace('{count}', String(form.watch('scopes')?.length || 0))}
+                      <p className="mt-2 text-xs text-muted-foreground">
+                        {t.admin.selectedPermissions.replace(
+                          '{count}',
+                          String(form.watch('scopes')?.length || 0)
+                        )}
                       </p>
                       <FormMessage />
                     </FormItem>
@@ -317,44 +430,92 @@ export default function ApiKeysPage() {
         </Dialog>
       </div>
 
-      <DataTable
-        columns={columns}
-        data={data?.data?.items || []}
-        isLoading={isLoading}
-      />
+      <DataTable columns={columns} data={apiKeys} isLoading={isLoading} />
 
       {/* Secret Key Dialog */}
-      <Dialog open={secretDialogOpen} onOpenChange={(open) => {
-        if (!open) {
-          setSecretDialogOpen(false)
-          setNewSecret('')
-        }
-      }}>
+      <Dialog
+        open={secretDialogOpen}
+        onOpenChange={(open) => {
+          if (!open) {
+            setSecretDialogOpen(false)
+            setNewSecret('')
+          }
+        }}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>{t.admin.apiSecretOnce}</DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
-            <p className="text-sm text-muted-foreground">
-              {t.admin.apiSecretOnce}
-            </p>
-            <code className="block p-3 bg-muted rounded-md text-sm font-mono break-all select-all">
+            <p className="text-sm text-muted-foreground">{t.admin.apiSecretOnce}</p>
+            <code className="block select-all break-all rounded-md bg-muted p-3 font-mono text-sm">
               {newSecret}
             </code>
           </div>
           <div className="flex justify-end">
             <Button
               variant="outline"
-              onClick={() => {
-                navigator.clipboard.writeText(newSecret)
-                toast.success(t.order.copiedToClipboard)
+              onClick={async () => {
+                if (typeof navigator === 'undefined' || !navigator.clipboard) {
+                  return
+                }
+                await navigator.clipboard.writeText(newSecret)
+                toast.success(t.common.copiedToClipboard)
               }}
             >
-              {t.common.confirm}
+              <Copy className="mr-2 h-4 w-4" />
+              {t.common.copy}
             </Button>
           </div>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog
+        open={!!deleteTarget}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDeleteTarget(null)
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t.admin.confirmDelete}</AlertDialogTitle>
+            <AlertDialogDescription>
+              <div className="space-y-3">
+                <p>{t.admin.confirmDeleteApiKey}</p>
+                {deleteTarget ? (
+                  <div className="rounded-md border border-dashed bg-muted/20 p-3 text-xs text-foreground">
+                    <div className="font-medium">
+                      {deleteTarget.key_name || deleteTarget.api_key}
+                    </div>
+                    <div className="mt-1 flex flex-wrap items-center gap-2 text-muted-foreground">
+                      <span>{deleteTarget.platform || '-'}</span>
+                      <span>{deleteTarget.api_key}</span>
+                      <span>
+                        {t.admin.permissions}: {deleteTarget.scopes?.length || 0}
+                      </span>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t.common.cancel}</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (deleteTarget) {
+                  deleteMutation.mutate(deleteTarget.id)
+                }
+              }}
+              className="bg-red-600 hover:bg-red-700"
+            >
+              {t.common.delete}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

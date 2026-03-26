@@ -2,8 +2,10 @@ package admin
 
 import (
 	"errors"
+	"log"
 	"strconv"
 	"strings"
+	"time"
 
 	"auralogic/internal/config"
 	"auralogic/internal/database"
@@ -11,10 +13,12 @@ import (
 	"auralogic/internal/models"
 	"auralogic/internal/pkg/bizerr"
 	"auralogic/internal/pkg/logger"
+	"auralogic/internal/pkg/orderbiz"
 	"auralogic/internal/pkg/response"
 	"auralogic/internal/pkg/validator"
 	"auralogic/internal/service"
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 type OrderHandler struct {
@@ -22,17 +26,310 @@ type OrderHandler struct {
 	serialService           *service.SerialService
 	virtualInventoryService *service.VirtualInventoryService
 	jsRuntimeService        *service.JSRuntimeService
+	pluginManager           *service.PluginManagerService
 	cfg                     *config.Config
 }
 
-func NewOrderHandler(orderService *service.OrderService, serialService *service.SerialService, virtualInventoryService *service.VirtualInventoryService, jsRuntimeService *service.JSRuntimeService, cfg *config.Config) *OrderHandler {
+func NewOrderHandler(orderService *service.OrderService, serialService *service.SerialService, virtualInventoryService *service.VirtualInventoryService, jsRuntimeService *service.JSRuntimeService, pluginManager *service.PluginManagerService, cfg *config.Config) *OrderHandler {
 	return &OrderHandler{
 		orderService:            orderService,
 		serialService:           serialService,
 		virtualInventoryService: virtualInventoryService,
 		jsRuntimeService:        jsRuntimeService,
+		pluginManager:           pluginManager,
 		cfg:                     cfg,
 	}
+}
+
+func respondAdminOrderServiceError(c *gin.Context, err error, fallback string) bool {
+	if err == nil {
+		return false
+	}
+
+	var bizErr *bizerr.Error
+	if errors.As(err, &bizErr) {
+		response.BizError(c, bizErr.Message, bizErr.Key, bizErr.Params)
+		return true
+	}
+
+	response.InternalServerError(c, fallback, err)
+	return true
+}
+
+func respondAdminOrderValidationError(c *gin.Context, err error) {
+	if err == nil {
+		return
+	}
+	if respondAdminBizError(c, err) {
+		return
+	}
+	response.BadRequest(c, err.Error())
+}
+
+func parseAdminOrderID(c *gin.Context) (uint, bool) {
+	orderID, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		respondAdminOrderValidationError(c, orderbiz.InvalidOrderID())
+		return 0, false
+	}
+	return uint(orderID), true
+}
+
+func (h *OrderHandler) buildOrderHookExecutionContext(c *gin.Context, adminID uint, orderID uint) *service.ExecutionContext {
+	if c == nil {
+		return nil
+	}
+
+	metadata := map[string]string{
+		"request_path":    c.Request.URL.Path,
+		"route":           c.FullPath(),
+		"method":          c.Request.Method,
+		"client_ip":       c.ClientIP(),
+		"user_agent":      c.GetHeader("User-Agent"),
+		"accept_language": c.GetHeader("Accept-Language"),
+		"operator_type":   "admin",
+		"order_id":        strconv.FormatUint(uint64(orderID), 10),
+	}
+	sessionID := strings.TrimSpace(c.GetHeader("X-Session-ID"))
+	return &service.ExecutionContext{
+		UserID:         &adminID,
+		OrderID:        &orderID,
+		SessionID:      sessionID,
+		Metadata:       metadata,
+		RequestContext: c.Request.Context(),
+	}
+}
+
+func orderValueToOptionalString(value interface{}) (string, error) {
+	if value == nil {
+		return "", nil
+	}
+	str, ok := value.(string)
+	if !ok {
+		return "", errors.New("value must be string")
+	}
+	return str, nil
+}
+
+func orderValueToOptionalBool(value interface{}) (bool, bool, error) {
+	if value == nil {
+		return false, false, nil
+	}
+	switch typed := value.(type) {
+	case bool:
+		return typed, true, nil
+	case string:
+		normalized := strings.ToLower(strings.TrimSpace(typed))
+		switch normalized {
+		case "1", "true", "yes", "y":
+			return true, true, nil
+		case "0", "false", "no", "n":
+			return false, true, nil
+		}
+		return false, false, errors.New("invalid bool string")
+	default:
+		return false, false, errors.New("value must be bool")
+	}
+}
+
+func orderValueToOptionalInt64(value interface{}) (int64, error) {
+	if value == nil {
+		return 0, nil
+	}
+	switch typed := value.(type) {
+	case int:
+		return int64(typed), nil
+	case int64:
+		return typed, nil
+	case uint:
+		return int64(typed), nil
+	case uint64:
+		if typed > uint64(^uint64(0)>>1) {
+			return 0, errors.New("value out of range")
+		}
+		return int64(typed), nil
+	case float64:
+		if typed != float64(int64(typed)) {
+			return 0, errors.New("value must be integer")
+		}
+		return int64(typed), nil
+	case string:
+		trimmed := strings.TrimSpace(typed)
+		if trimmed == "" {
+			return 0, nil
+		}
+		parsed, err := strconv.ParseInt(trimmed, 10, 64)
+		if err != nil {
+			return 0, errors.New("invalid int string")
+		}
+		return parsed, nil
+	default:
+		return 0, errors.New("value must be int64")
+	}
+}
+
+func applyAdminCompleteOrderHookPayload(req *CompleteOrderRequest, payload map[string]interface{}) error {
+	if req == nil || payload == nil {
+		return nil
+	}
+	if raw, exists := payload["remark"]; exists {
+		remark, err := orderValueToOptionalString(raw)
+		if err != nil {
+			return err
+		}
+		req.AdminRemark = remark
+		return nil
+	}
+	if raw, exists := payload["admin_remark"]; exists {
+		remark, err := orderValueToOptionalString(raw)
+		if err != nil {
+			return err
+		}
+		req.AdminRemark = remark
+	}
+	return nil
+}
+
+func applyAdminCancelOrderHookPayload(req *CancelOrderRequest, payload map[string]interface{}) error {
+	if req == nil || payload == nil {
+		return nil
+	}
+	if raw, exists := payload["reason"]; exists {
+		reason, err := orderValueToOptionalString(raw)
+		if err != nil {
+			return err
+		}
+		req.Reason = reason
+	}
+	return nil
+}
+
+func applyAdminRefundOrderHookPayload(req *RefundOrderRequest, payload map[string]interface{}) error {
+	if req == nil || payload == nil {
+		return nil
+	}
+	if raw, exists := payload["reason"]; exists {
+		reason, err := orderValueToOptionalString(raw)
+		if err != nil {
+			return err
+		}
+		req.Reason = reason
+	}
+	return nil
+}
+
+func applyAdminUpdateShippingHookPayload(req *UpdateShippingInfoRequest, payload map[string]interface{}) error {
+	if req == nil || payload == nil {
+		return nil
+	}
+	if raw, exists := payload["receiver_name"]; exists {
+		value, err := orderValueToOptionalString(raw)
+		if err != nil {
+			return err
+		}
+		req.ReceiverName = value
+	}
+	if raw, exists := payload["phone_code"]; exists {
+		value, err := orderValueToOptionalString(raw)
+		if err != nil {
+			return err
+		}
+		req.PhoneCode = value
+	}
+	if raw, exists := payload["receiver_phone"]; exists {
+		value, err := orderValueToOptionalString(raw)
+		if err != nil {
+			return err
+		}
+		req.ReceiverPhone = value
+	}
+	if raw, exists := payload["receiver_email"]; exists {
+		value, err := orderValueToOptionalString(raw)
+		if err != nil {
+			return err
+		}
+		req.ReceiverEmail = value
+	}
+	if raw, exists := payload["receiver_country"]; exists {
+		value, err := orderValueToOptionalString(raw)
+		if err != nil {
+			return err
+		}
+		req.ReceiverCountry = value
+	}
+	if raw, exists := payload["receiver_province"]; exists {
+		value, err := orderValueToOptionalString(raw)
+		if err != nil {
+			return err
+		}
+		req.ReceiverProvince = value
+	}
+	if raw, exists := payload["receiver_city"]; exists {
+		value, err := orderValueToOptionalString(raw)
+		if err != nil {
+			return err
+		}
+		req.ReceiverCity = value
+	}
+	if raw, exists := payload["receiver_district"]; exists {
+		value, err := orderValueToOptionalString(raw)
+		if err != nil {
+			return err
+		}
+		req.ReceiverDistrict = value
+	}
+	if raw, exists := payload["receiver_address"]; exists {
+		value, err := orderValueToOptionalString(raw)
+		if err != nil {
+			return err
+		}
+		req.ReceiverAddress = value
+	}
+	if raw, exists := payload["receiver_postcode"]; exists {
+		value, err := orderValueToOptionalString(raw)
+		if err != nil {
+			return err
+		}
+		req.ReceiverPostcode = value
+	}
+	return nil
+}
+
+func applyAdminUpdateOrderPriceHookPayload(req *UpdateOrderPriceRequest, payload map[string]interface{}) error {
+	if req == nil || payload == nil {
+		return nil
+	}
+	if raw, exists := payload["total_amount_minor"]; exists {
+		value, err := orderValueToOptionalInt64(raw)
+		if err != nil {
+			return err
+		}
+		req.TotalAmountMinor = &value
+	}
+	return nil
+}
+
+func applyAdminMarkPaidHookPayload(options *service.MarkAsPaidOptions, payload map[string]interface{}) error {
+	if options == nil || payload == nil {
+		return nil
+	}
+	if raw, exists := payload["admin_remark"]; exists {
+		remark, err := orderValueToOptionalString(raw)
+		if err != nil {
+			return err
+		}
+		options.AdminRemark = remark
+	}
+	if raw, exists := payload["skip_auto_delivery"]; exists {
+		value, ok, err := orderValueToOptionalBool(raw)
+		if err != nil {
+			return err
+		}
+		if ok {
+			options.SkipAutoDelivery = value
+		}
+	}
+	return nil
 }
 
 // hasPrivacyPermission Check if admin has permission to view privacy info
@@ -116,13 +413,12 @@ func (h *OrderHandler) GetOrderCountries(c *gin.Context) {
 
 // GetOrder - Get order details
 func (h *OrderHandler) GetOrder(c *gin.Context) {
-	orderID, err := strconv.ParseUint(c.Param("id"), 10, 32)
-	if err != nil {
-		response.BadRequest(c, "Invalid order ID format")
+	orderID, ok := parseAdminOrderID(c)
+	if !ok {
 		return
 	}
 
-	order, err := h.orderService.GetOrderByID(uint(orderID))
+	order, err := h.orderService.GetOrderByID(orderID)
 	if err != nil {
 		response.NotFound(c, "Order not found")
 		return
@@ -134,9 +430,13 @@ func (h *OrderHandler) GetOrder(c *gin.Context) {
 
 	// 获取该订单的序列号
 	var serials interface{}
+	warnings := make([]string, 0, 3)
 	if h.serialService != nil {
-		serialList, err := h.serialService.GetSerialsByOrderID(uint(orderID))
-		if err == nil && len(serialList) > 0 {
+		serialList, err := h.serialService.GetSerialsByOrderID(orderID)
+		if err != nil {
+			log.Printf("admin.get_order failed to load serials: order_id=%d err=%v", orderID, err)
+			warnings = append(warnings, "Failed to load order serials")
+		} else if len(serialList) > 0 {
 			serials = serialList
 		}
 	}
@@ -145,7 +445,10 @@ func (h *OrderHandler) GetOrder(c *gin.Context) {
 	var virtualStocks interface{}
 	if h.virtualInventoryService != nil && order.Status != models.OrderStatusPendingPayment && order.Status != models.OrderStatusDraft && order.Status != models.OrderStatusNeedResubmit {
 		stockList, err := h.virtualInventoryService.GetStockByOrderNo(order.OrderNo)
-		if err == nil && len(stockList) > 0 {
+		if err != nil {
+			log.Printf("admin.get_order failed to load virtual stocks: order_no=%s err=%v", order.OrderNo, err)
+			warnings = append(warnings, "Failed to load order virtual stock")
+		} else if len(stockList) > 0 {
 			virtualStocks = stockList
 		}
 	}
@@ -167,16 +470,26 @@ func (h *OrderHandler) GetOrder(c *gin.Context) {
 				"selected_at":  opm.CreatedAt,
 				"payment_data": opm.PaymentData,
 			}
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+			log.Printf("admin.get_order failed to load payment method: order_id=%d payment_method_id=%d err=%v", orderID, opm.PaymentMethodID, err)
+			warnings = append(warnings, "Failed to load order payment method")
 		}
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		log.Printf("admin.get_order failed to load payment method mapping: order_id=%d err=%v", orderID, err)
+		warnings = append(warnings, "Failed to load order payment information")
 	}
 
 	// 返回订单信息和序列号
-	response.Success(c, gin.H{
+	payload := gin.H{
 		"order":          order,
 		"serials":        serials,
 		"virtual_stocks": virtualStocks,
 		"payment_info":   paymentInfo,
-	})
+	}
+	if len(warnings) > 0 {
+		payload["warnings"] = warnings
+	}
+	response.Success(c, payload)
 }
 
 // AssignTrackingRequest 分配物流单号请求
@@ -186,31 +499,30 @@ type AssignTrackingRequest struct {
 
 // AssignTracking 分配物流单号
 func (h *OrderHandler) AssignTracking(c *gin.Context) {
-	orderID, err := strconv.ParseUint(c.Param("id"), 10, 32)
-	if err != nil {
-		response.BadRequest(c, "Invalid order ID format")
+	orderID, ok := parseAdminOrderID(c)
+	if !ok {
 		return
 	}
 
 	var req AssignTrackingRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "Invalid request parameters")
+		respondAdminOrderValidationError(c, orderbiz.InvalidRequestParameters())
 		return
 	}
 
 	// 清理和验证物流单号（最大100个字符）
 	req.TrackingNo = validator.SanitizeInput(req.TrackingNo)
 	if !validator.ValidateLength(req.TrackingNo, 1, 100) {
-		response.BadRequest(c, "Tracking number length must be between 1-100 characters")
+		respondAdminOrderValidationError(c, orderbiz.TrackingNumberLengthInvalid(1, 100))
 		return
 	}
 
-	if err := h.orderService.AssignTracking(uint(orderID), req.TrackingNo); err != nil {
-		response.InternalError(c, "Failed to assign tracking number")
+	if err := h.orderService.AssignTracking(orderID, req.TrackingNo); err != nil {
+		respondAdminOrderServiceError(c, err, "Failed to assign tracking number")
 		return
 	}
 
-	order, _ := h.orderService.GetOrderByID(uint(orderID))
+	order, _ := h.orderService.GetOrderByID(orderID)
 
 	// 记录操作日志
 	db := database.GetDB()
@@ -236,9 +548,8 @@ type CompleteOrderRequest struct {
 // CompleteOrder Admin标记Order完成
 func (h *OrderHandler) CompleteOrder(c *gin.Context) {
 	adminID := middleware.MustGetUserID(c)
-	orderID, err := strconv.ParseUint(c.Param("id"), 10, 32)
-	if err != nil {
-		response.BadRequest(c, "Invalid order ID format")
+	orderID, ok := parseAdminOrderID(c)
+	if !ok {
 		return
 	}
 
@@ -250,16 +561,78 @@ func (h *OrderHandler) CompleteOrder(c *gin.Context) {
 	// 清理Admin备注（最大1000个字符）
 	req.AdminRemark = validator.SanitizeText(req.AdminRemark)
 	if !validator.ValidateLength(req.AdminRemark, 0, 1000) {
-		response.BadRequest(c, "Admin remark length cannot exceed 1000 characters")
+		respondAdminOrderValidationError(c, orderbiz.AdminRemarkTooLong(1000))
 		return
 	}
 
-	if err := h.orderService.CompleteOrder(uint(orderID), adminID, "", req.AdminRemark); err != nil {
-		response.BadRequest(c, err.Error())
+	order, err := h.orderService.GetOrderByID(orderID)
+	if err != nil {
+		response.NotFound(c, "Order not found")
+		return
+	}
+	beforeStatus := order.Status
+	hookExecCtx := h.buildOrderHookExecutionContext(c, adminID, uint(orderID))
+	if h.pluginManager != nil {
+		originalReq := req
+		hookPayload := map[string]interface{}{
+			"order_id":      order.ID,
+			"order_no":      order.OrderNo,
+			"admin_id":      adminID,
+			"status_before": order.Status,
+			"admin_remark":  req.AdminRemark,
+			"source":        "admin_api",
+		}
+		hookResult, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+			Hook:    "order.admin.complete.before",
+			Payload: hookPayload,
+		}, hookExecCtx)
+		if hookErr != nil {
+			log.Printf("order.admin.complete.before hook execution failed: admin=%d order=%s err=%v", adminID, order.OrderNo, hookErr)
+		} else if hookResult != nil {
+			if hookResult.Blocked {
+				reason := strings.TrimSpace(hookResult.BlockReason)
+				if reason == "" {
+					reason = "Order completion rejected by plugin"
+				}
+				response.BadRequest(c, reason)
+				return
+			}
+			if hookResult.Payload != nil {
+				if applyErr := applyAdminCompleteOrderHookPayload(&req, hookResult.Payload); applyErr != nil {
+					log.Printf("order.admin.complete.before payload apply failed, fallback to original request: admin=%d order=%s err=%v", adminID, order.OrderNo, applyErr)
+					req = originalReq
+				}
+			}
+		}
+	}
+
+	if err := h.orderService.CompleteOrder(orderID, adminID, "", req.AdminRemark); err != nil {
+		respondAdminOrderServiceError(c, err, "Failed to complete order")
 		return
 	}
 
-	order, _ := h.orderService.GetOrderByID(uint(orderID))
+	order, _ = h.orderService.GetOrderByID(orderID)
+	if h.pluginManager != nil && order != nil {
+		afterPayload := map[string]interface{}{
+			"order_id":      order.ID,
+			"order_no":      order.OrderNo,
+			"admin_id":      adminID,
+			"status_before": beforeStatus,
+			"status_after":  order.Status,
+			"admin_remark":  req.AdminRemark,
+			"completed_at":  order.CompletedAt,
+			"source":        "admin_api",
+		}
+		go func(execCtx *service.ExecutionContext, payload map[string]interface{}, aid uint, orderNo string) {
+			_, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+				Hook:    "order.admin.complete.after",
+				Payload: payload,
+			}, execCtx)
+			if hookErr != nil {
+				log.Printf("order.admin.complete.after hook execution failed: admin=%d order=%s err=%v", aid, orderNo, hookErr)
+			}
+		}(hookExecCtx, afterPayload, adminID, order.OrderNo)
+	}
 
 	// 记录操作日志
 	db := database.GetDB()
@@ -283,9 +656,9 @@ type CancelOrderRequest struct {
 
 // CancelOrder 取消Order
 func (h *OrderHandler) CancelOrder(c *gin.Context) {
-	orderID, err := strconv.ParseUint(c.Param("id"), 10, 32)
-	if err != nil {
-		response.BadRequest(c, "Invalid order ID format")
+	adminID := middleware.MustGetUserID(c)
+	orderID, ok := parseAdminOrderID(c)
+	if !ok {
 		return
 	}
 
@@ -297,16 +670,77 @@ func (h *OrderHandler) CancelOrder(c *gin.Context) {
 	// 清理取消原因（最大500个字符）
 	req.Reason = validator.SanitizeText(req.Reason)
 	if !validator.ValidateLength(req.Reason, 0, 500) {
-		response.BadRequest(c, "Cancellation reason length cannot exceed 500 characters")
+		respondAdminOrderValidationError(c, orderbiz.CancellationReasonTooLong(500))
 		return
 	}
 
-	if err := h.orderService.CancelOrder(uint(orderID), req.Reason); err != nil {
-		response.BadRequest(c, err.Error())
+	order, err := h.orderService.GetOrderByID(orderID)
+	if err != nil {
+		response.NotFound(c, "Order not found")
+		return
+	}
+	beforeStatus := order.Status
+	hookExecCtx := h.buildOrderHookExecutionContext(c, adminID, uint(orderID))
+	if h.pluginManager != nil {
+		originalReq := req
+		hookPayload := map[string]interface{}{
+			"order_id":      order.ID,
+			"order_no":      order.OrderNo,
+			"admin_id":      adminID,
+			"status_before": order.Status,
+			"reason":        req.Reason,
+			"source":        "admin_api",
+		}
+		hookResult, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+			Hook:    "order.admin.cancel.before",
+			Payload: hookPayload,
+		}, hookExecCtx)
+		if hookErr != nil {
+			log.Printf("order.admin.cancel.before hook execution failed: admin=%d order=%s err=%v", adminID, order.OrderNo, hookErr)
+		} else if hookResult != nil {
+			if hookResult.Blocked {
+				reason := strings.TrimSpace(hookResult.BlockReason)
+				if reason == "" {
+					reason = "Order cancellation rejected by plugin"
+				}
+				response.BadRequest(c, reason)
+				return
+			}
+			if hookResult.Payload != nil {
+				if applyErr := applyAdminCancelOrderHookPayload(&req, hookResult.Payload); applyErr != nil {
+					log.Printf("order.admin.cancel.before payload apply failed, fallback to original request: admin=%d order=%s err=%v", adminID, order.OrderNo, applyErr)
+					req = originalReq
+				}
+			}
+		}
+	}
+
+	if err := h.orderService.CancelOrder(orderID, req.Reason); err != nil {
+		respondAdminOrderServiceError(c, err, "Failed to cancel order")
 		return
 	}
 
-	order, _ := h.orderService.GetOrderByID(uint(orderID))
+	order, _ = h.orderService.GetOrderByID(orderID)
+	if h.pluginManager != nil && order != nil {
+		afterPayload := map[string]interface{}{
+			"order_id":      order.ID,
+			"order_no":      order.OrderNo,
+			"admin_id":      adminID,
+			"status_before": beforeStatus,
+			"status_after":  order.Status,
+			"reason":        req.Reason,
+			"source":        "admin_api",
+		}
+		go func(execCtx *service.ExecutionContext, payload map[string]interface{}, aid uint, orderNo string) {
+			_, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+				Hook:    "order.admin.cancel.after",
+				Payload: payload,
+			}, execCtx)
+			if hookErr != nil {
+				log.Printf("order.admin.cancel.after hook execution failed: admin=%d order=%s err=%v", aid, orderNo, hookErr)
+			}
+		}(hookExecCtx, afterPayload, adminID, order.OrderNo)
+	}
 
 	// 记录操作日志
 	db := database.GetDB()
@@ -329,9 +763,9 @@ type RefundOrderRequest struct {
 
 // RefundOrder 退款Order
 func (h *OrderHandler) RefundOrder(c *gin.Context) {
-	orderID, err := strconv.ParseUint(c.Param("id"), 10, 32)
-	if err != nil {
-		response.BadRequest(c, "Invalid order ID format")
+	adminID := middleware.MustGetUserID(c)
+	orderID, ok := parseAdminOrderID(c)
+	if !ok {
 		return
 	}
 
@@ -342,14 +776,49 @@ func (h *OrderHandler) RefundOrder(c *gin.Context) {
 
 	req.Reason = validator.SanitizeText(req.Reason)
 	if !validator.ValidateLength(req.Reason, 0, 500) {
-		response.BadRequest(c, "Refund reason length cannot exceed 500 characters")
+		respondAdminOrderValidationError(c, orderbiz.RefundReasonTooLong(500))
 		return
 	}
 
-	order, err := h.orderService.GetOrderByID(uint(orderID))
+	order, err := h.orderService.GetOrderByID(orderID)
 	if err != nil {
 		response.NotFound(c, "Order not found")
 		return
+	}
+	beforeStatus := order.Status
+	hookExecCtx := h.buildOrderHookExecutionContext(c, adminID, uint(orderID))
+	if h.pluginManager != nil {
+		originalReq := req
+		hookPayload := map[string]interface{}{
+			"order_id":      order.ID,
+			"order_no":      order.OrderNo,
+			"admin_id":      adminID,
+			"status_before": order.Status,
+			"reason":        req.Reason,
+			"source":        "admin_api",
+		}
+		hookResult, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+			Hook:    "order.admin.refund.before",
+			Payload: hookPayload,
+		}, hookExecCtx)
+		if hookErr != nil {
+			log.Printf("order.admin.refund.before hook execution failed: admin=%d order=%s err=%v", adminID, order.OrderNo, hookErr)
+		} else if hookResult != nil {
+			if hookResult.Blocked {
+				reason := strings.TrimSpace(hookResult.BlockReason)
+				if reason == "" {
+					reason = "Order refund rejected by plugin"
+				}
+				response.BadRequest(c, reason)
+				return
+			}
+			if hookResult.Payload != nil {
+				if applyErr := applyAdminRefundOrderHookPayload(&req, hookResult.Payload); applyErr != nil {
+					log.Printf("order.admin.refund.before payload apply failed, fallback to original request: admin=%d order=%s err=%v", adminID, order.OrderNo, applyErr)
+					req = originalReq
+				}
+			}
+		}
 	}
 
 	// 只允许已付款后的订单退款（包括草稿状态，草稿表示已付款但用户尚未填写收货信息）
@@ -361,7 +830,7 @@ func (h *OrderHandler) RefundOrder(c *gin.Context) {
 		models.OrderStatusCompleted:    true,
 	}
 	if !allowedStatuses[order.Status] {
-		response.BadRequest(c, "Current order status does not support refund")
+		respondAdminOrderValidationError(c, orderbiz.RefundStatusInvalid(order.Status))
 		return
 	}
 
@@ -369,13 +838,13 @@ func (h *OrderHandler) RefundOrder(c *gin.Context) {
 	db := database.GetDB()
 	var opm models.OrderPaymentMethod
 	if err := db.Where("order_id = ?", orderID).First(&opm).Error; err != nil {
-		response.BadRequest(c, "Order payment method not found")
+		respondAdminOrderValidationError(c, orderbiz.OrderPaymentMethodNotFound())
 		return
 	}
 
 	var pm models.PaymentMethod
 	if err := db.First(&pm, opm.PaymentMethodID).Error; err != nil {
-		response.BadRequest(c, "Payment method not found")
+		respondAdminOrderValidationError(c, orderbiz.PaymentMethodNotFound())
 		return
 	}
 
@@ -434,6 +903,30 @@ func (h *OrderHandler) RefundOrder(c *gin.Context) {
 		"transaction_id": refundResult.TransactionID,
 	})
 
+	if h.pluginManager != nil {
+		afterPayload := map[string]interface{}{
+			"order_id":       order.ID,
+			"order_no":       order.OrderNo,
+			"admin_id":       adminID,
+			"status_before":  beforeStatus,
+			"status_after":   models.OrderStatusRefunded,
+			"reason":         req.Reason,
+			"transaction_id": refundResult.TransactionID,
+			"message":        refundResult.Message,
+			"source":         "admin_api",
+			"completed_at":   time.Now().Format(time.RFC3339),
+		}
+		go func(execCtx *service.ExecutionContext, payload map[string]interface{}, aid uint, orderNo string) {
+			_, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+				Hook:    "order.admin.refund.after",
+				Payload: payload,
+			}, execCtx)
+			if hookErr != nil {
+				log.Printf("order.admin.refund.after hook execution failed: admin=%d order=%s err=%v", aid, orderNo, hookErr)
+			}
+		}(hookExecCtx, afterPayload, adminID, order.OrderNo)
+	}
+
 	response.Success(c, gin.H{
 		"order_no":       order.OrderNo,
 		"status":         models.OrderStatusRefunded,
@@ -445,23 +938,94 @@ func (h *OrderHandler) RefundOrder(c *gin.Context) {
 
 // MarkAsPaid 标记订单为已付款
 func (h *OrderHandler) MarkAsPaid(c *gin.Context) {
-	orderID, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	adminID := middleware.MustGetUserID(c)
+	orderID, ok := parseAdminOrderID(c)
+	if !ok {
+		return
+	}
+
+	order, err := h.orderService.GetOrderByID(orderID)
 	if err != nil {
-		response.BadRequest(c, "Invalid order ID format")
+		response.NotFound(c, "Order not found")
+		return
+	}
+	beforeStatus := order.Status
+	options := service.MarkAsPaidOptions{}
+	hookExecCtx := h.buildOrderHookExecutionContext(c, adminID, uint(orderID))
+	if h.pluginManager != nil {
+		originalOptions := options
+		hookPayload := map[string]interface{}{
+			"order_id":           order.ID,
+			"order_no":           order.OrderNo,
+			"admin_id":           adminID,
+			"status_before":      order.Status,
+			"admin_remark":       options.AdminRemark,
+			"skip_auto_delivery": options.SkipAutoDelivery,
+			"source":             "admin_api",
+		}
+		hookResult, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+			Hook:    "order.admin.mark_paid.before",
+			Payload: hookPayload,
+		}, hookExecCtx)
+		if hookErr != nil {
+			log.Printf("order.admin.mark_paid.before hook execution failed: admin=%d order=%s err=%v", adminID, order.OrderNo, hookErr)
+		} else if hookResult != nil {
+			if hookResult.Blocked {
+				reason := strings.TrimSpace(hookResult.BlockReason)
+				if reason == "" {
+					reason = "Order mark-as-paid rejected by plugin"
+				}
+				response.BadRequest(c, reason)
+				return
+			}
+			if hookResult.Payload != nil {
+				if applyErr := applyAdminMarkPaidHookPayload(&options, hookResult.Payload); applyErr != nil {
+					log.Printf("order.admin.mark_paid.before payload apply failed, fallback to original options: admin=%d order=%s err=%v", adminID, order.OrderNo, applyErr)
+					options = originalOptions
+				}
+			}
+		}
+	}
+	options.AdminRemark = validator.SanitizeText(options.AdminRemark)
+	if !validator.ValidateLength(options.AdminRemark, 0, 1000) {
+		respondAdminOrderValidationError(c, orderbiz.AdminRemarkTooLong(1000))
 		return
 	}
 
-	if err := h.orderService.MarkAsPaid(uint(orderID)); err != nil {
-		response.BadRequest(c, err.Error())
+	if err := h.orderService.MarkAsPaidWithOptions(orderID, options); err != nil {
+		respondAdminOrderServiceError(c, err, "Failed to mark order as paid")
 		return
 	}
 
-	order, _ := h.orderService.GetOrderByID(uint(orderID))
+	order, _ = h.orderService.GetOrderByID(orderID)
+	if h.pluginManager != nil && order != nil {
+		afterPayload := map[string]interface{}{
+			"order_id":           order.ID,
+			"order_no":           order.OrderNo,
+			"admin_id":           adminID,
+			"status_before":      beforeStatus,
+			"status_after":       order.Status,
+			"admin_remark":       options.AdminRemark,
+			"skip_auto_delivery": options.SkipAutoDelivery,
+			"source":             "admin_api",
+		}
+		go func(execCtx *service.ExecutionContext, payload map[string]interface{}, aid uint, orderNo string) {
+			_, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+				Hook:    "order.admin.mark_paid.after",
+				Payload: payload,
+			}, execCtx)
+			if hookErr != nil {
+				log.Printf("order.admin.mark_paid.after hook execution failed: admin=%d order=%s err=%v", aid, orderNo, hookErr)
+			}
+		}(hookExecCtx, afterPayload, adminID, order.OrderNo)
+	}
 
 	// 记录操作日志
 	db := database.GetDB()
 	logger.LogOrderOperation(db, c, "mark_paid", order.ID, map[string]interface{}{
-		"order_no": order.OrderNo,
+		"order_no":           order.OrderNo,
+		"admin_remark":       options.AdminRemark,
+		"skip_auto_delivery": options.SkipAutoDelivery,
 	})
 
 	response.Success(c, gin.H{
@@ -474,9 +1038,8 @@ func (h *OrderHandler) MarkAsPaid(c *gin.Context) {
 // DeliverVirtualStock 手动发货虚拟商品库存
 func (h *OrderHandler) DeliverVirtualStock(c *gin.Context) {
 	adminID := middleware.MustGetUserID(c)
-	orderID, err := strconv.ParseUint(c.Param("id"), 10, 32)
-	if err != nil {
-		response.BadRequest(c, "Invalid order ID format")
+	orderID, ok := parseAdminOrderID(c)
+	if !ok {
 		return
 	}
 
@@ -489,13 +1052,73 @@ func (h *OrderHandler) DeliverVirtualStock(c *gin.Context) {
 	}
 
 	markOnlyShipped := req.MarkOnlyShipped || req.MarkOnlyComplete
+	order, err := h.orderService.GetOrderByID(orderID)
+	if err != nil {
+		response.NotFound(c, "Order not found")
+		return
+	}
+	beforeStatus := order.Status
+	hookExecCtx := h.buildOrderHookExecutionContext(c, adminID, uint(orderID))
+	if h.pluginManager != nil {
+		hookPayload := map[string]interface{}{
+			"order_id":          order.ID,
+			"order_no":          order.OrderNo,
+			"admin_id":          adminID,
+			"status_before":     order.Status,
+			"mark_only_shipped": markOnlyShipped,
+			"source":            "admin_api",
+		}
+		hookResult, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+			Hook:    "order.admin.deliver_virtual.before",
+			Payload: hookPayload,
+		}, hookExecCtx)
+		if hookErr != nil {
+			log.Printf("order.admin.deliver_virtual.before hook execution failed: admin=%d order=%s err=%v", adminID, order.OrderNo, hookErr)
+		} else if hookResult != nil {
+			if hookResult.Blocked {
+				reason := strings.TrimSpace(hookResult.BlockReason)
+				if reason == "" {
+					reason = "Virtual delivery rejected by plugin"
+				}
+				response.BadRequest(c, reason)
+				return
+			}
+			if hookResult.Payload != nil {
+				if raw, exists := hookResult.Payload["mark_only_shipped"]; exists {
+					if parsed, present, parseErr := orderValueToOptionalBool(raw); parseErr == nil && present {
+						markOnlyShipped = parsed
+					}
+				}
+			}
+		}
+	}
 
-	if err := h.orderService.DeliverVirtualStock(uint(orderID), adminID, markOnlyShipped); err != nil {
-		response.BadRequest(c, err.Error())
+	if err := h.orderService.DeliverVirtualStock(orderID, adminID, markOnlyShipped); err != nil {
+		respondAdminOrderServiceError(c, err, "Failed to deliver virtual stock")
 		return
 	}
 
-	order, _ := h.orderService.GetOrderByID(uint(orderID))
+	order, _ = h.orderService.GetOrderByID(orderID)
+	if h.pluginManager != nil && order != nil {
+		afterPayload := map[string]interface{}{
+			"order_id":          order.ID,
+			"order_no":          order.OrderNo,
+			"admin_id":          adminID,
+			"status_before":     beforeStatus,
+			"status_after":      order.Status,
+			"mark_only_shipped": markOnlyShipped,
+			"source":            "admin_api",
+		}
+		go func(execCtx *service.ExecutionContext, payload map[string]interface{}, aid uint, orderNo string) {
+			_, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+				Hook:    "order.admin.deliver_virtual.after",
+				Payload: payload,
+			}, execCtx)
+			if hookErr != nil {
+				log.Printf("order.admin.deliver_virtual.after hook execution failed: admin=%d order=%s err=%v", aid, orderNo, hookErr)
+			}
+		}(hookExecCtx, afterPayload, adminID, order.OrderNo)
+	}
 
 	// 记录操作日志
 	db := database.GetDB()
@@ -520,17 +1143,71 @@ func (h *OrderHandler) DeliverVirtualStock(c *gin.Context) {
 
 // DeleteOrder DeleteOrder
 func (h *OrderHandler) DeleteOrder(c *gin.Context) {
-	orderID, err := strconv.ParseUint(c.Param("id"), 10, 32)
-	if err != nil {
-		response.BadRequest(c, "Invalid order ID format")
+	adminID := middleware.MustGetUserID(c)
+	if adminID == 0 {
+		response.Unauthorized(c, "User not authenticated")
 		return
 	}
 
-	order, _ := h.orderService.GetOrderByID(uint(orderID))
-
-	if err := h.orderService.DeleteOrder(uint(orderID)); err != nil {
-		response.BadRequest(c, err.Error())
+	orderID, ok := parseAdminOrderID(c)
+	if !ok {
 		return
+	}
+
+	order, err := h.orderService.GetOrderByID(orderID)
+	if err != nil || order == nil {
+		response.NotFound(c, "Order not found")
+		return
+	}
+	beforeStatus := order.Status
+	hookExecCtx := h.buildOrderHookExecutionContext(c, adminID, uint(orderID))
+	if h.pluginManager != nil {
+		hookPayload := map[string]interface{}{
+			"order_id":      order.ID,
+			"order_no":      order.OrderNo,
+			"admin_id":      adminID,
+			"status_before": order.Status,
+			"source":        "admin_api",
+		}
+		hookResult, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+			Hook:    "order.admin.delete.before",
+			Payload: hookPayload,
+		}, hookExecCtx)
+		if hookErr != nil {
+			log.Printf("order.admin.delete.before hook execution failed: admin=%d order=%s err=%v", adminID, order.OrderNo, hookErr)
+		} else if hookResult != nil && hookResult.Blocked {
+			reason := strings.TrimSpace(hookResult.BlockReason)
+			if reason == "" {
+				reason = "Order deletion rejected by plugin"
+			}
+			response.BadRequest(c, reason)
+			return
+		}
+	}
+
+	if err := h.orderService.DeleteOrder(orderID); err != nil {
+		respondAdminOrderServiceError(c, err, "Failed to delete order")
+		return
+	}
+
+	if h.pluginManager != nil {
+		afterPayload := map[string]interface{}{
+			"order_id":      order.ID,
+			"order_no":      order.OrderNo,
+			"admin_id":      adminID,
+			"status_before": beforeStatus,
+			"status_after":  "deleted",
+			"source":        "admin_api",
+		}
+		go func(execCtx *service.ExecutionContext, payload map[string]interface{}, aid uint, orderNo string) {
+			_, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+				Hook:    "order.admin.delete.after",
+				Payload: payload,
+			}, execCtx)
+			if hookErr != nil {
+				log.Printf("order.admin.delete.after hook execution failed: admin=%d order=%s err=%v", aid, orderNo, hookErr)
+			}
+		}(hookExecCtx, afterPayload, adminID, order.OrderNo)
 	}
 
 	// 记录操作日志
@@ -560,23 +1237,92 @@ type UpdateShippingInfoRequest struct {
 
 // UpdateShippingInfo UpdateOrder收货Info（need order.edit Permission）
 func (h *OrderHandler) UpdateShippingInfo(c *gin.Context) {
-	orderID, err := strconv.ParseUint(c.Param("id"), 10, 32)
-	if err != nil {
-		response.BadRequest(c, "Invalid order ID format")
+	adminID := middleware.MustGetUserID(c)
+	if adminID == 0 {
+		response.Unauthorized(c, "User not authenticated")
+		return
+	}
+
+	orderID, ok := parseAdminOrderID(c)
+	if !ok {
 		return
 	}
 
 	var req UpdateShippingInfoRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "Invalid request parameters")
+		respondAdminOrderValidationError(c, orderbiz.InvalidRequestParameters())
 		return
+	}
+
+	// QueryOrder
+	order, err := h.orderService.GetOrderByID(orderID)
+	if err != nil {
+		response.NotFound(c, "Order not found")
+		return
+	}
+	beforeStatus := order.Status
+	beforeShipping := map[string]interface{}{
+		"receiver_name":     order.ReceiverName,
+		"phone_code":        order.PhoneCode,
+		"receiver_phone":    order.ReceiverPhone,
+		"receiver_email":    order.ReceiverEmail,
+		"receiver_country":  order.ReceiverCountry,
+		"receiver_province": order.ReceiverProvince,
+		"receiver_city":     order.ReceiverCity,
+		"receiver_district": order.ReceiverDistrict,
+		"receiver_address":  order.ReceiverAddress,
+		"receiver_postcode": order.ReceiverPostcode,
+	}
+	hookExecCtx := h.buildOrderHookExecutionContext(c, adminID, uint(orderID))
+	if h.pluginManager != nil {
+		originalReq := req
+		hookPayload := map[string]interface{}{
+			"order_id":          order.ID,
+			"order_no":          order.OrderNo,
+			"admin_id":          adminID,
+			"status_before":     order.Status,
+			"receiver_name":     req.ReceiverName,
+			"phone_code":        req.PhoneCode,
+			"receiver_phone":    req.ReceiverPhone,
+			"receiver_email":    req.ReceiverEmail,
+			"receiver_country":  req.ReceiverCountry,
+			"receiver_province": req.ReceiverProvince,
+			"receiver_city":     req.ReceiverCity,
+			"receiver_district": req.ReceiverDistrict,
+			"receiver_address":  req.ReceiverAddress,
+			"receiver_postcode": req.ReceiverPostcode,
+			"shipping_before":   beforeShipping,
+			"source":            "admin_api",
+		}
+		hookResult, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+			Hook:    "order.admin.update_shipping.before",
+			Payload: hookPayload,
+		}, hookExecCtx)
+		if hookErr != nil {
+			log.Printf("order.admin.update_shipping.before hook execution failed: admin=%d order=%s err=%v", adminID, order.OrderNo, hookErr)
+		} else if hookResult != nil {
+			if hookResult.Blocked {
+				reason := strings.TrimSpace(hookResult.BlockReason)
+				if reason == "" {
+					reason = "Shipping info update rejected by plugin"
+				}
+				response.BadRequest(c, reason)
+				return
+			}
+			if hookResult.Payload != nil {
+				if applyErr := applyAdminUpdateShippingHookPayload(&req, hookResult.Payload); applyErr != nil {
+					log.Printf("order.admin.update_shipping.before payload apply failed, fallback to original request: admin=%d order=%s err=%v", adminID, order.OrderNo, applyErr)
+					req = originalReq
+				}
+			}
+		}
 	}
 
 	// ============= 输入验证和清理 =============
 	if req.ReceiverName != "" {
 		req.ReceiverName = validator.SanitizeInput(req.ReceiverName)
 		if !validator.ValidateLength(req.ReceiverName, 1, 100) {
-			response.BadRequest(c, "Receiver name length must be between 1-100 characters")
+			respondAdminOrderValidationError(c, orderbiz.ReceiverNameLengthInvalid(1, 100))
 			return
 		}
 	}
@@ -584,7 +1330,7 @@ func (h *OrderHandler) UpdateShippingInfo(c *gin.Context) {
 	if req.PhoneCode != "" {
 		req.PhoneCode = validator.SanitizeInput(req.PhoneCode)
 		if !validator.ValidatePhoneCode(req.PhoneCode) {
-			response.BadRequest(c, "Invalid phone code format")
+			respondAdminOrderValidationError(c, orderbiz.PhoneCodeInvalid())
 			return
 		}
 	}
@@ -592,7 +1338,7 @@ func (h *OrderHandler) UpdateShippingInfo(c *gin.Context) {
 	if req.ReceiverPhone != "" {
 		req.ReceiverPhone = validator.SanitizeInput(req.ReceiverPhone)
 		if !validator.ValidateLength(req.ReceiverPhone, 1, 50) || !validator.ValidatePhone(req.ReceiverPhone) {
-			response.BadRequest(c, "Invalid phone number format or length")
+			respondAdminOrderValidationError(c, orderbiz.ReceiverPhoneInvalid())
 			return
 		}
 	}
@@ -600,7 +1346,7 @@ func (h *OrderHandler) UpdateShippingInfo(c *gin.Context) {
 	if req.ReceiverEmail != "" {
 		req.ReceiverEmail = validator.SanitizeInput(req.ReceiverEmail)
 		if !validator.ValidateLength(req.ReceiverEmail, 0, 255) {
-			response.BadRequest(c, "Email length cannot exceed 255 characters")
+			respondAdminOrderValidationError(c, orderbiz.EmailTooLong(255))
 			return
 		}
 	}
@@ -608,7 +1354,7 @@ func (h *OrderHandler) UpdateShippingInfo(c *gin.Context) {
 	if req.ReceiverCountry != "" {
 		req.ReceiverCountry = strings.ToUpper(validator.SanitizeInput(req.ReceiverCountry))
 		if !validator.ValidateCountryCode(req.ReceiverCountry) {
-			response.BadRequest(c, "Invalid country code format")
+			respondAdminOrderValidationError(c, orderbiz.CountryCodeInvalid())
 			return
 		}
 	}
@@ -616,7 +1362,7 @@ func (h *OrderHandler) UpdateShippingInfo(c *gin.Context) {
 	if req.ReceiverProvince != "" {
 		req.ReceiverProvince = validator.SanitizeInput(req.ReceiverProvince)
 		if !validator.ValidateLength(req.ReceiverProvince, 0, 50) {
-			response.BadRequest(c, "Province length cannot exceed 50 characters")
+			respondAdminOrderValidationError(c, orderbiz.ProvinceTooLong(50))
 			return
 		}
 	}
@@ -624,7 +1370,7 @@ func (h *OrderHandler) UpdateShippingInfo(c *gin.Context) {
 	if req.ReceiverCity != "" {
 		req.ReceiverCity = validator.SanitizeInput(req.ReceiverCity)
 		if !validator.ValidateLength(req.ReceiverCity, 0, 50) {
-			response.BadRequest(c, "City length cannot exceed 50 characters")
+			respondAdminOrderValidationError(c, orderbiz.CityTooLong(50))
 			return
 		}
 	}
@@ -632,7 +1378,7 @@ func (h *OrderHandler) UpdateShippingInfo(c *gin.Context) {
 	if req.ReceiverDistrict != "" {
 		req.ReceiverDistrict = validator.SanitizeInput(req.ReceiverDistrict)
 		if !validator.ValidateLength(req.ReceiverDistrict, 0, 50) {
-			response.BadRequest(c, "District length cannot exceed 50 characters")
+			respondAdminOrderValidationError(c, orderbiz.DistrictTooLong(50))
 			return
 		}
 	}
@@ -640,7 +1386,7 @@ func (h *OrderHandler) UpdateShippingInfo(c *gin.Context) {
 	if req.ReceiverAddress != "" {
 		req.ReceiverAddress = validator.SanitizeText(req.ReceiverAddress)
 		if !validator.ValidateLength(req.ReceiverAddress, 1, 500) {
-			response.BadRequest(c, "Detailed address length must be between 1-500 characters")
+			respondAdminOrderValidationError(c, orderbiz.AddressLengthInvalid(1, 500))
 			return
 		}
 	}
@@ -648,21 +1394,14 @@ func (h *OrderHandler) UpdateShippingInfo(c *gin.Context) {
 	if req.ReceiverPostcode != "" {
 		req.ReceiverPostcode = validator.SanitizeInput(req.ReceiverPostcode)
 		if !validator.ValidateLength(req.ReceiverPostcode, 0, 20) || !validator.ValidatePostcode(req.ReceiverPostcode) {
-			response.BadRequest(c, "Invalid postal code format or length")
+			respondAdminOrderValidationError(c, orderbiz.PostcodeInvalid())
 			return
 		}
 	}
 
-	// QueryOrder
-	order, err := h.orderService.GetOrderByID(uint(orderID))
-	if err != nil {
-		response.NotFound(c, "Order not found")
-		return
-	}
-
 	// 只允许Update待发货和need重填状态的Order
 	if order.Status != models.OrderStatusPending && order.Status != models.OrderStatusNeedResubmit {
-		response.BadRequest(c, "Order status does not allow shipping information modification")
+		respondAdminOrderValidationError(c, orderbiz.ShippingInfoStatusInvalid(order.Status))
 		return
 	}
 
@@ -699,8 +1438,39 @@ func (h *OrderHandler) UpdateShippingInfo(c *gin.Context) {
 	}
 
 	if err := h.orderService.UpdateOrder(order); err != nil {
-		response.InternalError(c, "UpdateOrderFailed")
+		response.InternalError(c, "Failed to update shipping information")
 		return
+	}
+
+	if h.pluginManager != nil {
+		afterPayload := map[string]interface{}{
+			"order_id":          order.ID,
+			"order_no":          order.OrderNo,
+			"admin_id":          adminID,
+			"status_before":     beforeStatus,
+			"status_after":      order.Status,
+			"receiver_name":     order.ReceiverName,
+			"phone_code":        order.PhoneCode,
+			"receiver_phone":    order.ReceiverPhone,
+			"receiver_email":    order.ReceiverEmail,
+			"receiver_country":  order.ReceiverCountry,
+			"receiver_province": order.ReceiverProvince,
+			"receiver_city":     order.ReceiverCity,
+			"receiver_district": order.ReceiverDistrict,
+			"receiver_address":  order.ReceiverAddress,
+			"receiver_postcode": order.ReceiverPostcode,
+			"shipping_before":   beforeShipping,
+			"source":            "admin_api",
+		}
+		go func(execCtx *service.ExecutionContext, payload map[string]interface{}, aid uint, orderNo string) {
+			_, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+				Hook:    "order.admin.update_shipping.after",
+				Payload: payload,
+			}, execCtx)
+			if hookErr != nil {
+				log.Printf("order.admin.update_shipping.after hook execution failed: admin=%d order=%s err=%v", aid, orderNo, hookErr)
+			}
+		}(hookExecCtx, afterPayload, adminID, order.OrderNo)
 	}
 
 	response.Success(c, gin.H{
@@ -716,27 +1486,26 @@ type RequestResubmitRequest struct {
 
 // RequestResubmit 要求User重填收货Info
 func (h *OrderHandler) RequestResubmit(c *gin.Context) {
-	orderID, err := strconv.ParseUint(c.Param("id"), 10, 32)
-	if err != nil {
-		response.BadRequest(c, "Invalid order ID format")
+	orderID, ok := parseAdminOrderID(c)
+	if !ok {
 		return
 	}
 
 	var req RequestResubmitRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "Invalid request parameters")
+		respondAdminOrderValidationError(c, orderbiz.InvalidRequestParameters())
 		return
 	}
 
 	// 清理重填原因（最大500个字符）
 	req.Reason = validator.SanitizeText(req.Reason)
 	if !validator.ValidateLength(req.Reason, 1, 500) {
-		response.BadRequest(c, "Resubmit reason length must be between 1-500 characters")
+		respondAdminOrderValidationError(c, orderbiz.ResubmitReasonLengthInvalid(1, 500))
 		return
 	}
 
 	// QueryOrder
-	order, err := h.orderService.GetOrderByID(uint(orderID))
+	order, err := h.orderService.GetOrderByID(orderID)
 	if err != nil {
 		response.NotFound(c, "Order not found")
 		return
@@ -744,14 +1513,14 @@ func (h *OrderHandler) RequestResubmit(c *gin.Context) {
 
 	// 只允许待发货状态的Order要求重填
 	if order.Status != models.OrderStatusPending {
-		response.BadRequest(c, "Only orders in pending status can request resubmission")
+		respondAdminOrderValidationError(c, orderbiz.ResubmitStatusInvalid(order.Status))
 		return
 	}
 
 	// 调用service方法要求重填
 	newToken, err := h.orderService.RequestResubmit(order.ID, req.Reason)
 	if err != nil {
-		response.InternalError(c, "Operation failed")
+		response.InternalError(c, "Failed to request resubmission")
 		return
 	}
 
@@ -802,12 +1571,74 @@ func (h *OrderHandler) CompleteAllShippedOrders(c *gin.Context) {
 	var failedOrders []string
 
 	for _, order := range orders {
-		err := h.orderService.CompleteOrder(order.ID, userID, "", "Batch complete")
+		completeReq := CompleteOrderRequest{AdminRemark: "Batch complete"}
+		hookExecCtx := h.buildOrderHookExecutionContext(c, userID, order.ID)
+		beforeStatus := order.Status
+
+		if h.pluginManager != nil {
+			originalReq := completeReq
+			hookPayload := map[string]interface{}{
+				"order_id":      order.ID,
+				"order_no":      order.OrderNo,
+				"admin_id":      userID,
+				"status_before": order.Status,
+				"admin_remark":  completeReq.AdminRemark,
+				"source":        "admin_batch_api",
+				"batch_action":  "complete_all_shipped",
+			}
+			hookResult, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+				Hook:    "order.admin.complete.before",
+				Payload: hookPayload,
+			}, hookExecCtx)
+			if hookErr != nil {
+				log.Printf("order.admin.complete.before hook execution failed in complete_all_shipped: admin=%d order=%s err=%v", userID, order.OrderNo, hookErr)
+			} else if hookResult != nil {
+				if hookResult.Blocked {
+					failedCount++
+					failedOrders = append(failedOrders, order.OrderNo)
+					continue
+				}
+				if hookResult.Payload != nil {
+					if applyErr := applyAdminCompleteOrderHookPayload(&completeReq, hookResult.Payload); applyErr != nil {
+						log.Printf("order.admin.complete.before payload apply failed in complete_all_shipped, fallback to original request: admin=%d order=%s err=%v", userID, order.OrderNo, applyErr)
+						completeReq = originalReq
+					}
+				}
+			}
+		}
+
+		err := h.orderService.CompleteOrder(order.ID, userID, "", completeReq.AdminRemark)
 		if err != nil {
 			failedCount++
 			failedOrders = append(failedOrders, order.OrderNo)
-		} else {
-			successCount++
+			continue
+		}
+		successCount++
+
+		if h.pluginManager != nil {
+			updatedOrder, getErr := h.orderService.GetOrderByID(order.ID)
+			if getErr == nil && updatedOrder != nil {
+				afterPayload := map[string]interface{}{
+					"order_id":      updatedOrder.ID,
+					"order_no":      updatedOrder.OrderNo,
+					"admin_id":      userID,
+					"status_before": beforeStatus,
+					"status_after":  updatedOrder.Status,
+					"admin_remark":  completeReq.AdminRemark,
+					"completed_at":  updatedOrder.CompletedAt,
+					"source":        "admin_batch_api",
+					"batch_action":  "complete_all_shipped",
+				}
+				go func(execCtx *service.ExecutionContext, payload map[string]interface{}, aid uint, orderNo string) {
+					_, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+						Hook:    "order.admin.complete.after",
+						Payload: payload,
+					}, execCtx)
+					if hookErr != nil {
+						log.Printf("order.admin.complete.after hook execution failed in complete_all_shipped: admin=%d order=%s err=%v", aid, orderNo, hookErr)
+					}
+				}(hookExecCtx, afterPayload, userID, updatedOrder.OrderNo)
+			}
 		}
 	}
 
@@ -847,12 +1678,12 @@ func (h *OrderHandler) BatchUpdateOrders(c *gin.Context) {
 
 	var req BatchUpdateOrdersRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "Invalid request parameters")
+		respondAdminOrderValidationError(c, orderbiz.InvalidRequestParameters())
 		return
 	}
 
 	if len(req.OrderIDs) > 100 {
-		response.BadRequest(c, "Cannot process more than 100 orders at once")
+		respondAdminOrderValidationError(c, orderbiz.BatchLimitExceeded(100))
 		return
 	}
 
@@ -872,24 +1703,197 @@ func (h *OrderHandler) BatchUpdateOrders(c *gin.Context) {
 	var failedOrders []string
 
 	for _, orderID := range req.OrderIDs {
+		order, getErr := h.orderService.GetOrderByID(orderID)
+		if getErr != nil || order == nil {
+			failedCount++
+			failedOrders = append(failedOrders, strconv.FormatUint(uint64(orderID), 10))
+			continue
+		}
+		hookExecCtx := h.buildOrderHookExecutionContext(c, adminID, orderID)
+		beforeStatus := order.Status
+
 		var err error
 		switch req.Action {
 		case "complete":
-			err = h.orderService.CompleteOrder(orderID, adminID, "", "Batch complete")
+			completeReq := CompleteOrderRequest{AdminRemark: "Batch complete"}
+			if h.pluginManager != nil {
+				originalReq := completeReq
+				hookPayload := map[string]interface{}{
+					"order_id":      order.ID,
+					"order_no":      order.OrderNo,
+					"admin_id":      adminID,
+					"status_before": order.Status,
+					"admin_remark":  completeReq.AdminRemark,
+					"source":        "admin_batch_api",
+					"batch_action":  "batch_update_orders",
+				}
+				hookResult, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+					Hook:    "order.admin.complete.before",
+					Payload: hookPayload,
+				}, hookExecCtx)
+				if hookErr != nil {
+					log.Printf("order.admin.complete.before hook execution failed in batch_update_orders: admin=%d order=%s err=%v", adminID, order.OrderNo, hookErr)
+				} else if hookResult != nil {
+					if hookResult.Blocked {
+						reason := strings.TrimSpace(hookResult.BlockReason)
+						if reason == "" {
+							reason = "order completion rejected by plugin"
+						}
+						err = errors.New(reason)
+						break
+					}
+					if hookResult.Payload != nil {
+						if applyErr := applyAdminCompleteOrderHookPayload(&completeReq, hookResult.Payload); applyErr != nil {
+							log.Printf("order.admin.complete.before payload apply failed in batch_update_orders, fallback to original request: admin=%d order=%s err=%v", adminID, order.OrderNo, applyErr)
+							completeReq = originalReq
+						}
+					}
+				}
+			}
+			if err == nil {
+				err = h.orderService.CompleteOrder(orderID, adminID, "", completeReq.AdminRemark)
+			}
+			if err == nil && h.pluginManager != nil {
+				updatedOrder, getErr := h.orderService.GetOrderByID(orderID)
+				if getErr == nil && updatedOrder != nil {
+					afterPayload := map[string]interface{}{
+						"order_id":      updatedOrder.ID,
+						"order_no":      updatedOrder.OrderNo,
+						"admin_id":      adminID,
+						"status_before": beforeStatus,
+						"status_after":  updatedOrder.Status,
+						"admin_remark":  completeReq.AdminRemark,
+						"completed_at":  updatedOrder.CompletedAt,
+						"source":        "admin_batch_api",
+						"batch_action":  "batch_update_orders",
+					}
+					go func(execCtx *service.ExecutionContext, payload map[string]interface{}, aid uint, orderNo string) {
+						_, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+							Hook:    "order.admin.complete.after",
+							Payload: payload,
+						}, execCtx)
+						if hookErr != nil {
+							log.Printf("order.admin.complete.after hook execution failed in batch_update_orders: admin=%d order=%s err=%v", aid, orderNo, hookErr)
+						}
+					}(hookExecCtx, afterPayload, adminID, updatedOrder.OrderNo)
+				}
+			}
 		case "cancel":
-			err = h.orderService.CancelOrder(orderID, "Batch cancel")
+			cancelReq := CancelOrderRequest{Reason: "Batch cancel"}
+			if h.pluginManager != nil {
+				originalReq := cancelReq
+				hookPayload := map[string]interface{}{
+					"order_id":      order.ID,
+					"order_no":      order.OrderNo,
+					"admin_id":      adminID,
+					"status_before": order.Status,
+					"reason":        cancelReq.Reason,
+					"source":        "admin_batch_api",
+					"batch_action":  "batch_update_orders",
+				}
+				hookResult, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+					Hook:    "order.admin.cancel.before",
+					Payload: hookPayload,
+				}, hookExecCtx)
+				if hookErr != nil {
+					log.Printf("order.admin.cancel.before hook execution failed in batch_update_orders: admin=%d order=%s err=%v", adminID, order.OrderNo, hookErr)
+				} else if hookResult != nil {
+					if hookResult.Blocked {
+						reason := strings.TrimSpace(hookResult.BlockReason)
+						if reason == "" {
+							reason = "order cancellation rejected by plugin"
+						}
+						err = errors.New(reason)
+						break
+					}
+					if hookResult.Payload != nil {
+						if applyErr := applyAdminCancelOrderHookPayload(&cancelReq, hookResult.Payload); applyErr != nil {
+							log.Printf("order.admin.cancel.before payload apply failed in batch_update_orders, fallback to original request: admin=%d order=%s err=%v", adminID, order.OrderNo, applyErr)
+							cancelReq = originalReq
+						}
+					}
+				}
+			}
+			if err == nil {
+				err = h.orderService.CancelOrder(orderID, cancelReq.Reason)
+			}
+			if err == nil && h.pluginManager != nil {
+				updatedOrder, getErr := h.orderService.GetOrderByID(orderID)
+				if getErr == nil && updatedOrder != nil {
+					afterPayload := map[string]interface{}{
+						"order_id":      updatedOrder.ID,
+						"order_no":      updatedOrder.OrderNo,
+						"admin_id":      adminID,
+						"status_before": beforeStatus,
+						"status_after":  updatedOrder.Status,
+						"reason":        cancelReq.Reason,
+						"source":        "admin_batch_api",
+						"batch_action":  "batch_update_orders",
+					}
+					go func(execCtx *service.ExecutionContext, payload map[string]interface{}, aid uint, orderNo string) {
+						_, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+							Hook:    "order.admin.cancel.after",
+							Payload: payload,
+						}, execCtx)
+						if hookErr != nil {
+							log.Printf("order.admin.cancel.after hook execution failed in batch_update_orders: admin=%d order=%s err=%v", aid, orderNo, hookErr)
+						}
+					}(hookExecCtx, afterPayload, adminID, updatedOrder.OrderNo)
+				}
+			}
 		case "delete":
-			err = h.orderService.DeleteOrder(orderID)
+			if h.pluginManager != nil {
+				hookPayload := map[string]interface{}{
+					"order_id":      order.ID,
+					"order_no":      order.OrderNo,
+					"admin_id":      adminID,
+					"status_before": order.Status,
+					"source":        "admin_batch_api",
+					"batch_action":  "batch_update_orders",
+				}
+				hookResult, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+					Hook:    "order.admin.delete.before",
+					Payload: hookPayload,
+				}, hookExecCtx)
+				if hookErr != nil {
+					log.Printf("order.admin.delete.before hook execution failed in batch_update_orders: admin=%d order=%s err=%v", adminID, order.OrderNo, hookErr)
+				} else if hookResult != nil && hookResult.Blocked {
+					reason := strings.TrimSpace(hookResult.BlockReason)
+					if reason == "" {
+						reason = "order deletion rejected by plugin"
+					}
+					err = errors.New(reason)
+					break
+				}
+			}
+			if err == nil {
+				err = h.orderService.DeleteOrder(orderID)
+			}
+			if err == nil && h.pluginManager != nil {
+				afterPayload := map[string]interface{}{
+					"order_id":      order.ID,
+					"order_no":      order.OrderNo,
+					"admin_id":      adminID,
+					"status_before": beforeStatus,
+					"status_after":  "deleted",
+					"source":        "admin_batch_api",
+					"batch_action":  "batch_update_orders",
+				}
+				go func(execCtx *service.ExecutionContext, payload map[string]interface{}, aid uint, orderNo string) {
+					_, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+						Hook:    "order.admin.delete.after",
+						Payload: payload,
+					}, execCtx)
+					if hookErr != nil {
+						log.Printf("order.admin.delete.after hook execution failed in batch_update_orders: admin=%d order=%s err=%v", aid, orderNo, hookErr)
+					}
+				}(hookExecCtx, afterPayload, adminID, order.OrderNo)
+			}
 		}
 
 		if err != nil {
 			failedCount++
-			order, _ := h.orderService.GetOrderByID(orderID)
-			if order != nil {
-				failedOrders = append(failedOrders, order.OrderNo)
-			} else {
-				failedOrders = append(failedOrders, strconv.FormatUint(uint64(orderID), 10))
-			}
+			failedOrders = append(failedOrders, order.OrderNo)
 		} else {
 			successCount++
 		}
@@ -928,19 +1932,24 @@ type UpdateOrderPriceRequest struct {
 
 // UpdateOrderPrice 修改未付款订单价格
 func (h *OrderHandler) UpdateOrderPrice(c *gin.Context) {
-	orderID, err := strconv.ParseUint(c.Param("id"), 10, 32)
-	if err != nil {
-		response.BadRequest(c, "Invalid order ID format")
+	adminID := middleware.MustGetUserID(c)
+	if adminID == 0 {
+		response.Unauthorized(c, "User not authenticated")
+		return
+	}
+
+	orderID, ok := parseAdminOrderID(c)
+	if !ok {
 		return
 	}
 
 	var req UpdateOrderPriceRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "Invalid request parameters")
+		respondAdminOrderValidationError(c, orderbiz.InvalidRequestParameters())
 		return
 	}
 	// 获取订单
-	order, err := h.orderService.GetOrderByID(uint(orderID))
+	order, err := h.orderService.GetOrderByID(orderID)
 	if err != nil {
 		response.NotFound(c, "Order not found")
 		return
@@ -948,7 +1957,50 @@ func (h *OrderHandler) UpdateOrderPrice(c *gin.Context) {
 
 	// 只允许修改待付款状态的订单价格
 	if order.Status != models.OrderStatusPendingPayment {
-		response.BadRequest(c, "Only pending payment orders can have price modified")
+		respondAdminOrderValidationError(c, orderbiz.UpdatePriceStatusInvalid(order.Status))
+		return
+	}
+	hookExecCtx := h.buildOrderHookExecutionContext(c, adminID, uint(orderID))
+	if h.pluginManager != nil {
+		originalReq := req
+		hookPayload := map[string]interface{}{
+			"order_id":               order.ID,
+			"order_no":               order.OrderNo,
+			"admin_id":               adminID,
+			"status_before":          order.Status,
+			"old_total_amount_minor": order.TotalAmount,
+			"new_total_amount_minor": *req.TotalAmountMinor,
+			"source":                 "admin_api",
+		}
+		hookResult, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+			Hook:    "order.admin.update_price.before",
+			Payload: hookPayload,
+		}, hookExecCtx)
+		if hookErr != nil {
+			log.Printf("order.admin.update_price.before hook execution failed: admin=%d order=%s err=%v", adminID, order.OrderNo, hookErr)
+		} else if hookResult != nil {
+			if hookResult.Blocked {
+				reason := strings.TrimSpace(hookResult.BlockReason)
+				if reason == "" {
+					reason = "Order price update rejected by plugin"
+				}
+				response.BadRequest(c, reason)
+				return
+			}
+			if hookResult.Payload != nil {
+				if applyErr := applyAdminUpdateOrderPriceHookPayload(&req, hookResult.Payload); applyErr != nil {
+					log.Printf("order.admin.update_price.before payload apply failed, fallback to original request: admin=%d order=%s err=%v", adminID, order.OrderNo, applyErr)
+					req = originalReq
+				}
+			}
+		}
+	}
+	if req.TotalAmountMinor == nil {
+		respondAdminOrderValidationError(c, orderbiz.InvalidRequestParameters())
+		return
+	}
+	if *req.TotalAmountMinor < 0 {
+		respondAdminOrderValidationError(c, orderbiz.TotalAmountNegative())
 		return
 	}
 
@@ -970,6 +2022,28 @@ func (h *OrderHandler) UpdateOrderPrice(c *gin.Context) {
 		"old_total_amount_minor": oldAmount,
 		"new_total_amount_minor": *req.TotalAmountMinor,
 	})
+
+	if h.pluginManager != nil {
+		afterPayload := map[string]interface{}{
+			"order_id":               order.ID,
+			"order_no":               order.OrderNo,
+			"admin_id":               adminID,
+			"status_before":          models.OrderStatusPendingPayment,
+			"status_after":           order.Status,
+			"old_total_amount_minor": oldAmount,
+			"new_total_amount_minor": order.TotalAmount,
+			"source":                 "admin_api",
+		}
+		go func(execCtx *service.ExecutionContext, payload map[string]interface{}, aid uint, orderNo string) {
+			_, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+				Hook:    "order.admin.update_price.after",
+				Payload: payload,
+			}, execCtx)
+			if hookErr != nil {
+				log.Printf("order.admin.update_price.after hook execution failed: admin=%d order=%s err=%v", aid, orderNo, hookErr)
+			}
+		}(hookExecCtx, afterPayload, adminID, order.OrderNo)
+	}
 
 	response.Success(c, gin.H{
 		"order_no":           order.OrderNo,
@@ -993,43 +2067,43 @@ type CreateDraftRequest struct {
 func (h *OrderHandler) CreateDraft(c *gin.Context) {
 	var req CreateDraftRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "Invalid request parameters")
+		respondAdminOrderValidationError(c, orderbiz.InvalidRequestParameters())
 		return
 	}
 
 	req.ExternalUserID = validator.SanitizeInput(req.ExternalUserID)
 	if !validator.ValidateLength(req.ExternalUserID, 1, 100) {
-		response.BadRequest(c, "External user ID length must be between 1-100 characters")
+		respondAdminOrderValidationError(c, orderbiz.ExternalUserIDLengthInvalid(1, 100))
 		return
 	}
 
 	req.UserEmail = validator.SanitizeInput(req.UserEmail)
 	if !validator.ValidateLength(req.UserEmail, 0, 255) {
-		response.BadRequest(c, "Email length cannot exceed 255 characters")
+		respondAdminOrderValidationError(c, orderbiz.EmailTooLong(255))
 		return
 	}
 
 	req.UserName = validator.SanitizeInput(req.UserName)
 	if !validator.ValidateLength(req.UserName, 0, 100) {
-		response.BadRequest(c, "Username length cannot exceed 100 characters")
+		respondAdminOrderValidationError(c, orderbiz.UsernameTooLong(100))
 		return
 	}
 
 	req.ExternalOrderID = validator.SanitizeInput(req.ExternalOrderID)
 	if !validator.ValidateLength(req.ExternalOrderID, 0, 100) {
-		response.BadRequest(c, "External order ID length cannot exceed 100 characters")
+		respondAdminOrderValidationError(c, orderbiz.ExternalOrderIDTooLong(100))
 		return
 	}
 
 	req.Platform = validator.SanitizeInput(req.Platform)
 	if !validator.ValidateLength(req.Platform, 0, 100) {
-		response.BadRequest(c, "Platform name length cannot exceed 100 characters")
+		respondAdminOrderValidationError(c, orderbiz.PlatformNameTooLong(100))
 		return
 	}
 
 	req.Remark = validator.SanitizeText(req.Remark)
 	if !validator.ValidateLength(req.Remark, 0, 1000) {
-		response.BadRequest(c, "Order remark length cannot exceed 1000 characters")
+		respondAdminOrderValidationError(c, orderbiz.OrderRemarkTooLong(1000))
 		return
 	}
 
@@ -1046,13 +2120,6 @@ func (h *OrderHandler) CreateDraft(c *gin.Context) {
 		var bizErr *bizerr.Error
 		if errors.As(err, &bizErr) {
 			response.BizError(c, bizErr.Message, bizErr.Key, bizErr.Params)
-			return
-		}
-		if errors.Is(err, service.ErrProductNotAvailable) ||
-			strings.Contains(err.Error(), "does not exist") ||
-			strings.Contains(err.Error(), "cannot be empty") ||
-			strings.Contains(err.Error(), "must be greater than 0") {
-			response.BadRequest(c, err.Error())
 			return
 		}
 		db := database.GetDB()
@@ -1116,12 +2183,12 @@ type CreateOrderForUserRequest struct {
 func (h *OrderHandler) CreateOrderForUser(c *gin.Context) {
 	var req CreateOrderForUserRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "Invalid request parameters")
+		respondAdminOrderValidationError(c, orderbiz.InvalidRequestParameters())
 		return
 	}
 
 	if len(req.Items) == 0 {
-		response.BadRequest(c, "Order items cannot be empty")
+		respondAdminOrderValidationError(c, orderbiz.ItemsEmpty())
 		return
 	}
 
@@ -1138,7 +2205,7 @@ func (h *OrderHandler) CreateOrderForUser(c *gin.Context) {
 	req.AdminRemark = validator.SanitizeText(req.AdminRemark)
 	req.UserEmail = validator.SanitizeInput(req.UserEmail)
 	if req.TotalAmountMinor != nil && *req.TotalAmountMinor < 0 {
-		response.BadRequest(c, "Total amount must be greater than or equal to 0")
+		respondAdminOrderValidationError(c, orderbiz.TotalAmountNegative())
 		return
 	}
 
@@ -1165,15 +2232,6 @@ func (h *OrderHandler) CreateOrderForUser(c *gin.Context) {
 		var bizErr *bizerr.Error
 		if errors.As(err, &bizErr) {
 			response.BizError(c, bizErr.Message, bizErr.Key, bizErr.Params)
-			return
-		}
-		if strings.Contains(err.Error(), "not found") ||
-			strings.Contains(err.Error(), "cannot be empty") ||
-			strings.Contains(err.Error(), "must be greater than 0") ||
-			strings.Contains(err.Error(), "must select") ||
-			strings.Contains(err.Error(), "Failed to reserve") ||
-			strings.Contains(err.Error(), "Failed to allocate") {
-			response.BadRequest(c, err.Error())
 			return
 		}
 		response.InternalError(c, "Failed to create order")

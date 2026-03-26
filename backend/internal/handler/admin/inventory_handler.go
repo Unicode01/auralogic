@@ -1,22 +1,29 @@
 package admin
 
 import (
+	"log"
 	"strconv"
+	"strings"
 
-	"github.com/gin-gonic/gin"
 	"auralogic/internal/database"
 	"auralogic/internal/pkg/logger"
 	"auralogic/internal/pkg/response"
 	"auralogic/internal/service"
+	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 type InventoryHandler struct {
 	inventoryService *service.InventoryService
+	db               *gorm.DB
+	pluginManager    *service.PluginManagerService
 }
 
-func NewInventoryHandler(inventoryService *service.InventoryService) *InventoryHandler {
+func NewInventoryHandler(inventoryService *service.InventoryService, db *gorm.DB, pluginManager *service.PluginManagerService) *InventoryHandler {
 	return &InventoryHandler{
 		inventoryService: inventoryService,
+		db:               db,
+		pluginManager:    pluginManager,
 	}
 }
 
@@ -57,10 +64,50 @@ func (h *InventoryHandler) CreateInventory(c *gin.Context) {
 		response.BadRequest(c, "Invalid request parameters")
 		return
 	}
+	adminID := getOptionalUserID(c)
+	adminIDValue := uint(0)
+	if adminID != nil {
+		adminIDValue = *adminID
+	}
+	if h.pluginManager != nil {
+		originalReq := req
+		hookPayload, payloadErr := adminHookStructToPayload(req)
+		if payloadErr != nil {
+			log.Printf("inventory.create.before payload build failed: admin=%d err=%v", adminIDValue, payloadErr)
+		} else {
+			hookPayload["admin_id"] = adminIDValue
+			hookPayload["source"] = "admin_api"
+			hookResult, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+				Hook:    "inventory.create.before",
+				Payload: hookPayload,
+			}, buildAdminHookExecutionContext(c, adminID, map[string]string{
+				"hook_resource": "inventory",
+				"hook_source":   "admin_api",
+			}))
+			if hookErr != nil {
+				log.Printf("inventory.create.before hook execution failed: admin=%d err=%v", adminIDValue, hookErr)
+			} else if hookResult != nil {
+				if hookResult.Blocked {
+					reason := strings.TrimSpace(hookResult.BlockReason)
+					if reason == "" {
+						reason = "Inventory creation rejected by plugin"
+					}
+					response.BadRequest(c, reason)
+					return
+				}
+				if hookResult.Payload != nil {
+					if mergeErr := mergeAdminHookStructPatch(&req, hookResult.Payload); mergeErr != nil {
+						log.Printf("inventory.create.before payload apply failed, fallback to original request: admin=%d err=%v", adminIDValue, mergeErr)
+						req = originalReq
+					}
+				}
+			}
+		}
+	}
 
 	// 验证：Purchasable quantity cannot exceed inventory quantity
 	if req.AvailableQuantity > req.Stock {
-		response.BadRequest(c, "Purchasable quantity cannot exceed inventory quantity")
+		response.BizError(c, "Available quantity cannot exceed total stock", "inventory.availableExceedsStock", nil)
 		return
 	}
 
@@ -79,6 +126,9 @@ func (h *InventoryHandler) CreateInventory(c *gin.Context) {
 	)
 
 	if err != nil {
+		if respondAdminBizError(c, err) {
+			return
+		}
 		response.BadRequest(c, err.Error())
 		return
 	}
@@ -100,6 +150,36 @@ func (h *InventoryHandler) CreateInventory(c *gin.Context) {
 		"available_quantity": req.AvailableQuantity,
 		"safety_stock":       req.SafetyStock,
 	})
+	if h.pluginManager != nil {
+		afterPayload := map[string]interface{}{
+			"inventory_id":       inventory.ID,
+			"name":               inventory.Name,
+			"sku":                inventory.SKU,
+			"attributes":         inventory.Attributes,
+			"stock":              inventory.Stock,
+			"available_quantity": inventory.AvailableQuantity,
+			"sold_quantity":      inventory.SoldQuantity,
+			"reserved_quantity":  inventory.ReservedQuantity,
+			"safety_stock":       inventory.SafetyStock,
+			"alert_email":        inventory.AlertEmail,
+			"notes":              inventory.Notes,
+			"is_active":          inventory.IsActive,
+			"admin_id":           adminIDValue,
+			"source":             "admin_api",
+		}
+		go func(execCtx *service.ExecutionContext, payload map[string]interface{}, inventoryID uint) {
+			_, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+				Hook:    "inventory.create.after",
+				Payload: payload,
+			}, execCtx)
+			if hookErr != nil {
+				log.Printf("inventory.create.after hook execution failed: admin=%d inventory=%d err=%v", adminIDValue, inventoryID, hookErr)
+			}
+		}(cloneAdminHookExecutionContext(buildAdminHookExecutionContext(c, adminID, map[string]string{
+			"hook_resource": "inventory",
+			"hook_source":   "admin_api",
+		})), afterPayload, inventory.ID)
+	}
 
 	response.Success(c, inventory)
 }
@@ -107,24 +187,77 @@ func (h *InventoryHandler) CreateInventory(c *gin.Context) {
 // UpdateInventory UpdateInventory配置
 func (h *InventoryHandler) UpdateInventory(c *gin.Context) {
 	id, _ := strconv.ParseUint(c.Param("id"), 10, 32)
+	inventoryID := uint(id)
 
 	var req UpdateInventoryRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, "Invalid request parameters")
 		return
 	}
+	adminID := getOptionalUserID(c)
+	adminIDValue := uint(0)
+	if adminID != nil {
+		adminIDValue = *adminID
+	}
 
 	// 验证：Purchasable quantity cannot exceed inventory quantity
 	if req.AvailableQuantity > req.Stock {
-		response.BadRequest(c, "Purchasable quantity cannot exceed inventory quantity")
+		response.BizError(c, "Available quantity cannot exceed total stock", "inventory.availableExceedsStock", nil)
 		return
 	}
 
 	// 获取更新前的库存信息（用于日志）
-	beforeInventory, _ := h.inventoryService.GetInventory(uint(id))
+	beforeInventory, _ := h.inventoryService.GetInventory(inventoryID)
+	if h.pluginManager != nil {
+		originalReq := req
+		hookPayload, payloadErr := adminHookStructToPayload(req)
+		if payloadErr != nil {
+			log.Printf("inventory.update.before payload build failed: admin=%d inventory=%d err=%v", adminIDValue, inventoryID, payloadErr)
+		} else {
+			hookPayload["inventory_id"] = inventoryID
+			if beforeInventory != nil {
+				hookPayload["current"] = map[string]interface{}{
+					"stock":              beforeInventory.Stock,
+					"available_quantity": beforeInventory.AvailableQuantity,
+					"safety_stock":       beforeInventory.SafetyStock,
+					"is_active":          beforeInventory.IsActive,
+					"alert_email":        beforeInventory.AlertEmail,
+					"notes":              beforeInventory.Notes,
+				}
+			}
+			hookPayload["admin_id"] = adminIDValue
+			hookPayload["source"] = "admin_api"
+			hookResult, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+				Hook:    "inventory.update.before",
+				Payload: hookPayload,
+			}, buildAdminHookExecutionContext(c, adminID, map[string]string{
+				"hook_resource": "inventory",
+				"hook_source":   "admin_api",
+				"inventory_id":  strconv.FormatUint(id, 10),
+			}))
+			if hookErr != nil {
+				log.Printf("inventory.update.before hook execution failed: admin=%d inventory=%d err=%v", adminIDValue, inventoryID, hookErr)
+			} else if hookResult != nil {
+				if hookResult.Blocked {
+					reason := strings.TrimSpace(hookResult.BlockReason)
+					if reason == "" {
+						reason = "Inventory update rejected by plugin"
+					}
+					response.BadRequest(c, reason)
+					return
+				}
+				if hookResult.Payload != nil {
+					if mergeErr := mergeAdminHookStructPatch(&req, hookResult.Payload); mergeErr != nil {
+						log.Printf("inventory.update.before payload apply failed, fallback to original request: admin=%d inventory=%d err=%v", adminIDValue, inventoryID, mergeErr)
+						req = originalReq
+					}
+				}
+			}
+		}
+	}
 
 	err := h.inventoryService.UpdateInventory(
-		uint(id),
+		inventoryID,
 		req.Stock,
 		req.AvailableQuantity,
 		req.SafetyStock,
@@ -132,12 +265,15 @@ func (h *InventoryHandler) UpdateInventory(c *gin.Context) {
 	)
 
 	if err != nil {
+		if respondAdminBizError(c, err) {
+			return
+		}
 		response.BadRequest(c, err.Error())
 		return
 	}
 
 	// getUpdate后的InventoryInfo
-	inventory, _ := h.inventoryService.GetInventory(uint(id))
+	inventory, _ := h.inventoryService.GetInventory(inventoryID)
 
 	// Update其他字段
 	if req.AlertEmail != "" {
@@ -149,7 +285,6 @@ func (h *InventoryHandler) UpdateInventory(c *gin.Context) {
 
 	// 记录操作日志
 	db := database.GetDB()
-	inventoryID := uint(id)
 	logger.LogOperation(db, c, "update", "inventory", &inventoryID, map[string]interface{}{
 		"inventory_id":              id,
 		"inventory_name":            inventory.Name,
@@ -160,6 +295,42 @@ func (h *InventoryHandler) UpdateInventory(c *gin.Context) {
 		"before_is_active":          beforeInventory.IsActive,
 		"after_is_active":           inventory.IsActive,
 	})
+	if h.pluginManager != nil && inventory != nil {
+		afterPayload := map[string]interface{}{
+			"inventory_id":              inventory.ID,
+			"name":                      inventory.Name,
+			"sku":                       inventory.SKU,
+			"stock":                     inventory.Stock,
+			"available_quantity":        inventory.AvailableQuantity,
+			"sold_quantity":             inventory.SoldQuantity,
+			"reserved_quantity":         inventory.ReservedQuantity,
+			"safety_stock":              inventory.SafetyStock,
+			"alert_email":               inventory.AlertEmail,
+			"notes":                     inventory.Notes,
+			"is_active":                 inventory.IsActive,
+			"before_stock":              beforeInventory.Stock,
+			"before_available_quantity": beforeInventory.AvailableQuantity,
+			"before_safety_stock":       beforeInventory.SafetyStock,
+			"before_is_active":          beforeInventory.IsActive,
+			"before_alert_email":        beforeInventory.AlertEmail,
+			"before_notes":              beforeInventory.Notes,
+			"admin_id":                  adminIDValue,
+			"source":                    "admin_api",
+		}
+		go func(execCtx *service.ExecutionContext, payload map[string]interface{}) {
+			_, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+				Hook:    "inventory.update.after",
+				Payload: payload,
+			}, execCtx)
+			if hookErr != nil {
+				log.Printf("inventory.update.after hook execution failed: admin=%d inventory=%d err=%v", adminIDValue, inventoryID, hookErr)
+			}
+		}(cloneAdminHookExecutionContext(buildAdminHookExecutionContext(c, adminID, map[string]string{
+			"hook_resource": "inventory",
+			"hook_source":   "admin_api",
+			"inventory_id":  strconv.FormatUint(id, 10),
+		})), afterPayload)
+	}
 
 	response.Success(c, inventory)
 }
@@ -220,24 +391,93 @@ func (h *InventoryHandler) GetProductInventories(c *gin.Context) {
 // DeleteInventory DeleteInventory配置
 func (h *InventoryHandler) DeleteInventory(c *gin.Context) {
 	id, _ := strconv.ParseUint(c.Param("id"), 10, 32)
+	inventoryID := uint(id)
+	adminID := getOptionalUserID(c)
+	adminIDValue := uint(0)
+	if adminID != nil {
+		adminIDValue = *adminID
+	}
 
 	// 获取删除前的库存信息（用于日志）
-	inventory, _ := h.inventoryService.GetInventory(uint(id))
+	inventory, _ := h.inventoryService.GetInventory(inventoryID)
+	if h.pluginManager != nil && inventory != nil {
+		hookPayload := map[string]interface{}{
+			"inventory_id":       inventory.ID,
+			"name":               inventory.Name,
+			"sku":                inventory.SKU,
+			"stock":              inventory.Stock,
+			"available_quantity": inventory.AvailableQuantity,
+			"sold_quantity":      inventory.SoldQuantity,
+			"reserved_quantity":  inventory.ReservedQuantity,
+			"safety_stock":       inventory.SafetyStock,
+			"is_active":          inventory.IsActive,
+			"admin_id":           adminIDValue,
+			"source":             "admin_api",
+		}
+		hookResult, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+			Hook:    "inventory.delete.before",
+			Payload: hookPayload,
+		}, buildAdminHookExecutionContext(c, adminID, map[string]string{
+			"hook_resource": "inventory",
+			"hook_source":   "admin_api",
+			"inventory_id":  strconv.FormatUint(id, 10),
+		}))
+		if hookErr != nil {
+			log.Printf("inventory.delete.before hook execution failed: admin=%d inventory=%d err=%v", adminIDValue, inventoryID, hookErr)
+		} else if hookResult != nil && hookResult.Blocked {
+			reason := strings.TrimSpace(hookResult.BlockReason)
+			if reason == "" {
+				reason = "Inventory deletion rejected by plugin"
+			}
+			response.BadRequest(c, reason)
+			return
+		}
+	}
 
-	err := h.inventoryService.DeleteInventory(uint(id))
+	err := h.inventoryService.DeleteInventory(inventoryID)
 	if err != nil {
+		if respondAdminBizError(c, err) {
+			return
+		}
 		response.BadRequest(c, err.Error())
 		return
 	}
 
 	// 记录操作日志
 	db := database.GetDB()
-	inventoryID := uint(id)
 	logger.LogOperation(db, c, "delete", "inventory", &inventoryID, map[string]interface{}{
 		"inventory_id":   id,
 		"inventory_name": inventory.Name,
 		"stock":          inventory.Stock,
 	})
+	if h.pluginManager != nil && inventory != nil {
+		afterPayload := map[string]interface{}{
+			"inventory_id":       inventory.ID,
+			"name":               inventory.Name,
+			"sku":                inventory.SKU,
+			"stock":              inventory.Stock,
+			"available_quantity": inventory.AvailableQuantity,
+			"sold_quantity":      inventory.SoldQuantity,
+			"reserved_quantity":  inventory.ReservedQuantity,
+			"safety_stock":       inventory.SafetyStock,
+			"is_active":          inventory.IsActive,
+			"admin_id":           adminIDValue,
+			"source":             "admin_api",
+		}
+		go func(execCtx *service.ExecutionContext, payload map[string]interface{}) {
+			_, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+				Hook:    "inventory.delete.after",
+				Payload: payload,
+			}, execCtx)
+			if hookErr != nil {
+				log.Printf("inventory.delete.after hook execution failed: admin=%d inventory=%d err=%v", adminIDValue, inventoryID, hookErr)
+			}
+		}(cloneAdminHookExecutionContext(buildAdminHookExecutionContext(c, adminID, map[string]string{
+			"hook_resource": "inventory",
+			"hook_source":   "admin_api",
+			"inventory_id":  strconv.FormatUint(id, 10),
+		})), afterPayload)
+	}
 
 	response.Success(c, gin.H{"message": "DeleteSuccess"})
 }
@@ -245,11 +485,17 @@ func (h *InventoryHandler) DeleteInventory(c *gin.Context) {
 // AdjustStock 调整库存（增加或减少）
 func (h *InventoryHandler) AdjustStock(c *gin.Context) {
 	id, _ := strconv.ParseUint(c.Param("id"), 10, 32)
+	inventoryID := uint(id)
 
 	var req AdjustStockRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, "Invalid request parameters")
 		return
+	}
+	adminID := getOptionalUserID(c)
+	adminIDValue := uint(0)
+	if adminID != nil {
+		adminIDValue = *adminID
 	}
 
 	// 获取操作人
@@ -260,10 +506,49 @@ func (h *InventoryHandler) AdjustStock(c *gin.Context) {
 	}
 
 	// 获取调整前的库存信息（用于日志）
-	beforeInventory, _ := h.inventoryService.GetInventory(uint(id))
+	beforeInventory, _ := h.inventoryService.GetInventory(inventoryID)
+	if h.pluginManager != nil && beforeInventory != nil {
+		originalReq := req
+		hookPayload, payloadErr := adminHookStructToPayload(req)
+		if payloadErr != nil {
+			log.Printf("inventory.adjust.before payload build failed: admin=%d inventory=%d err=%v", adminIDValue, inventoryID, payloadErr)
+		} else {
+			hookPayload["inventory_id"] = inventoryID
+			hookPayload["name"] = beforeInventory.Name
+			hookPayload["operator"] = operator
+			hookPayload["admin_id"] = adminIDValue
+			hookPayload["source"] = "admin_api"
+			hookResult, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+				Hook:    "inventory.adjust.before",
+				Payload: hookPayload,
+			}, buildAdminHookExecutionContext(c, adminID, map[string]string{
+				"hook_resource": "inventory",
+				"hook_source":   "admin_api",
+				"inventory_id":  strconv.FormatUint(id, 10),
+			}))
+			if hookErr != nil {
+				log.Printf("inventory.adjust.before hook execution failed: admin=%d inventory=%d err=%v", adminIDValue, inventoryID, hookErr)
+			} else if hookResult != nil {
+				if hookResult.Blocked {
+					reason := strings.TrimSpace(hookResult.BlockReason)
+					if reason == "" {
+						reason = "Inventory adjustment rejected by plugin"
+					}
+					response.BadRequest(c, reason)
+					return
+				}
+				if hookResult.Payload != nil {
+					if mergeErr := mergeAdminHookStructPatch(&req, hookResult.Payload); mergeErr != nil {
+						log.Printf("inventory.adjust.before payload apply failed, fallback to original request: admin=%d inventory=%d err=%v", adminIDValue, inventoryID, mergeErr)
+						req = originalReq
+					}
+				}
+			}
+		}
+	}
 
 	err := h.inventoryService.AdjustStockByDelta(
-		uint(id),
+		inventoryID,
 		req.StockDelta,
 		req.AvailableQuantityDelta,
 		operator,
@@ -271,16 +556,18 @@ func (h *InventoryHandler) AdjustStock(c *gin.Context) {
 	)
 
 	if err != nil {
+		if respondAdminBizError(c, err) {
+			return
+		}
 		response.BadRequest(c, err.Error())
 		return
 	}
 
 	// 获取调整后的库存信息
-	inventory, _ := h.inventoryService.GetInventory(uint(id))
+	inventory, _ := h.inventoryService.GetInventory(inventoryID)
 
 	// 记录操作日志
 	db := database.GetDB()
-	inventoryID := uint(id)
 	logger.LogOperation(db, c, "adjust_stock", "inventory", &inventoryID, map[string]interface{}{
 		"inventory_id":              id,
 		"inventory_name":            inventory.Name,
@@ -294,6 +581,40 @@ func (h *InventoryHandler) AdjustStock(c *gin.Context) {
 		"notes":                     req.Notes,
 		"operator":                  operator,
 	})
+	if h.pluginManager != nil && inventory != nil && beforeInventory != nil {
+		afterPayload := map[string]interface{}{
+			"inventory_id":              inventory.ID,
+			"name":                      inventory.Name,
+			"stock_delta":               req.StockDelta,
+			"available_quantity_delta":  req.AvailableQuantityDelta,
+			"reason":                    req.Reason,
+			"notes":                     req.Notes,
+			"operator":                  operator,
+			"before_stock":              beforeInventory.Stock,
+			"after_stock":               inventory.Stock,
+			"before_available_quantity": beforeInventory.AvailableQuantity,
+			"after_available_quantity":  inventory.AvailableQuantity,
+			"before_sold_quantity":      beforeInventory.SoldQuantity,
+			"after_sold_quantity":       inventory.SoldQuantity,
+			"before_reserved_quantity":  beforeInventory.ReservedQuantity,
+			"after_reserved_quantity":   inventory.ReservedQuantity,
+			"admin_id":                  adminIDValue,
+			"source":                    "admin_api",
+		}
+		go func(execCtx *service.ExecutionContext, payload map[string]interface{}) {
+			_, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+				Hook:    "inventory.adjust.after",
+				Payload: payload,
+			}, execCtx)
+			if hookErr != nil {
+				log.Printf("inventory.adjust.after hook execution failed: admin=%d inventory=%d err=%v", adminIDValue, inventoryID, hookErr)
+			}
+		}(cloneAdminHookExecutionContext(buildAdminHookExecutionContext(c, adminID, map[string]string{
+			"hook_resource": "inventory",
+			"hook_source":   "admin_api",
+			"inventory_id":  strconv.FormatUint(id, 10),
+		})), afterPayload)
+	}
 
 	response.Success(c, inventory)
 }

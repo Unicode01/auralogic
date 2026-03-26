@@ -1,10 +1,12 @@
 package user
 
 import (
-	"github.com/gin-gonic/gin"
+	"strings"
+
 	"auralogic/internal/pkg/response"
 	"auralogic/internal/pkg/utils"
 	"auralogic/internal/service"
+	"github.com/gin-gonic/gin"
 )
 
 type SerialHandler struct {
@@ -16,6 +18,31 @@ func NewSerialHandler(serialService *service.SerialService) *SerialHandler {
 	return &SerialHandler{
 		serialService:  serialService,
 		captchaService: service.NewCaptchaService(),
+	}
+}
+
+func buildPublicSerialHookExecutionContext(c *gin.Context, source string) *service.ExecutionContext {
+	if c == nil {
+		return nil
+	}
+
+	normalizedSource := strings.TrimSpace(source)
+	if normalizedSource == "" {
+		normalizedSource = "public_api"
+	}
+	return &service.ExecutionContext{
+		SessionID: strings.TrimSpace(c.GetHeader("X-Session-ID")),
+		Metadata: map[string]string{
+			"request_path":    c.Request.URL.Path,
+			"route":           c.FullPath(),
+			"method":          c.Request.Method,
+			"client_ip":       c.ClientIP(),
+			"user_agent":      c.GetHeader("User-Agent"),
+			"accept_language": c.GetHeader("Accept-Language"),
+			"operator_type":   "public",
+			"hook_source":     normalizedSource,
+		},
+		RequestContext: c.Request.Context(),
 	}
 }
 
@@ -42,8 +69,12 @@ func (h *SerialHandler) VerifySerial(c *gin.Context) {
 		}
 	}
 
-	serial, err := h.serialService.VerifySerial(req.SerialNumber)
+	serial, err := h.serialService.VerifySerialWithContext(req.SerialNumber, buildPublicSerialHookExecutionContext(c, "public_api"), "public_api")
 	if err != nil {
+		if service.IsHookBlockedError(err) {
+			response.BadRequest(c, err.Error())
+			return
+		}
 		response.NotFound(c, "Serial number not found or invalid")
 		return
 	}
@@ -75,8 +106,12 @@ func (h *SerialHandler) GetSerialByNumber(c *gin.Context) {
 		}
 	}
 
-	serial, err := h.serialService.VerifySerial(serialNumber)
+	serial, err := h.serialService.VerifySerialWithContext(serialNumber, buildPublicSerialHookExecutionContext(c, "public_api"), "public_api")
 	if err != nil {
+		if service.IsHookBlockedError(err) {
+			response.BadRequest(c, err.Error())
+			return
+		}
 		response.NotFound(c, "Serial number not found or invalid")
 		return
 	}

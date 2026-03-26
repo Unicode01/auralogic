@@ -2,6 +2,8 @@ package admin
 
 import (
 	"errors"
+	"log"
+	"strconv"
 	"strings"
 
 	"auralogic/internal/models"
@@ -16,12 +18,48 @@ import (
 type MarketingHandler struct {
 	db               *gorm.DB
 	marketingService *service.MarketingService
+	pluginManager    *service.PluginManagerService
 }
 
-func NewMarketingHandler(db *gorm.DB, marketingService *service.MarketingService) *MarketingHandler {
+func NewMarketingHandler(db *gorm.DB, marketingService *service.MarketingService, pluginManager *service.PluginManagerService) *MarketingHandler {
 	return &MarketingHandler{
 		db:               db,
 		marketingService: marketingService,
+		pluginManager:    pluginManager,
+	}
+}
+
+func buildMarketingBatchHookPayload(batch *models.MarketingBatch) map[string]interface{} {
+	if batch == nil {
+		return map[string]interface{}{}
+	}
+
+	return map[string]interface{}{
+		"batch_id":             batch.ID,
+		"batch_no":             batch.BatchNo,
+		"title":                batch.Title,
+		"content":              batch.Content,
+		"send_email":           batch.SendEmail,
+		"send_sms":             batch.SendSMS,
+		"target_all":           batch.TargetAll,
+		"status":               batch.Status,
+		"total_tasks":          batch.TotalTasks,
+		"processed_tasks":      batch.ProcessedTasks,
+		"requested_user_count": batch.RequestedUserCount,
+		"targeted_users":       batch.TargetedUsers,
+		"email_sent":           batch.EmailSent,
+		"email_failed":         batch.EmailFailed,
+		"email_skipped":        batch.EmailSkipped,
+		"sms_sent":             batch.SmsSent,
+		"sms_failed":           batch.SmsFailed,
+		"sms_skipped":          batch.SmsSkipped,
+		"failed_reason":        batch.FailedReason,
+		"operator_id":          batch.OperatorID,
+		"operator_name":        batch.OperatorName,
+		"started_at":           batch.StartedAt,
+		"completed_at":         batch.CompletedAt,
+		"created_at":           batch.CreatedAt,
+		"updated_at":           batch.UpdatedAt,
 	}
 }
 
@@ -301,6 +339,47 @@ func (h *MarketingHandler) PreviewMarketing(c *gin.Context) {
 		response.BadRequest(c, "Invalid request parameters")
 		return
 	}
+	adminID := getOptionalUserID(c)
+	adminIDValue := uint(0)
+	if adminID != nil {
+		adminIDValue = *adminID
+	}
+	if h.pluginManager != nil {
+		originalReq := req
+		hookPayload, payloadErr := adminHookStructToPayload(req)
+		if payloadErr != nil {
+			log.Printf("marketing.preview.before payload build failed: admin=%d err=%v", adminIDValue, payloadErr)
+		} else {
+			hookPayload["admin_id"] = adminIDValue
+			hookPayload["source"] = "admin_api"
+			hookResult, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+				Hook:    "marketing.preview.before",
+				Payload: hookPayload,
+			}, buildAdminHookExecutionContext(c, adminID, map[string]string{
+				"hook_resource": "marketing",
+				"hook_source":   "admin_api",
+				"hook_action":   "preview",
+			}))
+			if hookErr != nil {
+				log.Printf("marketing.preview.before hook execution failed: admin=%d err=%v", adminIDValue, hookErr)
+			} else if hookResult != nil {
+				if hookResult.Blocked {
+					reason := strings.TrimSpace(hookResult.BlockReason)
+					if reason == "" {
+						reason = "Marketing preview rejected by plugin"
+					}
+					response.BadRequest(c, reason)
+					return
+				}
+				if hookResult.Payload != nil {
+					if mergeErr := mergeAdminHookStructPatch(&req, hookResult.Payload); mergeErr != nil {
+						log.Printf("marketing.preview.before payload apply failed, fallback to original request: admin=%d err=%v", adminIDValue, mergeErr)
+						req = originalReq
+					}
+				}
+			}
+		}
+	}
 
 	req.Title = strings.TrimSpace(req.Title)
 	req.Content = strings.TrimSpace(req.Content)
@@ -320,6 +399,40 @@ func (h *MarketingHandler) PreviewMarketing(c *gin.Context) {
 	}
 
 	rendered := service.RenderMarketingContent(req.Title, req.Content, user)
+	if h.pluginManager != nil {
+		afterPayload := map[string]interface{}{
+			"title":                        rendered.Title,
+			"email_subject":                rendered.EmailSubject,
+			"content_html":                 rendered.ContentHTML,
+			"email_html":                   rendered.EmailHTML,
+			"sms_text":                     rendered.SMSText,
+			"resolved_variables":           rendered.Variables,
+			"supported_placeholders":       rendered.Placeholders,
+			"supported_template_variables": rendered.TemplateVars,
+			"admin_id":                     adminIDValue,
+			"source":                       "admin_api",
+		}
+		if req.UserID != nil {
+			afterPayload["user_id"] = *req.UserID
+		}
+		if user != nil {
+			afterPayload["resolved_user_id"] = user.ID
+			afterPayload["resolved_user_email"] = user.Email
+		}
+		go func(execCtx *service.ExecutionContext, payload map[string]interface{}) {
+			_, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+				Hook:    "marketing.preview.after",
+				Payload: payload,
+			}, execCtx)
+			if hookErr != nil {
+				log.Printf("marketing.preview.after hook execution failed: admin=%d err=%v", adminIDValue, hookErr)
+			}
+		}(cloneAdminHookExecutionContext(buildAdminHookExecutionContext(c, adminID, map[string]string{
+			"hook_resource": "marketing",
+			"hook_source":   "admin_api",
+			"hook_action":   "preview",
+		})), afterPayload)
+	}
 	response.Success(c, gin.H{
 		"title":                        rendered.Title,
 		"email_subject":                rendered.EmailSubject,
@@ -414,6 +527,47 @@ func (h *MarketingHandler) SendMarketing(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, "Invalid request parameters")
 		return
+	}
+	adminID := getOptionalUserID(c)
+	adminIDValue := uint(0)
+	if adminID != nil {
+		adminIDValue = *adminID
+	}
+	if h.pluginManager != nil {
+		originalReq := req
+		hookPayload, payloadErr := adminHookStructToPayload(req)
+		if payloadErr != nil {
+			log.Printf("marketing.send.before payload build failed: admin=%d err=%v", adminIDValue, payloadErr)
+		} else {
+			hookPayload["admin_id"] = adminIDValue
+			hookPayload["source"] = "admin_api"
+			hookResult, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+				Hook:    "marketing.send.before",
+				Payload: hookPayload,
+			}, buildAdminHookExecutionContext(c, adminID, map[string]string{
+				"hook_resource": "marketing",
+				"hook_source":   "admin_api",
+				"hook_action":   "send",
+			}))
+			if hookErr != nil {
+				log.Printf("marketing.send.before hook execution failed: admin=%d err=%v", adminIDValue, hookErr)
+			} else if hookResult != nil {
+				if hookResult.Blocked {
+					reason := strings.TrimSpace(hookResult.BlockReason)
+					if reason == "" {
+						reason = "Marketing send rejected by plugin"
+					}
+					response.BadRequest(c, reason)
+					return
+				}
+				if hookResult.Payload != nil {
+					if mergeErr := mergeAdminHookStructPatch(&req, hookResult.Payload); mergeErr != nil {
+						log.Printf("marketing.send.before payload apply failed, fallback to original request: admin=%d err=%v", adminIDValue, mergeErr)
+						req = originalReq
+					}
+				}
+			}
+		}
 	}
 
 	req.Title = strings.TrimSpace(req.Title)
@@ -541,6 +695,26 @@ func (h *MarketingHandler) SendMarketing(c *gin.Context) {
 			response.InternalError(c, "Failed to enqueue marketing batch")
 			return
 		}
+		if h.pluginManager != nil {
+			afterPayload := buildMarketingBatchHookPayload(&batch)
+			afterPayload["admin_id"] = adminIDValue
+			afterPayload["source"] = "admin_api"
+			afterPayload["queue_enqueued"] = true
+			go func(execCtx *service.ExecutionContext, payload map[string]interface{}) {
+				_, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+					Hook:    "marketing.batch.enqueue.after",
+					Payload: payload,
+				}, execCtx)
+				if hookErr != nil {
+					log.Printf("marketing.batch.enqueue.after hook execution failed: admin=%d batch=%d err=%v", adminIDValue, batch.ID, hookErr)
+				}
+			}(cloneAdminHookExecutionContext(buildAdminHookExecutionContext(c, adminID, map[string]string{
+				"hook_resource": "marketing",
+				"hook_source":   "admin_api",
+				"hook_action":   "enqueue",
+				"batch_id":      strconv.FormatUint(uint64(batch.ID), 10),
+			})), afterPayload)
+		}
 	}
 
 	logger.LogOperation(h.db, c, "queue_marketing", "marketing_batch", &batch.ID, map[string]interface{}{
@@ -553,6 +727,27 @@ func (h *MarketingHandler) SendMarketing(c *gin.Context) {
 		"send_sms":             req.SendSMS,
 		"operator_name":        operatorName,
 	})
+	if h.pluginManager != nil {
+		afterPayload := buildMarketingBatchHookPayload(&batch)
+		afterPayload["requested_user_ids"] = req.UserIDs
+		afterPayload["resolved_user_count"] = len(users)
+		afterPayload["admin_id"] = adminIDValue
+		afterPayload["source"] = "admin_api"
+		go func(execCtx *service.ExecutionContext, payload map[string]interface{}) {
+			_, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+				Hook:    "marketing.send.after",
+				Payload: payload,
+			}, execCtx)
+			if hookErr != nil {
+				log.Printf("marketing.send.after hook execution failed: admin=%d batch=%d err=%v", adminIDValue, batch.ID, hookErr)
+			}
+		}(cloneAdminHookExecutionContext(buildAdminHookExecutionContext(c, adminID, map[string]string{
+			"hook_resource": "marketing",
+			"hook_source":   "admin_api",
+			"hook_action":   "send",
+			"batch_id":      strconv.FormatUint(uint64(batch.ID), 10),
+		})), afterPayload)
+	}
 
 	response.Success(c, gin.H{
 		"id":                   batch.ID,

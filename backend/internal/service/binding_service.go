@@ -2,12 +2,14 @@ package service
 
 import (
 	"encoding/json"
-	"fmt"
+	"errors"
 	"math/rand"
 	"time"
 
 	"auralogic/internal/models"
+	"auralogic/internal/pkg/bizerr"
 	"auralogic/internal/repository"
+	"gorm.io/gorm"
 )
 
 type BindingService struct {
@@ -33,13 +35,13 @@ func (s *BindingService) CreateBinding(productID, inventoryID uint, isRandom boo
 	// 1. 验证Product是否存在
 	product, err := s.productRepo.FindByID(productID)
 	if err != nil {
-		return nil, fmt.Errorf("Productdoes not exist: %w", err)
+		return nil, translateBindingProductLookupError(err)
 	}
 
 	// 2. 验证Inventory是否存在
 	inventory, err := s.inventoryRepo.FindByID(inventoryID)
 	if err != nil {
-		return nil, fmt.Errorf("Inventory configuration does not exist: %w", err)
+		return nil, translateBindingInventoryLookupError(err)
 	}
 
 	// 3. 从备注中提取规格组合（兼容旧格式和新格式）
@@ -66,7 +68,7 @@ func (s *BindingService) CreateBinding(productID, inventoryID uint, isRandom boo
 		return nil, err
 	}
 	if exists {
-		return nil, fmt.Errorf("This specification combination is already bound to inventory, do not bind again")
+		return nil, bizerr.New("binding.duplicateAttributes", "This specification combination is already bound to inventory, do not bind again")
 	}
 
 	// 5. 将规格组合转换为JSON类型
@@ -104,7 +106,7 @@ func (s *BindingService) CreateBinding(productID, inventoryID uint, isRandom boo
 func (s *BindingService) UpdateBinding(id uint, isRandom bool, priority int, notes string) error {
 	binding, err := s.bindingRepo.FindByID(id)
 	if err != nil {
-		return fmt.Errorf("Binding relationship does not exist: %w", err)
+		return translateBindingLookupError(err)
 	}
 
 	binding.IsRandom = isRandom
@@ -118,7 +120,7 @@ func (s *BindingService) UpdateBinding(id uint, isRandom bool, priority int, not
 func (s *BindingService) DeleteBinding(id uint) error {
 	binding, err := s.bindingRepo.FindByID(id)
 	if err != nil {
-		return fmt.Errorf("Binding relationship does not exist: %w", err)
+		return translateBindingLookupError(err)
 	}
 
 	return s.bindingRepo.Delete(binding.ID)
@@ -164,7 +166,7 @@ func (s *BindingService) SelectRandomInventory(productID uint, quantity int) (*m
 	}
 
 	if len(allBindings) == 0 {
-		return nil, nil, fmt.Errorf("This product has no inventory configured")
+		return nil, nil, bizerr.New("binding.noInventoryConfigured", "This product has no inventory configured")
 	}
 
 	// 2. 筛选出有足够库存的绑定（盲盒模式或包含盲盒属性的）
@@ -180,8 +182,11 @@ func (s *BindingService) SelectRandomInventory(productID uint, quantity int) (*m
 	}
 
 	if len(availableBindings) == 0 {
-		return nil, nil, fmt.Errorf("Not enough inventory available for allocation")
+		return nil, nil, bizerr.New("binding.insufficientAvailable", "Not enough inventory available for allocation").
+			WithParams(map[string]interface{}{"quantity": quantity})
 	}
+
+	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
 
 	// 辅助函数：从绑定中提取完整规格组合
 	getFullAttributes := func(binding models.ProductInventoryBinding) map[string]string {
@@ -202,19 +207,18 @@ func (s *BindingService) SelectRandomInventory(productID uint, quantity int) (*m
 
 	if totalWeight == 0 {
 		// 如果所有权重都是0，则随机选择
-		rand.Seed(time.Now().UnixNano())
-		randomIndex := rand.Intn(len(availableBindings))
+		randomIndex := rng.Intn(len(availableBindings))
 		selectedBinding = &availableBindings[randomIndex]
 	} else {
 		// 使用加权随机算法
-		rand.Seed(time.Now().UnixNano())
-		randomValue := rand.Intn(totalWeight)
+		randomValue := rng.Intn(totalWeight)
 		currentWeight := 0
 
-		for _, binding := range availableBindings {
+		for idx := range availableBindings {
+			binding := &availableBindings[idx]
 			currentWeight += binding.Priority
 			if randomValue < currentWeight {
-				selectedBinding = &binding
+				selectedBinding = binding
 				break
 			}
 		}
@@ -240,7 +244,7 @@ func (s *BindingService) FindInventoryWithPartialMatch(productID uint, userAttri
 	}
 
 	if len(bindings) == 0 {
-		return nil, nil, fmt.Errorf("This product has no inventory configured")
+		return nil, nil, bizerr.New("binding.noInventoryConfigured", "This product has no inventory configured")
 	}
 
 	// 2. 筛选出包含用户选择属性的绑定（部分匹配）
@@ -273,8 +277,10 @@ func (s *BindingService) FindInventoryWithPartialMatch(productID uint, userAttri
 	}
 
 	if len(matchedBindings) == 0 {
-		return nil, nil, fmt.Errorf("No matching inventory configuration found")
+		return nil, nil, bizerr.New("binding.noMatchingInventory", "No matching inventory configuration found")
 	}
+
+	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
 
 	// 辅助函数：从绑定中提取完整规格组合
 	getFullAttributes := func(binding models.ProductInventoryBinding) map[string]string {
@@ -302,19 +308,18 @@ func (s *BindingService) FindInventoryWithPartialMatch(productID uint, userAttri
 
 	if totalWeight == 0 {
 		// 如果所有权重都是0，则随机选择
-		rand.Seed(time.Now().UnixNano())
-		randomIndex := rand.Intn(len(matchedBindings))
+		randomIndex := rng.Intn(len(matchedBindings))
 		selectedBinding = &matchedBindings[randomIndex]
 	} else {
 		// 使用加权随机算法
-		rand.Seed(time.Now().UnixNano())
-		randomValue := rand.Intn(totalWeight)
+		randomValue := rng.Intn(totalWeight)
 		currentWeight := 0
 
-		for _, binding := range matchedBindings {
+		for idx := range matchedBindings {
+			binding := &matchedBindings[idx]
 			currentWeight += binding.Priority
 			if randomValue < currentWeight {
-				selectedBinding = &binding
+				selectedBinding = binding
 				break
 			}
 		}
@@ -339,7 +344,7 @@ func (s *BindingService) FindInventoryByAttributes(productID uint, attributes ma
 	}
 
 	if len(bindings) == 0 {
-		return nil, nil, fmt.Errorf("This product has no inventory configured with fixed attributes")
+		return nil, nil, bizerr.New("binding.noFixedInventory", "This product has no inventory configured with fixed attributes")
 	}
 
 	// 2. 规范化用户选择的规格组合
@@ -356,7 +361,7 @@ func (s *BindingService) FindInventoryByAttributes(productID uint, attributes ma
 		if binding.AttributesHash == attrsHash {
 			// 验证Inventory是否可用
 			if !binding.Inventory.IsActive {
-				return nil, nil, fmt.Errorf("This specification is unavailable")
+				return nil, nil, bizerr.New("binding.specUnavailable", "This specification is unavailable")
 			}
 
 			// 获取完整规格组合
@@ -371,7 +376,7 @@ func (s *BindingService) FindInventoryByAttributes(productID uint, attributes ma
 			return binding.Inventory, fullAttrs, nil
 		}
 	}
-	return nil, nil, fmt.Errorf("No matching inventory configuration found")
+	return nil, nil, bizerr.New("binding.noMatchingInventory", "No matching inventory configuration found")
 }
 
 // GetTotalAvailableStock 获取商品的总可用库存（去重：同一个库存只计算一次）
@@ -463,4 +468,34 @@ func (s *BindingService) GetAvailableStockByAttributes(productID uint, attribute
 	}
 
 	return totalStock, nil
+}
+
+func translateBindingProductLookupError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return bizerr.New("binding.productNotFound", "Product does not exist")
+	}
+	return err
+}
+
+func translateBindingInventoryLookupError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return bizerr.New("binding.inventoryNotFound", "Inventory configuration does not exist")
+	}
+	return err
+}
+
+func translateBindingLookupError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return bizerr.New("binding.notFound", "Binding relationship does not exist")
+	}
+	return err
 }

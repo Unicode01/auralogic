@@ -1,22 +1,54 @@
 'use client'
+/* eslint-disable @next/next/no-img-element */
 
 import { useParams, useRouter } from 'next/navigation'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { getProduct, createOrder, getProductAvailableStock, addToCart, validatePromoCode, getPublicConfig } from '@/lib/api'
+import {
+  getProduct,
+  createOrder,
+  getProductAvailableStock,
+  addToCart,
+  validatePromoCode,
+  getPublicConfig,
+} from '@/lib/api'
+import { resolveApiErrorMessage } from '@/lib/api-error'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Star, Package, Eye, ShoppingCart, Loader2, ArrowLeft, Key, Minus, Plus, Tag } from 'lucide-react'
-import { useState, useRef, useCallback, useMemo } from 'react'
+import { Card, CardContent } from '@/components/ui/card'
+import {
+  Star,
+  Package,
+  Eye,
+  ShoppingCart,
+  Loader2,
+  ArrowLeft,
+  Key,
+  Minus,
+  Plus,
+  Tag,
+  AlertCircle,
+} from 'lucide-react'
+import { useState, useRef, useCallback, useMemo, useEffect } from 'react'
 import { Input } from '@/components/ui/input'
 import Link from 'next/link'
 import { useToast } from '@/hooks/use-toast'
 import { useAuth } from '@/hooks/use-auth'
 import { useLocale } from '@/hooks/use-locale'
 import { usePageTitle } from '@/hooks/use-page-title'
-import { getTranslations, translateBizError } from '@/lib/i18n'
+import { getTranslations } from '@/lib/i18n'
 import { useCurrency, formatPrice, getCurrencySymbol } from '@/contexts/currency-context'
 import { addToGuestCart } from '@/lib/guest-cart'
+import {
+  clearAuthReturnState,
+  readAuthReturnState,
+  setAuthReturnState,
+} from '@/lib/auth-return-state'
+import { buildProductListReturnPath, readProductBrowseState } from '@/lib/product-browse-state'
 import { MarkdownMessage } from '@/components/ui/markdown-message'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { PluginSlot } from '@/components/plugins/plugin-slot'
+
+type GuestActionHint = 'cart_added' | 'login_for_checkout' | 'login_for_promo' | null
 
 export default function ProductDetailPage() {
   const params = useParams()
@@ -30,8 +62,11 @@ export default function ProductDetailPage() {
   const [selectedAttributes, setSelectedAttributes] = useState<Record<string, string>>({})
   const [quantity, setQuantity] = useState(1)
   const [isAddingToCart, setIsAddingToCart] = useState(false)
+  const [productListBackHref, setProductListBackHref] = useState('/products')
+  const [guestActionHint, setGuestActionHint] = useState<GuestActionHint>(null)
+  const hasRestoredAuthReturnStateRef = useRef(false)
   const toast = useToast()
-  const { user } = useAuth()
+  const { user, isAuthenticated, isLoading: authLoading } = useAuth()
   const { currency } = useCurrency()
 
   // Promo code state
@@ -47,7 +82,12 @@ export default function ProductDetailPage() {
     min_order_amount_minor: number
   } | null>(null)
 
-  const { data, isLoading } = useQuery({
+  const {
+    data,
+    isLoading,
+    error: productError,
+    refetch: refetchProduct,
+  } = useQuery({
     queryKey: ['product', productId],
     queryFn: () => getProduct(productId),
   })
@@ -77,19 +117,16 @@ export default function ProductDetailPage() {
   const createOrderMutation = useMutation({
     mutationFn: createOrder,
     onSuccess: (response) => {
-      toast.success(`${t.product.orderCreated} ${response.data.order_no}`)
+      const orderNo = response.data?.order_no
+      toast.success(orderNo ? `${t.product.orderCreated} ${orderNo}` : t.product.orderCreated)
       queryClient.invalidateQueries({ queryKey: ['product', productId] })
       queryClient.invalidateQueries({ queryKey: ['products'] })
       queryClient.invalidateQueries({ queryKey: ['productStock', productId] })
       queryClient.invalidateQueries({ queryKey: ['orders'] })
-      setTimeout(() => router.push('/orders'), 1000)
+      router.push(orderNo ? `/orders/${orderNo}` : '/orders')
     },
     onError: (error: any) => {
-      if (error.code === 40010 && error.data?.error_key) {
-        toast.error(translateBizError(t, error.data.error_key, error.data.params, error.message))
-      } else {
-        toast.error(error.message || t.product.orderCreateFailed)
-      }
+      toast.error(resolveApiErrorMessage(error, t, t.product.orderCreateFailed))
     },
   })
 
@@ -123,9 +160,9 @@ export default function ProductDetailPage() {
     dragOffsetRef.current = 0
     setDragOffset(0)
     if (delta < -threshold) {
-      setSelectedImage(prev => Math.min(prev + 1, (data?.data?.images?.length || 1) - 1))
+      setSelectedImage((prev) => Math.min(prev + 1, (data?.data?.images?.length || 1) - 1))
     } else if (delta > threshold) {
-      setSelectedImage(prev => Math.max(prev - 1, 0))
+      setSelectedImage((prev) => Math.max(prev - 1, 0))
     }
   }, [data])
 
@@ -137,25 +174,31 @@ export default function ProductDetailPage() {
   const isThumbDragging = useRef(false)
   const thumbDragMoved = useRef(false)
 
-  const handleThumbMouseDown = useCallback((e: React.MouseEvent, ref: React.RefObject<HTMLDivElement | null>) => {
-    const el = ref.current
-    if (!el) return
-    isThumbDragging.current = true
-    thumbDragMoved.current = false
-    thumbDragStartX.current = e.clientX
-    thumbScrollLeft.current = el.scrollLeft
-    el.style.cursor = 'grabbing'
-    el.style.scrollBehavior = 'auto'
-  }, [])
+  const handleThumbMouseDown = useCallback(
+    (e: React.MouseEvent, ref: React.RefObject<HTMLDivElement | null>) => {
+      const el = ref.current
+      if (!el) return
+      isThumbDragging.current = true
+      thumbDragMoved.current = false
+      thumbDragStartX.current = e.clientX
+      thumbScrollLeft.current = el.scrollLeft
+      el.style.cursor = 'grabbing'
+      el.style.scrollBehavior = 'auto'
+    },
+    []
+  )
 
-  const handleThumbMouseMove = useCallback((e: React.MouseEvent, ref: React.RefObject<HTMLDivElement | null>) => {
-    if (!isThumbDragging.current) return
-    const el = ref.current
-    if (!el) return
-    const dx = e.clientX - thumbDragStartX.current
-    if (Math.abs(dx) > 3) thumbDragMoved.current = true
-    el.scrollLeft = thumbScrollLeft.current - dx
-  }, [])
+  const handleThumbMouseMove = useCallback(
+    (e: React.MouseEvent, ref: React.RefObject<HTMLDivElement | null>) => {
+      if (!isThumbDragging.current) return
+      const el = ref.current
+      if (!el) return
+      const dx = e.clientX - thumbDragStartX.current
+      if (Math.abs(dx) > 3) thumbDragMoved.current = true
+      el.scrollLeft = thumbScrollLeft.current - dx
+    },
+    []
+  )
 
   const handleThumbMouseUp = useCallback((ref: React.RefObject<HTMLDivElement | null>) => {
     isThumbDragging.current = false
@@ -165,13 +208,73 @@ export default function ProductDetailPage() {
     el.style.scrollBehavior = ''
   }, [])
 
+  const getProductScrollTop = useCallback(() => {
+    if (typeof document === 'undefined' || typeof window === 'undefined') {
+      return 0
+    }
+    const mainElement = document.querySelector('main')
+    if (mainElement instanceof HTMLElement) {
+      return Math.max(0, mainElement.scrollTop)
+    }
+    return Math.max(0, window.scrollY)
+  }, [])
+
+  const restoreProductScrollTop = useCallback((scrollTop: number) => {
+    if (typeof document === 'undefined' || typeof window === 'undefined') {
+      return
+    }
+    const nextScrollTop = Math.max(0, Number(scrollTop) || 0)
+    window.requestAnimationFrame(() => {
+      const mainElement = document.querySelector('main')
+      if (mainElement instanceof HTMLElement) {
+        mainElement.scrollTo({ top: nextScrollTop })
+        return
+      }
+      window.scrollTo({ top: nextScrollTop })
+    })
+  }, [])
+
+  const redirectToLoginWithProductReturn = useCallback(() => {
+    if (!Number.isFinite(productId) || productId <= 0) {
+      router.push('/login')
+      return
+    }
+
+    setAuthReturnState({
+      redirectPath: `/products/${productId}`,
+      product: {
+        productId,
+        selectedAttributes,
+        quantity,
+        scrollTop: getProductScrollTop(),
+      },
+    })
+    router.push('/login')
+  }, [getProductScrollTop, productId, quantity, router, selectedAttributes])
+
+  useEffect(() => {
+    if (user) {
+      setGuestActionHint(null)
+    }
+  }, [user])
+
+  useEffect(() => {
+    if (!Number.isFinite(productId) || productId <= 0) {
+      setProductListBackHref('/products')
+      return
+    }
+
+    const browseState = readProductBrowseState()
+    setProductListBackHref(buildProductListReturnPath(browseState?.listPath, productId))
+  }, [productId])
+
   // 实时计算优惠码折扣（基于当前数量和单价）
   const subtotal = data?.data ? (data.data.price_minor || 0) * quantity : 0
   const promoDiscount = useMemo(() => {
     if (!appliedPromo || subtotal <= 0) return 0
 
     if (appliedPromo.discount_type === 'percentage') {
-      let discount = subtotal * appliedPromo.discount_value_minor / 10000
+      let discount = (subtotal * appliedPromo.discount_value_minor) / 10000
       if (appliedPromo.max_discount_minor > 0 && discount > appliedPromo.max_discount_minor) {
         discount = appliedPromo.max_discount_minor
       }
@@ -181,56 +284,30 @@ export default function ProductDetailPage() {
     }
   }, [appliedPromo, subtotal])
 
-  if (isLoading) {
-    return (
-      <div className="pb-8">
-        <div className="animate-pulse space-y-4">
-          <div className="h-6 bg-muted rounded w-1/4" />
-          <div className="flex gap-6">
-            <div className="w-[400px] shrink-0 h-[400px] bg-muted rounded" />
-            <div className="flex-1 space-y-3">
-              <div className="h-6 bg-muted rounded" />
-              <div className="h-4 bg-muted rounded w-3/4" />
-              <div className="h-5 bg-muted rounded w-1/2" />
-            </div>
-          </div>
-        </div>
-      </div>
-    )
-  }
-
-  if (!product) {
-    return (
-      <div className="space-y-6">
-        <div className="text-center py-12">
-          <Package className="w-16 h-16 text-muted-foreground mx-auto mb-4" />
-          <p className="text-muted-foreground">{t.product.productNotFound}</p>
-          <Button asChild className="mt-4">
-            <Link href="/products">{t.product.backToProductList}</Link>
-          </Button>
-        </div>
-      </div>
-    )
-  }
-
-  const images = product.images || []
+  const images = product?.images || []
   const primaryImage = images.find((img: any) => img.is_primary || img.isPrimary)
   const displayImages = primaryImage
     ? [primaryImage, ...images.filter((img: any) => !(img.is_primary || img.isPrimary))]
     : images
 
-  const isFeatured = product.is_featured || product.isFeatured
-  const hasDiscount = product.original_price_minor > product.price_minor
+  const isFeatured = Boolean(product?.is_featured || product?.isFeatured)
+  const hasDiscount = Number(product?.original_price_minor || 0) > Number(product?.price_minor || 0)
 
   const availableStock = stockData?.data?.available_stock ?? 0
   const isUnlimitedStock = !!stockData?.data?.is_unlimited
   const isAvailable = availableStock > 0
-  const productMaxPurchaseLimit = product.max_purchase_limit ?? product.maxPurchaseLimit ?? 0
+  const productMaxPurchaseLimit = product?.max_purchase_limit ?? product?.maxPurchaseLimit ?? 0
   const maxSelectableQuantity = Math.min(
     availableStock,
     maxItemQuantity,
     productMaxPurchaseLimit > 0 ? productMaxPurchaseLimit : Number.MAX_SAFE_INTEGER
   )
+
+  useEffect(() => {
+    if (maxSelectableQuantity > 0 && quantity > maxSelectableQuantity) {
+      setQuantity(maxSelectableQuantity)
+    }
+  }, [maxSelectableQuantity, quantity])
 
   // Stock display settings
   const stockDisplayMode = publicConfig?.data?.stock_display?.mode || 'exact'
@@ -249,35 +326,182 @@ export default function ProductDetailPage() {
   // Get stock display text
   const getStockDisplay = () => {
     if (!isAvailable) {
-      return <Badge variant="destructive" className="text-xs">{t.product.outOfStock}</Badge>
+      return (
+        <Badge variant="destructive" className="text-xs">
+          {t.product.outOfStock}
+        </Badge>
+      )
     }
 
     if (stockDisplayMode === 'hidden') {
-      return <Badge variant="default" className="text-xs">{t.product.inStock}</Badge>
+      return (
+        <Badge variant="default" className="text-xs">
+          {t.product.inStock}
+        </Badge>
+      )
     }
 
     if (stockDisplayMode === 'level') {
-      const levelText = stockLevel === 'low' ? t.admin.stockLevelLow
-        : stockLevel === 'high' ? t.admin.stockLevelHigh
-        : t.admin.stockLevelMedium
+      const levelText =
+        stockLevel === 'low'
+          ? t.admin.stockLevelLow
+          : stockLevel === 'high'
+            ? t.admin.stockLevelHigh
+            : t.admin.stockLevelMedium
       const variant = stockLevel === 'low' ? 'destructive' : 'default'
-      return <Badge variant={variant} className="text-xs">{levelText}</Badge>
+      return (
+        <Badge variant={variant} className="text-xs">
+          {levelText}
+        </Badge>
+      )
     }
 
     // exact mode
-    return <Badge variant="default" className="text-xs">{availableStock} {t.product.piecesUnit}</Badge>
+    return (
+      <Badge variant="default" className="text-xs">
+        {availableStock} {t.product.piecesUnit}
+      </Badge>
+    )
   }
 
-  const selectableAttributes = (product.attributes || []).filter((attr: any) => attr.mode !== 'blind_box')
-  const hasBlindBoxAttributes = (product.attributes || []).some((attr: any) => attr.mode === 'blind_box')
+  const selectableAttributes = (product?.attributes || []).filter(
+    (attr: any) => attr.mode !== 'blind_box'
+  )
+  const hasBlindBoxAttributes = (product?.attributes || []).some(
+    (attr: any) => attr.mode === 'blind_box'
+  )
 
-  const allAttributesSelected = selectableAttributes.length === 0 ||
+  const allAttributesSelected =
+    selectableAttributes.length === 0 ||
     selectableAttributes.every((attr: any) => selectedAttributes[attr.name])
+  const joinSummaryItems = (items: Array<string | null | undefined | false>) =>
+    items
+      .filter((item): item is string => typeof item === 'string' && item.trim() !== '')
+      .join(' · ')
+  const productOverviewSummary = joinSummaryItems([
+    `${product?.view_count || 0} ${t.product.views}`,
+    `${product?.sale_count || 0} ${t.product.sales}`,
+  ])
+  const discountAmount = (
+    ((product?.original_price_minor || 0) - (product?.price_minor || 0)) /
+    100
+  ).toFixed(2)
+  const promoDiscountLabel =
+    appliedPromo && promoDiscount > 0
+      ? appliedPromo.discount_type === 'percentage'
+        ? `${(appliedPromo.discount_value_minor / 100).toFixed(2)}%`
+        : formatPrice(appliedPromo.discount_value_minor, currency)
+      : null
+
+  useEffect(() => {
+    if (
+      authLoading ||
+      !isAuthenticated ||
+      isLoading ||
+      hasRestoredAuthReturnStateRef.current ||
+      !Number.isFinite(productId) ||
+      productId <= 0
+    ) {
+      return
+    }
+
+    const pendingReturnState = readAuthReturnState()
+    if (
+      !pendingReturnState ||
+      pendingReturnState.redirectPath !== `/products/${productId}` ||
+      pendingReturnState.product?.productId !== productId
+    ) {
+      return
+    }
+
+    hasRestoredAuthReturnStateRef.current = true
+    setSelectedAttributes(pendingReturnState.product.selectedAttributes || {})
+    setQuantity(Math.max(1, pendingReturnState.product.quantity || 1))
+    restoreProductScrollTop(pendingReturnState.product.scrollTop || 0)
+    clearAuthReturnState()
+  }, [authLoading, isAuthenticated, isLoading, productId, restoreProductScrollTop])
+
+  if (isLoading) {
+    return (
+      <div className="pb-8">
+        <div className="animate-pulse space-y-4">
+          <div className="h-6 w-1/4 rounded bg-muted" />
+          <div className="flex gap-6">
+            <div className="h-[400px] w-[400px] shrink-0 rounded bg-muted" />
+            <div className="flex-1 space-y-3">
+              <div className="h-6 rounded bg-muted" />
+              <div className="h-4 w-3/4 rounded bg-muted" />
+              <div className="h-5 w-1/2 rounded bg-muted" />
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  if (productError && !product) {
+    return (
+      <Card className="border-dashed bg-muted/15">
+        <CardContent className="py-12 text-center">
+          <AlertCircle className="mx-auto mb-4 h-16 w-16 text-muted-foreground" />
+          <p className="text-base font-medium">{t.product.productLoadFailedTitle}</p>
+          <p className="mt-2 text-sm text-muted-foreground">{t.product.productLoadFailedDesc}</p>
+          <div className="mt-4 flex flex-col justify-center gap-3 sm:flex-row">
+            <Button variant="outline" onClick={() => void refetchProduct()}>
+              {t.common.refresh}
+            </Button>
+            <Button asChild>
+              <Link href="/products">{t.product.backToProductList}</Link>
+            </Button>
+          </div>
+          <PluginSlot
+            slot="user.product_detail.load_failed"
+            context={{
+              view: 'user_product_detail',
+              product: {
+                id: Number.isFinite(productId) ? productId : undefined,
+              },
+              state: {
+                load_failed: true,
+              },
+            }}
+          />
+        </CardContent>
+      </Card>
+    )
+  }
+
+  if (!product) {
+    return (
+      <Card className="border-dashed bg-muted/15">
+        <CardContent className="py-12 text-center">
+          <Package className="mx-auto mb-4 h-16 w-16 text-muted-foreground" />
+          <p className="text-base font-medium">{t.product.productNotFound}</p>
+          <p className="mt-2 text-sm text-muted-foreground">{t.product.productNotFoundDesc}</p>
+          <Button asChild className="mt-4">
+            <Link href="/products">{t.product.backToProductList}</Link>
+          </Button>
+          <PluginSlot
+            slot="user.product_detail.not_found"
+            context={{
+              view: 'user_product_detail',
+              product: {
+                id: Number.isFinite(productId) ? productId : undefined,
+              },
+              state: {
+                not_found: true,
+              },
+            }}
+          />
+        </CardContent>
+      </Card>
+    )
+  }
 
   const handleAttributeChange = (attrName: string, value: string) => {
     const newAttrs = {
       ...selectedAttributes,
-      [attrName]: value
+      [attrName]: value,
     }
     setSelectedAttributes(newAttrs)
     refetchStock()
@@ -285,8 +509,7 @@ export default function ProductDetailPage() {
 
   const handleBuyNow = () => {
     if (!user) {
-      toast.error(t.product.pleaseLoginFirst)
-      setTimeout(() => router.push('/login'), 1000)
+      setGuestActionHint('login_for_checkout')
       return
     }
 
@@ -316,11 +539,15 @@ export default function ProductDetailPage() {
     }
 
     if (!user) {
-      addToGuestCart({
-        product_id: productId,
-        quantity: quantity,
-        attributes: selectedAttributes,
-      }, maxItemQuantity)
+      addToGuestCart(
+        {
+          product_id: productId,
+          quantity: quantity,
+          attributes: selectedAttributes,
+        },
+        maxItemQuantity
+      )
+      setGuestActionHint('cart_added')
       toast.success(t.product.guestCartAdded)
       return
     }
@@ -333,13 +560,11 @@ export default function ProductDetailPage() {
         attributes: selectedAttributes,
       })
       queryClient.invalidateQueries({ queryKey: ['cart'] })
+      queryClient.invalidateQueries({ queryKey: ['cartCount'] })
+      setGuestActionHint(null)
       toast.success(t.cart.addedToCart)
     } catch (error: any) {
-      if (error.code === 40010 && error.data?.error_key) {
-        toast.error(translateBizError(t, error.data.error_key, error.data.params, error.message))
-      } else {
-        toast.error(error.message || t.cart.addFailed)
-      }
+      toast.error(resolveApiErrorMessage(error, t, t.cart.addFailed))
     } finally {
       setIsAddingToCart(false)
     }
@@ -354,8 +579,7 @@ export default function ProductDetailPage() {
   // 应用优惠码
   const handleApplyPromoCode = async () => {
     if (!user) {
-      toast.error(t.product.loginForPromoCode)
-      setTimeout(() => router.push('/login'), 1000)
+      setGuestActionHint('login_for_promo')
       return
     }
 
@@ -386,8 +610,7 @@ export default function ProductDetailPage() {
           .replace('{discount}', formatPrice(data.discount_minor, currency))
       )
     } catch (error: any) {
-      const msg = error?.message || t.promoCode.invalidCode
-      toast.error(msg)
+      toast.error(resolveApiErrorMessage(error, t, t.promoCode.invalidCode))
     } finally {
       setIsValidatingPromo(false)
     }
@@ -404,38 +627,106 @@ export default function ProductDetailPage() {
     url: image.url,
     alt: image.alt || '',
   }))
+  const guestActionTitle =
+    guestActionHint === 'cart_added' ? t.product.guestCartAdded : t.auth.loginRequiredTitle
+  const guestActionDescription =
+    guestActionHint === 'cart_added'
+      ? t.product.guestCartAddedHint
+      : guestActionHint === 'login_for_promo'
+        ? t.product.loginForPromoCode
+        : t.product.pleaseLoginFirst
+  const showGuestPurchaseHint = !user && !guestActionHint
+  const userProductDetailPluginContext = {
+    view: 'user_product_detail',
+    product: {
+      id: product.id || productId,
+      name: product.name,
+      sku: product.sku,
+      category: product.category || undefined,
+      status: product.status,
+      product_type: product.product_type || product.productType,
+      is_featured: Boolean(isFeatured),
+      price_minor: product.price_minor,
+      original_price_minor: product.original_price_minor,
+      tag_count: Array.isArray(product.tags) ? product.tags.length : 0,
+    },
+    pricing: {
+      currency,
+      subtotal_minor: subtotal,
+      promo_discount_minor: promoDiscount,
+      final_amount_minor: subtotal - promoDiscount,
+      has_discount: hasDiscount,
+      promo_code: appliedPromo?.code || undefined,
+    },
+    selection: {
+      quantity,
+      selected_attributes: selectedAttributes,
+      all_attributes_selected: allAttributesSelected,
+      max_selectable_quantity: maxSelectableQuantity,
+    },
+    summary: {
+      image_count: displayImages.length,
+      available_stock: isUnlimitedStock ? undefined : availableStock,
+      stock_display_mode: stockDisplayMode,
+      is_available: isAvailable,
+      is_virtual: Boolean(isVirtual),
+      has_description: Boolean(product.description),
+      show_guest_purchase_hint: showGuestPurchaseHint,
+    },
+    auth: {
+      is_authenticated: Boolean(user),
+      guest_action_hint: guestActionHint || undefined,
+    },
+    state: {
+      out_of_stock: !isAvailable,
+      all_attributes_selected: allAttributesSelected,
+      has_selectable_attributes: selectableAttributes.length > 0,
+      has_category: Boolean(product.category),
+      has_tags: Boolean(product.tags && product.tags.length > 0),
+      has_discount: hasDiscount,
+      promo_applied: Boolean(appliedPromo),
+      adding_to_cart: isAddingToCart,
+      creating_order: createOrderMutation.isPending,
+      guest_purchase_hint_visible: showGuestPurchaseHint,
+      guest_hint_visible: !user && Boolean(guestActionHint),
+    },
+  }
 
   return (
     <div className="pb-8">
+      <PluginSlot slot="user.product_detail.top" context={userProductDetailPluginContext} />
       {/* Header */}
-      <div className="flex items-center gap-3 mb-6">
+      <div className="mb-6 flex items-center gap-3">
         <Button asChild variant="outline" size="sm">
-          <Link href="/products">
+          <Link href={productListBackHref}>
             <ArrowLeft className="h-4 w-4 md:mr-1.5" />
             <span className="hidden md:inline">{t.product.backToList}</span>
+            <span className="sr-only md:hidden">{t.product.backToList}</span>
           </Link>
         </Button>
-        <h1 className="text-lg md:text-xl font-bold line-clamp-1">{t.product.productDetailTitle}</h1>
+        <h1 className="line-clamp-1 text-lg font-bold md:text-xl">
+          {t.product.productDetailTitle}
+        </h1>
       </div>
 
       {/* Mobile image */}
-      <div className="md:hidden mb-6">
+      <div className="mb-6 md:hidden">
         <div className="space-y-3">
           <div
-            className="relative aspect-square rounded-xl overflow-hidden bg-muted touch-pan-y"
+            className="relative aspect-square touch-pan-y overflow-hidden rounded-xl bg-muted"
             onTouchStart={handleTouchStart}
             onTouchMove={handleTouchMove}
             onTouchEnd={handleTouchEnd}
           >
             {isFeatured && (
-              <Badge className="absolute top-3 right-3 z-10 bg-yellow-500 shadow-lg">
-                <Star className="w-3 h-3 mr-1" />
+              <Badge className="absolute right-3 top-3 z-10 bg-yellow-500 shadow-lg">
+                <Star className="mr-1 h-3 w-3" />
                 {t.product.featured}
               </Badge>
             )}
             {hasDiscount && (
-              <Badge variant="destructive" className="absolute top-3 left-3 z-10 shadow-lg">
-                SALE
+              <Badge variant="destructive" className="absolute left-3 top-3 z-10 shadow-lg">
+                {t.product.saleBadge}
               </Badge>
             )}
             {displayImages.length > 0 ? (
@@ -452,27 +743,31 @@ export default function ProductDetailPage() {
                     key={index}
                     src={image.url}
                     alt={product.name}
-                    className="w-full h-full object-cover shrink-0 pointer-events-none select-none"
+                    className="pointer-events-none h-full w-full shrink-0 select-none object-cover"
                     draggable={false}
                     style={{ width: `${100 / displayImages.length}%` }}
                     onError={(e) => {
-                      e.currentTarget.src = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80" viewBox="0 0 24 24" fill="none" stroke="%23999" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg>')
+                      e.currentTarget.src =
+                        'data:image/svg+xml,' +
+                        encodeURIComponent(
+                          '<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80" viewBox="0 0 24 24" fill="none" stroke="%23999" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg>'
+                        )
                     }}
                   />
                 ))}
               </div>
             ) : (
-              <div className="w-full h-full flex items-center justify-center">
-                <Package className="w-20 h-20 text-muted-foreground/50" />
+              <div className="flex h-full w-full items-center justify-center">
+                <Package className="h-20 w-20 text-muted-foreground/50" />
               </div>
             )}
             {/* 图片指示器 */}
             {displayImages.length > 1 && (
-              <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex gap-1.5">
+              <div className="absolute bottom-3 left-1/2 flex -translate-x-1/2 gap-1.5">
                 {displayImages.map((_: any, index: number) => (
                   <span
                     key={index}
-                    className={`block w-1.5 h-1.5 rounded-full transition-all ${selectedImage === index ? 'bg-white w-3' : 'bg-white/50'}`}
+                    className={`block h-1.5 w-1.5 rounded-full transition-all ${selectedImage === index ? 'w-3 bg-white' : 'bg-white/50'}`}
                   />
                 ))}
               </div>
@@ -481,7 +776,7 @@ export default function ProductDetailPage() {
           {displayImages.length > 1 && (
             <div
               ref={thumbScrollRef}
-              className="flex gap-2 overflow-x-auto pb-2 cursor-grab active:cursor-grabbing select-none"
+              className="flex cursor-grab select-none gap-2 overflow-x-auto pb-2 active:cursor-grabbing"
               onMouseDown={(e) => handleThumbMouseDown(e, thumbScrollRef)}
               onMouseMove={(e) => handleThumbMouseMove(e, thumbScrollRef)}
               onMouseUp={() => handleThumbMouseUp(thumbScrollRef)}
@@ -490,15 +785,25 @@ export default function ProductDetailPage() {
               {thumbnailList.map((image, index: number) => (
                 <button
                   key={index}
-                  onClick={() => { if (!thumbDragMoved.current) setSelectedImage(index) }}
-                  className={`aspect-square w-16 shrink-0 rounded-lg overflow-hidden border-2 transition-all ${selectedImage === index ? 'border-primary ring-1 ring-primary' : 'border-border hover:border-muted-foreground'}`}
+                  type="button"
+                  onClick={() => {
+                    if (!thumbDragMoved.current) setSelectedImage(index)
+                  }}
+                  aria-label={`${t.common.view} ${product.name} ${index + 1}`}
+                  aria-pressed={selectedImage === index}
+                  title={`${t.common.view} ${product.name} ${index + 1}`}
+                  className={`aspect-square w-16 shrink-0 overflow-hidden rounded-lg border-2 transition-all ${selectedImage === index ? 'border-primary ring-1 ring-primary' : 'border-border hover:border-muted-foreground'}`}
                 >
                   <img
                     src={image.url}
                     alt={image.alt || product.name}
-                    className="w-full h-full object-cover pointer-events-none"
+                    className="pointer-events-none h-full w-full object-cover"
                     onError={(e) => {
-                      e.currentTarget.src = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="%23999" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg>')
+                      e.currentTarget.src =
+                        'data:image/svg+xml,' +
+                        encodeURIComponent(
+                          '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="%23999" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg>'
+                        )
                     }}
                   />
                 </button>
@@ -508,26 +813,28 @@ export default function ProductDetailPage() {
         </div>
       </div>
 
-      <div className="flex gap-8 items-start">
+      <div className="flex items-start gap-8">
         {/* Left: Image gallery (sticky) */}
-        <div className="w-[520px] shrink-0 sticky top-4 self-start hidden md:block">
+        <div className="sticky top-4 hidden w-[520px] shrink-0 self-start md:block">
           <div className="space-y-3">
             <div
-              className="relative aspect-square rounded-xl overflow-hidden bg-muted border border-border cursor-grab active:cursor-grabbing select-none"
+              className="relative aspect-square cursor-grab select-none overflow-hidden rounded-xl border border-border bg-muted active:cursor-grabbing"
               onMouseDown={handleTouchStart}
               onMouseMove={handleTouchMove}
               onMouseUp={handleTouchEnd}
-              onMouseLeave={() => { if (isDragging.current) handleTouchEnd() }}
+              onMouseLeave={() => {
+                if (isDragging.current) handleTouchEnd()
+              }}
             >
               {isFeatured && (
-                <Badge className="absolute top-3 right-3 z-10 bg-yellow-500 shadow-lg">
-                  <Star className="w-3 h-3 mr-1" />
+                <Badge className="absolute right-3 top-3 z-10 bg-yellow-500 shadow-lg">
+                  <Star className="mr-1 h-3 w-3" />
                   {t.product.featured}
                 </Badge>
               )}
               {hasDiscount && (
-                <Badge variant="destructive" className="absolute top-3 left-3 z-10 shadow-lg">
-                  SALE
+                <Badge variant="destructive" className="absolute left-3 top-3 z-10 shadow-lg">
+                  {t.product.saleBadge}
                 </Badge>
               )}
               {displayImages.length > 0 ? (
@@ -544,25 +851,29 @@ export default function ProductDetailPage() {
                       key={index}
                       src={image.url}
                       alt={product.name}
-                      className="w-full h-full object-cover shrink-0 pointer-events-none select-none"
+                      className="pointer-events-none h-full w-full shrink-0 select-none object-cover"
                       draggable={false}
                       style={{ width: `${100 / displayImages.length}%` }}
                       onError={(e) => {
-                        e.currentTarget.src = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80" viewBox="0 0 24 24" fill="none" stroke="%23999" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg>')
+                        e.currentTarget.src =
+                          'data:image/svg+xml,' +
+                          encodeURIComponent(
+                            '<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80" viewBox="0 0 24 24" fill="none" stroke="%23999" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg>'
+                          )
                       }}
                     />
                   ))}
                 </div>
               ) : (
-                <div className="w-full h-full flex items-center justify-center">
-                  <Package className="w-20 h-20 text-muted-foreground/50" />
+                <div className="flex h-full w-full items-center justify-center">
+                  <Package className="h-20 w-20 text-muted-foreground/50" />
                 </div>
               )}
             </div>
             {displayImages.length > 1 && (
               <div
                 ref={thumbScrollRefDesktop}
-                className="flex gap-2 overflow-x-auto pb-2 cursor-grab active:cursor-grabbing select-none"
+                className="flex cursor-grab select-none gap-2 overflow-x-auto pb-2 active:cursor-grabbing"
                 onMouseDown={(e) => handleThumbMouseDown(e, thumbScrollRefDesktop)}
                 onMouseMove={(e) => handleThumbMouseMove(e, thumbScrollRefDesktop)}
                 onMouseUp={() => handleThumbMouseUp(thumbScrollRefDesktop)}
@@ -571,15 +882,25 @@ export default function ProductDetailPage() {
                 {thumbnailList.map((image, index: number) => (
                   <button
                     key={index}
-                    onClick={() => { if (!thumbDragMoved.current) setSelectedImage(index) }}
-                    className={`aspect-square w-20 shrink-0 rounded-lg overflow-hidden border-2 transition-all ${selectedImage === index ? 'border-primary ring-1 ring-primary' : 'border-border hover:border-muted-foreground'}`}
+                    type="button"
+                    onClick={() => {
+                      if (!thumbDragMoved.current) setSelectedImage(index)
+                    }}
+                    aria-label={`${t.common.view} ${product.name} ${index + 1}`}
+                    aria-pressed={selectedImage === index}
+                    title={`${t.common.view} ${product.name} ${index + 1}`}
+                    className={`aspect-square w-20 shrink-0 overflow-hidden rounded-lg border-2 transition-all ${selectedImage === index ? 'border-primary ring-1 ring-primary' : 'border-border hover:border-muted-foreground'}`}
                   >
                     <img
                       src={image.url}
                       alt={image.alt || product.name}
-                      className="w-full h-full object-cover pointer-events-none"
+                      className="pointer-events-none h-full w-full object-cover"
                       onError={(e) => {
-                        e.currentTarget.src = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="%23999" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg>')
+                        e.currentTarget.src =
+                          'data:image/svg+xml,' +
+                          encodeURIComponent(
+                            '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="%23999" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg>'
+                          )
                       }}
                     />
                   </button>
@@ -590,44 +911,39 @@ export default function ProductDetailPage() {
         </div>
 
         {/* Right: Product info */}
-        <div className="flex-1 min-w-0 self-start">
-          <div className="space-y-4 md:space-y-5 md:sticky md:top-2">
+        <div className="min-w-0 flex-1 self-start">
+          <div className="space-y-4 md:sticky md:top-2 md:space-y-5">
             {/* Summary card */}
-            <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
-              <div className="p-5 md:p-6 bg-gradient-to-br from-muted/50 via-background to-background border-b border-border/70">
-                <h2 className="text-2xl font-bold leading-tight mb-3">{product.name}</h2>
-                <div className="flex flex-wrap items-center gap-2.5 text-sm text-muted-foreground">
-                  <span className="flex items-center gap-1.5 rounded-full bg-muted/80 px-3 py-1">
-                    <Eye className="w-3.5 h-3.5" />
-                    {product.view_count || 0} {t.product.views}
-                  </span>
-                  <span className="flex items-center gap-1.5 rounded-full bg-muted/80 px-3 py-1">
-                    <ShoppingCart className="w-3.5 h-3.5" />
-                    {product.sale_count || 0} {t.product.sales}
-                  </span>
-                </div>
+            <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
+              <div className="border-b border-border/70 bg-gradient-to-br from-muted/50 via-background to-background p-5 md:p-6">
+                <h2 className="mb-3 text-2xl font-bold leading-tight">{product.name}</h2>
+                <p className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+                  <Eye className="h-3.5 w-3.5" />
+                  <span>{productOverviewSummary}</span>
+                </p>
               </div>
 
-              <div className="p-5 md:p-6 space-y-4">
+              <div className="space-y-4 p-5 md:p-6">
                 {/* Price card */}
-                <div className="rounded-xl bg-muted/40 border border-border p-4 space-y-2">
-                  <div className="flex flex-col sm:flex-row sm:items-baseline gap-1 sm:gap-3">
+                <div className="space-y-2 rounded-xl border border-border bg-muted/40 p-4">
+                  <div className="flex flex-col gap-1 sm:flex-row sm:items-baseline sm:gap-3">
                     <span className="text-3xl font-bold text-red-500">
                       {formatPrice(product.price_minor, currency)}
                     </span>
                     {hasDiscount && (
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
                         <span className="text-base text-muted-foreground line-through">
                           {formatPrice(product.original_price_minor, currency)}
                         </span>
-                        <Badge variant="destructive" className="text-xs">
-                          {t.product.save} {getCurrencySymbol(currency)}{((product.original_price_minor - product.price_minor) / 100).toFixed(2)}
-                        </Badge>
+                        <span>
+                          {t.product.save} {getCurrencySymbol(currency)}
+                          {discountAmount}
+                        </span>
                       </div>
                     )}
                   </div>
                   {appliedPromo && promoDiscount > 0 && (
-                    <div className="flex items-baseline gap-3 pt-1 border-t border-border/50 mt-2">
+                    <div className="mt-2 flex items-baseline gap-3 border-t border-border/50 pt-1">
                       <div className="flex items-center gap-2">
                         <Tag className="h-3.5 w-3.5 text-green-600 dark:text-green-400" />
                         <span className="text-sm text-muted-foreground line-through">
@@ -637,24 +953,22 @@ export default function ProductDetailPage() {
                       <span className="text-2xl font-bold text-green-600 dark:text-green-400">
                         {formatPrice(subtotal - promoDiscount, currency)}
                       </span>
-                      <Badge variant="outline" className="text-xs text-green-600 dark:text-green-400 border-green-500/30">
-                        -{appliedPromo.discount_type === 'percentage'
-                          ? `${(appliedPromo.discount_value_minor / 100).toFixed(2)}%`
-                          : formatPrice(appliedPromo.discount_value_minor, currency)}
-                      </Badge>
+                      <span className="text-xs text-green-600 dark:text-green-400">
+                        -{promoDiscountLabel}
+                      </span>
                     </div>
                   )}
                   <div className="text-sm text-muted-foreground">
-                    SKU: {product.sku}
+                    {t.product.sku}: {product.sku}
                   </div>
                 </div>
 
                 {/* Virtual product notice */}
                 {isVirtual && (
-                  <div className="rounded-xl bg-purple-500/10 border border-purple-500/20 p-4">
+                  <div className="rounded-xl border border-purple-500/20 bg-purple-500/10 p-4">
                     <div className="flex items-start gap-3">
-                      <Key className="w-5 h-5 text-purple-500 mt-0.5 shrink-0" />
-                      <div className="text-sm text-purple-700 dark:text-purple-300 leading-relaxed">
+                      <Key className="mt-0.5 h-5 w-5 shrink-0 text-purple-500" />
+                      <div className="text-sm leading-relaxed text-purple-700 dark:text-purple-300">
                         {product.auto_delivery || product.autoDelivery
                           ? t.product.virtualProductNoticeInstant
                           : t.product.virtualProductNoticeManual}
@@ -666,58 +980,89 @@ export default function ProductDetailPage() {
                 {/* Product meta */}
                 <div className="grid gap-3 sm:grid-cols-2">
                   {stockDisplayMode !== 'hidden' && !isUnlimitedStock && (
-                    <div className="rounded-xl border border-border p-3 space-y-1.5">
+                    <div className="space-y-1.5 rounded-xl border border-border p-3">
                       <div className="text-xs text-muted-foreground">{t.product.stockLabel}</div>
                       {getStockDisplay()}
                     </div>
                   )}
                   {product.category && (
-                    <div className="rounded-xl border border-border p-3 space-y-1.5">
+                    <div className="space-y-1.5 rounded-xl border border-border p-3">
                       <div className="text-xs text-muted-foreground">{t.product.categoryLabel}</div>
-                      <Badge variant="secondary" className="text-xs">{product.category}</Badge>
+                      <div className="text-sm font-medium">{product.category}</div>
                     </div>
                   )}
                   {productMaxPurchaseLimit > 0 && (
-                    <div className="rounded-xl border border-border p-3 space-y-1.5">
-                      <div className="text-xs text-muted-foreground">{t.product.purchaseLimitLabel}</div>
-                      <Badge variant="outline" className="text-xs text-orange-600 dark:text-orange-400 border-orange-300 dark:border-orange-700">
-                        {t.product.maxPurchaseLimit} {productMaxPurchaseLimit} {t.product.piecesUnit}
-                      </Badge>
-                    </div>
-                  )}
-                  {product.tags && product.tags.length > 0 && (
-                    <div className="rounded-xl border border-border p-3 space-y-2 sm:col-span-2">
-                      <div className="text-xs text-muted-foreground">{t.product.tagsLabel}</div>
-                      <div className="flex flex-wrap gap-1.5">
-                        {product.tags.map((tag: string) => (
-                          <Badge key={tag} variant="secondary" className="text-xs">{tag}</Badge>
-                        ))}
+                    <div className="space-y-1.5 rounded-xl border border-border p-3">
+                      <div className="text-xs text-muted-foreground">
+                        {t.product.purchaseLimitLabel}
+                      </div>
+                      <div className="text-sm font-medium text-orange-600 dark:text-orange-400">
+                        {t.product.maxPurchaseLimit} {productMaxPurchaseLimit}{' '}
+                        {t.product.piecesUnit}
                       </div>
                     </div>
                   )}
+                  {product.tags && product.tags.length > 0 && (
+                    <div className="space-y-1.5 rounded-xl border border-border p-3 sm:col-span-2">
+                      <div className="text-xs text-muted-foreground">{t.product.tagsLabel}</div>
+                      <div className="text-sm text-foreground">{product.tags.join(' · ')}</div>
+                    </div>
+                  )}
                 </div>
+                <PluginSlot
+                  slot="user.product_detail.meta.after"
+                  context={{ ...userProductDetailPluginContext, section: 'meta' }}
+                />
               </div>
             </div>
 
             {/* Purchase card */}
             <div className="rounded-2xl border border-border bg-card shadow-sm">
-              <div className="p-5 md:p-6 space-y-5">
+              <div className="space-y-5 p-5 md:p-6">
+                {showGuestPurchaseHint && (
+                  <Alert className="border-primary/20 bg-primary/5">
+                    <Key className="h-4 w-4 text-primary" />
+                    <AlertTitle>{t.auth.loginRequiredTitle}</AlertTitle>
+                    <AlertDescription className="space-y-3">
+                      <p>{t.product.guestPurchaseHint}</p>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={redirectToLoginWithProductReturn}
+                      >
+                        {t.auth.loginToContinue}
+                      </Button>
+                    </AlertDescription>
+                  </Alert>
+                )}
+
+                {!isAvailable && (
+                  <Alert className="border-destructive/20 bg-destructive/5">
+                    <Package className="h-4 w-4 text-destructive" />
+                    <AlertTitle>{t.product.soldOut}</AlertTitle>
+                    <AlertDescription>{t.product.soldOutHint}</AlertDescription>
+                  </Alert>
+                )}
+
                 {/* Specs selection */}
                 {(selectableAttributes.length > 0 || hasBlindBoxAttributes) && (
                   <div className="space-y-4">
                     {/* Blind box */}
                     {hasBlindBoxAttributes && (
-                      <div className="bg-purple-500/10 rounded-lg p-3">
+                      <div className="rounded-lg bg-purple-500/10 p-3">
                         <div className="flex items-start gap-2">
                           <div className="text-xl">🎲</div>
                           <div className="flex-1">
-                            <div className="font-medium text-purple-600 dark:text-purple-400 mb-1 text-sm">{t.product.blindBoxAttribute}</div>
+                            <div className="mb-1 text-sm font-medium text-purple-600 dark:text-purple-400">
+                              {t.product.blindBoxAttribute}
+                            </div>
                             <div className="text-xs text-purple-600/80 dark:text-purple-400/80">
                               {(product.attributes || [])
                                 .filter((attr: any) => attr.mode === 'blind_box')
                                 .map((attr: any) => (
                                   <div key={attr.name} className="mb-1">
-                                    <span className="font-medium">{attr.name}</span>: {attr.values.join('、')}
+                                    <span className="font-medium">{attr.name}</span>:{' '}
+                                    {attr.values.join('、')}
                                   </div>
                                 ))}
                               <div className="mt-2 text-purple-500 dark:text-purple-400">
@@ -744,11 +1089,15 @@ export default function ProductDetailPage() {
                                 return (
                                   <button
                                     key={value}
+                                    type="button"
                                     onClick={() => handleAttributeChange(attr.name, value)}
-                                    className={`px-4 py-1.5 text-sm rounded-lg border transition-all ${isSelected
-                                      ? 'border-primary bg-primary text-primary-foreground font-medium'
-                                      : 'border-border hover:border-primary/50 text-foreground'
-                                      }`}
+                                    aria-pressed={isSelected}
+                                    title={`${attr.name}: ${value}`}
+                                    className={`rounded-lg border px-4 py-1.5 text-sm transition-all ${
+                                      isSelected
+                                        ? 'border-primary bg-primary font-medium text-primary-foreground'
+                                        : 'border-border text-foreground hover:border-primary/50'
+                                    }`}
                                   >
                                     {value}
                                   </button>
@@ -763,20 +1112,28 @@ export default function ProductDetailPage() {
                 )}
 
                 {/* Quantity */}
-                <div className="rounded-xl border border-border bg-muted/20 p-4 space-y-2">
-                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-                    <span className="text-sm text-muted-foreground">
-                      {t.product.quantity}:
-                    </span>
-                    <div className="flex items-center">
+                <div className="space-y-2 rounded-xl border border-border bg-muted/20 p-4">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="space-y-1">
+                      <div className="text-sm text-muted-foreground">{t.product.quantity}:</div>
+                      {stockDisplayMode === 'exact' && !isUnlimitedStock ? (
+                        <div className="text-xs text-muted-foreground">
+                          {t.product.stockLabel}: {availableStock}
+                        </div>
+                      ) : null}
+                    </div>
+                    <div className="flex items-center self-end sm:self-auto">
                       <Button
                         variant="outline"
                         size="icon"
                         className="h-9 w-9 rounded-r-none"
                         onClick={() => handleQuantityChange(quantity - 1)}
                         disabled={quantity <= 1}
+                        aria-label={t.product.decreaseQuantity}
+                        title={t.product.decreaseQuantity}
                       >
                         <Minus className="h-3.5 w-3.5" />
+                        <span className="sr-only">{t.product.decreaseQuantity}</span>
                       </Button>
                       <Input
                         type="number"
@@ -787,9 +1144,10 @@ export default function ProductDetailPage() {
                             handleQuantityChange(val)
                           }
                         }}
-                        className="w-16 h-9 text-center rounded-none border-x-0 focus-visible:ring-0 focus-visible:ring-offset-0"
+                        className="h-9 w-16 rounded-none border-x-0 text-center focus-visible:ring-0 focus-visible:ring-offset-0"
                         min={1}
                         max={maxSelectableQuantity}
+                        aria-label={t.product.quantity}
                       />
                       <Button
                         variant="outline"
@@ -797,16 +1155,14 @@ export default function ProductDetailPage() {
                         className="h-9 w-9 rounded-l-none"
                         onClick={() => handleQuantityChange(quantity + 1)}
                         disabled={quantity >= maxSelectableQuantity}
+                        aria-label={t.product.increaseQuantity}
+                        title={t.product.increaseQuantity}
                       >
                         <Plus className="h-3.5 w-3.5" />
+                        <span className="sr-only">{t.product.increaseQuantity}</span>
                       </Button>
                     </div>
                   </div>
-                  {stockDisplayMode === 'exact' && !isUnlimitedStock && (
-                    <div className="text-xs text-muted-foreground">
-                      ({t.product.stockLabel}: {availableStock})
-                    </div>
-                  )}
                 </div>
 
                 {!allAttributesSelected && product.attributes && product.attributes.length > 0 && (
@@ -814,9 +1170,13 @@ export default function ProductDetailPage() {
                     {t.product.pleaseSelectAllSpec}
                   </p>
                 )}
+                <PluginSlot
+                  slot="user.product_detail.selection.after"
+                  context={{ ...userProductDetailPluginContext, section: 'selection' }}
+                />
 
                 {/* Promo code */}
-                <div className="rounded-xl border border-border p-4 space-y-3 bg-muted/10">
+                <div className="space-y-3 rounded-xl border border-border bg-muted/10 p-4">
                   <div className="flex items-center gap-2 text-sm font-medium">
                     <Tag className="h-4 w-4" />
                     {t.promoCode.enterPromoCode}
@@ -850,19 +1210,19 @@ export default function ProductDetailPage() {
                     </>
                   ) : (
                     <div className="space-y-2">
-                      <div className="flex items-center justify-between rounded-lg bg-green-500/10 dark:bg-green-500/20 border border-green-500/20 dark:border-green-500/30 p-3">
+                      <div className="flex items-center justify-between rounded-lg border border-green-500/20 bg-green-500/10 p-3 dark:border-green-500/30 dark:bg-green-500/20">
                         <div>
                           <div className="text-sm font-medium text-green-700 dark:text-green-400">
                             {appliedPromo.name}
                           </div>
-                          <div className="text-xs text-green-600 dark:text-green-500 mt-0.5">
+                          <div className="mt-0.5 text-xs text-green-600 dark:text-green-500">
                             {t.promoCode.applied} &mdash; {appliedPromo.code}
                           </div>
                         </div>
                         <Button
                           variant="ghost"
                           size="sm"
-                          className="text-red-500 hover:text-red-600 hover:bg-red-500/10"
+                          className="text-red-500 hover:bg-red-500/10 hover:text-red-600"
                           onClick={handleRemovePromoCode}
                         >
                           {t.promoCode.remove}
@@ -870,26 +1230,64 @@ export default function ProductDetailPage() {
                       </div>
                       <div className="flex items-center justify-between text-sm">
                         <span className="text-muted-foreground">{t.promoCode.discount}</span>
-                        <span className="text-green-600 dark:text-green-400 font-medium">
+                        <span className="font-medium text-green-600 dark:text-green-400">
                           -{formatPrice(promoDiscount, currency)}
                         </span>
                       </div>
                     </div>
                   )}
                 </div>
+                <PluginSlot
+                  slot="user.product_detail.promo.after"
+                  context={{ ...userProductDetailPluginContext, section: 'promo' }}
+                />
+                {!user && guestActionHint && (
+                  <Alert className="border-primary/20 bg-primary/5">
+                    {guestActionHint === 'cart_added' ? (
+                      <ShoppingCart className="h-4 w-4 text-primary" />
+                    ) : (
+                      <Key className="h-4 w-4 text-primary" />
+                    )}
+                    <AlertTitle>{guestActionTitle}</AlertTitle>
+                    <AlertDescription className="space-y-3">
+                      <p>{guestActionDescription}</p>
+                      <div className="flex flex-col gap-2 sm:flex-row">
+                        {guestActionHint === 'cart_added' && (
+                          <Button asChild size="sm" variant="outline">
+                            <Link href="/cart">{t.sidebar.cart}</Link>
+                          </Button>
+                        )}
+                        <Button size="sm" onClick={redirectToLoginWithProductReturn}>
+                          {t.auth.loginToContinue}
+                        </Button>
+                        <Button size="sm" variant="ghost" onClick={() => setGuestActionHint(null)}>
+                          {t.product.continueBrowsing}
+                        </Button>
+                      </div>
+                    </AlertDescription>
+                  </Alert>
+                )}
+                <PluginSlot
+                  slot="user.product_detail.guest_hint.after"
+                  context={{ ...userProductDetailPluginContext, section: 'guest_hint' }}
+                />
+                <PluginSlot
+                  slot="user.product_detail.actions.before"
+                  context={{ ...userProductDetailPluginContext, section: 'purchase_actions' }}
+                />
 
                 {/* Action buttons */}
-                <div className="flex flex-col sm:flex-row gap-3">
+                <div className="flex flex-col gap-3 sm:flex-row">
                   <Button
                     variant="outline"
-                    className="flex-1 min-w-0 h-11"
+                    className="h-11 min-w-0 flex-1"
                     disabled={!isAvailable || !allAttributesSelected || isAddingToCart}
                     onClick={handleAddToCart}
                   >
-                    <span className="truncate inline-flex items-center">
+                    <span className="inline-flex items-center truncate">
                       {isAddingToCart ? (
                         <>
-                          <Loader2 className="mr-2 h-4 w-4 animate-spin shrink-0" />
+                          <Loader2 className="mr-2 h-4 w-4 shrink-0 animate-spin" />
                           {t.product.addingToCart}
                         </>
                       ) : (
@@ -901,14 +1299,16 @@ export default function ProductDetailPage() {
                     </span>
                   </Button>
                   <Button
-                    className="flex-1 min-w-0 h-11"
-                    disabled={!isAvailable || !allAttributesSelected || createOrderMutation.isPending}
+                    className="h-11 min-w-0 flex-1"
+                    disabled={
+                      !isAvailable || !allAttributesSelected || createOrderMutation.isPending
+                    }
                     onClick={handleBuyNow}
                   >
-                    <span className="truncate inline-flex items-center">
+                    <span className="inline-flex items-center truncate">
                       {createOrderMutation.isPending ? (
                         <>
-                          <Loader2 className="mr-2 h-4 w-4 animate-spin shrink-0" />
+                          <Loader2 className="mr-2 h-4 w-4 shrink-0 animate-spin" />
                           {t.product.creatingOrder}
                         </>
                       ) : !isAvailable ? (
@@ -923,19 +1323,40 @@ export default function ProductDetailPage() {
                 </div>
               </div>
             </div>
+            <PluginSlot
+              slot="user.product_detail.buybox.after"
+              context={{ ...userProductDetailPluginContext, section: 'buybox' }}
+            />
 
             {/* Product description */}
             {product.description && (
               <div className="rounded-2xl border border-border bg-card shadow-sm">
                 <div className="p-5 md:p-6">
-                  <h3 className="font-semibold mb-3">{t.product.productDetailTitle}</h3>
-                  <MarkdownMessage content={product.description} className="markdown-body text-sm" allowHtml />
+                  <h3 className="mb-3 font-semibold">{t.product.productDescription}</h3>
+                  <PluginSlot
+                    slot="user.product_detail.description.before"
+                    context={{ ...userProductDetailPluginContext, section: 'description' }}
+                  />
+                  <MarkdownMessage
+                    content={product.description}
+                    className="markdown-body text-sm"
+                    allowHtml
+                  />
+                  <PluginSlot
+                    slot="user.product_detail.description.after"
+                    context={{ ...userProductDetailPluginContext, section: 'description' }}
+                  />
                 </div>
               </div>
             )}
+            <PluginSlot
+              slot="user.product_detail.content.after"
+              context={{ ...userProductDetailPluginContext, section: 'content' }}
+            />
           </div>
         </div>
       </div>
+      <PluginSlot slot="user.product_detail.bottom" context={userProductDetailPluginContext} />
     </div>
   )
 }

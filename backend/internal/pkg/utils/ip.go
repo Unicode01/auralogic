@@ -5,8 +5,8 @@ import (
 	"net/netip"
 	"strings"
 
-	"github.com/gin-gonic/gin"
 	"auralogic/internal/config"
+	"github.com/gin-gonic/gin"
 )
 
 // GetRealIP returns the best-effort "real client IP" for logging/rate-limit/captcha.
@@ -20,13 +20,8 @@ func GetRealIP(c *gin.Context) string {
 
 	if cfg != nil {
 		// Only trust forwarded headers from trusted proxies.
-		// If TrustedProxies is empty, we trust all peers (unsafe on the public internet, but convenient for dev).
-		trustHeaders := false
-		if len(cfg.Security.TrustedProxies) == 0 {
-			trustHeaders = true
-		} else {
-			trustHeaders = isTrustedProxy(peerIP, cfg.Security.TrustedProxies)
-		}
+		// If TrustedProxies is empty, we trust no peers and fall back to the TCP peer IP.
+		trustHeaders := isTrustedProxy(peerIP, cfg.Security.TrustedProxies)
 
 		if trustHeaders {
 			// If no explicit header configured, use a safe default order.

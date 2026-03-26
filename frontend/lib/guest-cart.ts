@@ -5,9 +5,21 @@ export interface GuestCartItem {
 }
 
 const GUEST_CART_KEY = 'auralogic_guest_cart'
+export const GUEST_CART_CHANGED_EVENT = 'auralogic:guest-cart-changed'
 
 function isBrowser(): boolean {
   return typeof window !== 'undefined'
+}
+
+function emitGuestCartChanged(items: GuestCartItem[]): void {
+  if (!isBrowser()) return
+  window.dispatchEvent(
+    new CustomEvent(GUEST_CART_CHANGED_EVENT, {
+      detail: {
+        itemCount: items.length,
+      },
+    })
+  )
 }
 
 function normalizeAttributes(attributes?: Record<string, string>): Record<string, string> | undefined {
@@ -48,14 +60,17 @@ export function setGuestCart(items: GuestCartItem[]): void {
   if (!isBrowser()) return
   if (!items.length) {
     localStorage.removeItem(GUEST_CART_KEY)
+    emitGuestCartChanged([])
     return
   }
   localStorage.setItem(GUEST_CART_KEY, JSON.stringify(items))
+  emitGuestCartChanged(items)
 }
 
 export function clearGuestCart(): void {
   if (!isBrowser()) return
   localStorage.removeItem(GUEST_CART_KEY)
+  emitGuestCartChanged([])
 }
 
 export function addToGuestCart(

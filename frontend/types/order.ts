@@ -46,6 +46,12 @@ export interface Order {
   privacy_protected?: boolean
   trackingNo?: string
   tracking_no?: string
+  serialGenerationStatus?: string
+  serial_generation_status?: string
+  serialGenerationError?: string
+  serial_generation_error?: string
+  serialGeneratedAt?: string
+  serial_generated_at?: string
   shippedAt?: string
   shipped_at?: string
   formToken?: string

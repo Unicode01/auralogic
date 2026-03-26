@@ -4,11 +4,13 @@ import (
 	"strings"
 
 	"auralogic/internal/database"
+	"auralogic/internal/middleware"
 	"auralogic/internal/models"
 	"auralogic/internal/pkg/logger"
 	"auralogic/internal/pkg/response"
 	"auralogic/internal/service"
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 type AuthHandler struct {
@@ -55,39 +57,14 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	}
 
 	// getAdminPermission列表
-	var permissions []string
-	var perm models.AdminPermission
+	permissions := []string{}
 	db := database.GetDB()
-	if err := db.Where("user_id = ?", user.ID).First(&perm).Error; err == nil {
-		permissions = perm.Permissions
-	} else {
-		// 超级Admin默认拥有所有Permission（除了特殊Permission order.view_privacy）
-		// order.view_privacy 是特殊Permission，即使是超级Admin也need单独授予
-		if user.IsSuperAdmin() {
-			permissions = []string{
-				"order.view",
-				// "order.view_privacy", // 特殊Permission，need单独授予
-				"order.edit",
-				"order.delete",
-				"order.status_update",
-				"order.assign_tracking",
-				"order.request_resubmit",
-				"user.view",
-				"user.edit",
-				"user.permission",
-				"announcement.view",
-				"announcement.edit",
-				"marketing.view",
-				"marketing.send",
-				"admin.create",
-				"admin.edit",
-				"admin.delete",
-				"admin.permission",
-				"system.config",
-				"system.logs",
-				"api.manage",
-			}
-		} else {
+	if user.IsAdmin() {
+		permissions = middleware.EffectiveAdminPermissions(user.Role, nil)
+		var perm models.AdminPermission
+		if err := db.Where("user_id = ?", user.ID).First(&perm).Error; err == nil {
+			permissions = middleware.EffectiveAdminPermissions(user.Role, perm.Permissions)
+		} else if err != gorm.ErrRecordNotFound {
 			permissions = []string{}
 		}
 	}

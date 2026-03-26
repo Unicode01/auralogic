@@ -1,24 +1,53 @@
 package admin
 
 import (
+	"errors"
+	"log"
 	"strconv"
+	"strings"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"auralogic/internal/middleware"
 	"auralogic/internal/models"
 	"auralogic/internal/pkg/logger"
 	"auralogic/internal/pkg/response"
 	"auralogic/internal/pkg/utils"
+	"auralogic/internal/service"
+	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
 
 type APIKeyHandler struct {
-	db *gorm.DB
+	db            *gorm.DB
+	pluginManager *service.PluginManagerService
 }
 
-func NewAPIKeyHandler(db *gorm.DB) *APIKeyHandler {
-	return &APIKeyHandler{db: db}
+func NewAPIKeyHandler(db *gorm.DB, pluginManager *service.PluginManagerService) *APIKeyHandler {
+	return &APIKeyHandler{
+		db:            db,
+		pluginManager: pluginManager,
+	}
+}
+
+func buildAPIKeyHookPayload(key *models.APIKey) map[string]interface{} {
+	if key == nil {
+		return map[string]interface{}{}
+	}
+
+	return map[string]interface{}{
+		"api_key_id":   key.ID,
+		"key_name":     key.KeyName,
+		"api_key":      key.APIKey,
+		"platform":     key.Platform,
+		"scopes":       key.Scopes,
+		"rate_limit":   key.RateLimit,
+		"is_active":    key.IsActive,
+		"last_used_at": key.LastUsedAt,
+		"expires_at":   key.ExpiresAt,
+		"created_by":   key.CreatedBy,
+		"created_at":   key.CreatedAt,
+		"updated_at":   key.UpdatedAt,
+	}
 }
 
 // ListAPIKeys getAPI密钥列表
@@ -62,6 +91,42 @@ func (h *APIKeyHandler) CreateAPIKey(c *gin.Context) {
 	}
 
 	currentUserID := middleware.MustGetUserID(c)
+	if h.pluginManager != nil {
+		originalReq := req
+		hookPayload, payloadErr := adminHookStructToPayload(req)
+		if payloadErr != nil {
+			log.Printf("apikey.create.before payload build failed: admin=%d err=%v", currentUserID, payloadErr)
+		} else {
+			hookPayload["admin_id"] = currentUserID
+			hookPayload["source"] = "admin_api"
+			hookResult, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+				Hook:    "apikey.create.before",
+				Payload: hookPayload,
+			}, buildAdminHookExecutionContext(c, &currentUserID, map[string]string{
+				"hook_resource": "api_key",
+				"hook_source":   "admin_api",
+				"hook_action":   "create",
+			}))
+			if hookErr != nil {
+				log.Printf("apikey.create.before hook execution failed: admin=%d err=%v", currentUserID, hookErr)
+			} else if hookResult != nil {
+				if hookResult.Blocked {
+					reason := strings.TrimSpace(hookResult.BlockReason)
+					if reason == "" {
+						reason = "API key creation rejected by plugin"
+					}
+					response.BadRequest(c, reason)
+					return
+				}
+				if hookResult.Payload != nil {
+					if mergeErr := mergeAdminHookStructPatch(&req, hookResult.Payload); mergeErr != nil {
+						log.Printf("apikey.create.before payload apply failed, fallback to original request: admin=%d err=%v", currentUserID, mergeErr)
+						req = originalReq
+					}
+				}
+			}
+		}
+	}
 
 	// generateAPI密钥
 	apiKey, err := utils.GenerateAPIKey("ak_live")
@@ -117,13 +182,33 @@ func (h *APIKeyHandler) CreateAPIKey(c *gin.Context) {
 		"id":         key.ID,
 		"key_name":   key.KeyName,
 		"api_key":    key.APIKey,
-		"api_secret": apiSecret, // 返回原始Secret（仅此一次，之后无法恢复）
+		"api_secret": apiSecret,
 		"platform":   key.Platform,
 		"scopes":     key.Scopes,
 		"rate_limit": key.RateLimit,
 		"created_at": key.CreatedAt,
 		"message":    "⚠️ API Secret is only shown once, please keep it safe!",
 	})
+
+	if h.pluginManager != nil {
+		afterPayload := buildAPIKeyHookPayload(key)
+		afterPayload["admin_id"] = currentUserID
+		afterPayload["source"] = "admin_api"
+		go func(execCtx *service.ExecutionContext, payload map[string]interface{}, keyID uint) {
+			_, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+				Hook:    "apikey.create.after",
+				Payload: payload,
+			}, execCtx)
+			if hookErr != nil {
+				log.Printf("apikey.create.after hook execution failed: admin=%d api_key=%d err=%v", currentUserID, keyID, hookErr)
+			}
+		}(cloneAdminHookExecutionContext(buildAdminHookExecutionContext(c, &currentUserID, map[string]string{
+			"hook_resource": "api_key",
+			"hook_source":   "admin_api",
+			"hook_action":   "create",
+			"api_key_id":    strconv.FormatUint(uint64(key.ID), 10),
+		})), afterPayload, key.ID)
+	}
 }
 
 // DeleteAPIKey DeleteAPI密钥
@@ -134,16 +219,51 @@ func (h *APIKeyHandler) DeleteAPIKey(c *gin.Context) {
 		return
 	}
 
-	// 先get密钥Info用于日志
 	var key models.APIKey
-	h.db.First(&key, keyID)
+	if err := h.db.First(&key, keyID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			response.NotFound(c, "API key does not exist")
+			return
+		}
+		response.InternalError(c, "Query failed")
+		return
+	}
+
+	adminID := getOptionalUserID(c)
+	adminIDValue := uint(0)
+	if adminID != nil {
+		adminIDValue = *adminID
+	}
+	if h.pluginManager != nil {
+		hookPayload := buildAPIKeyHookPayload(&key)
+		hookPayload["admin_id"] = adminIDValue
+		hookPayload["source"] = "admin_api"
+		hookResult, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+			Hook:    "apikey.delete.before",
+			Payload: hookPayload,
+		}, buildAdminHookExecutionContext(c, adminID, map[string]string{
+			"hook_resource": "api_key",
+			"hook_source":   "admin_api",
+			"hook_action":   "delete",
+			"api_key_id":    strconv.FormatUint(keyID, 10),
+		}))
+		if hookErr != nil {
+			log.Printf("apikey.delete.before hook execution failed: admin=%d api_key=%d err=%v", adminIDValue, uint(keyID), hookErr)
+		} else if hookResult != nil && hookResult.Blocked {
+			reason := strings.TrimSpace(hookResult.BlockReason)
+			if reason == "" {
+				reason = "API key deletion rejected by plugin"
+			}
+			response.BadRequest(c, reason)
+			return
+		}
+	}
 
 	if err := h.db.Delete(&models.APIKey{}, keyID).Error; err != nil {
 		response.InternalError(c, "DeleteFailed")
 		return
 	}
 
-	// 记录操作日志
 	logger.LogAPIKeyOperation(h.db, c, "delete", uint(keyID), map[string]interface{}{
 		"key_name": key.KeyName,
 		"platform": key.Platform,
@@ -152,6 +272,26 @@ func (h *APIKeyHandler) DeleteAPIKey(c *gin.Context) {
 	response.Success(c, gin.H{
 		"message": "DeleteSuccess",
 	})
+
+	if h.pluginManager != nil {
+		afterPayload := buildAPIKeyHookPayload(&key)
+		afterPayload["admin_id"] = adminIDValue
+		afterPayload["source"] = "admin_api"
+		go func(execCtx *service.ExecutionContext, payload map[string]interface{}, deletedID uint) {
+			_, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+				Hook:    "apikey.delete.after",
+				Payload: payload,
+			}, execCtx)
+			if hookErr != nil {
+				log.Printf("apikey.delete.after hook execution failed: admin=%d api_key=%d err=%v", adminIDValue, deletedID, hookErr)
+			}
+		}(cloneAdminHookExecutionContext(buildAdminHookExecutionContext(c, adminID, map[string]string{
+			"hook_resource": "api_key",
+			"hook_source":   "admin_api",
+			"hook_action":   "delete",
+			"api_key_id":    strconv.FormatUint(keyID, 10),
+		})), afterPayload, key.ID)
+	}
 }
 
 // UpdateAPIKey UpdateAPI密钥状态
@@ -179,6 +319,51 @@ func (h *APIKeyHandler) UpdateAPIKey(c *gin.Context) {
 		return
 	}
 
+	adminID := getOptionalUserID(c)
+	adminIDValue := uint(0)
+	if adminID != nil {
+		adminIDValue = *adminID
+	}
+	if h.pluginManager != nil {
+		originalReq := req
+		hookPayload, payloadErr := adminHookStructToPayload(req)
+		if payloadErr != nil {
+			log.Printf("apikey.update.before payload build failed: admin=%d api_key=%d err=%v", adminIDValue, uint(keyID), payloadErr)
+		} else {
+			hookPayload["api_key_id"] = uint(keyID)
+			hookPayload["current"] = buildAPIKeyHookPayload(&key)
+			hookPayload["admin_id"] = adminIDValue
+			hookPayload["source"] = "admin_api"
+			hookResult, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+				Hook:    "apikey.update.before",
+				Payload: hookPayload,
+			}, buildAdminHookExecutionContext(c, adminID, map[string]string{
+				"hook_resource": "api_key",
+				"hook_source":   "admin_api",
+				"hook_action":   "update",
+				"api_key_id":    strconv.FormatUint(keyID, 10),
+			}))
+			if hookErr != nil {
+				log.Printf("apikey.update.before hook execution failed: admin=%d api_key=%d err=%v", adminIDValue, uint(keyID), hookErr)
+			} else if hookResult != nil {
+				if hookResult.Blocked {
+					reason := strings.TrimSpace(hookResult.BlockReason)
+					if reason == "" {
+						reason = "API key update rejected by plugin"
+					}
+					response.BadRequest(c, reason)
+					return
+				}
+				if hookResult.Payload != nil {
+					if mergeErr := mergeAdminHookStructPatch(&req, hookResult.Payload); mergeErr != nil {
+						log.Printf("apikey.update.before payload apply failed, fallback to original request: admin=%d api_key=%d err=%v", adminIDValue, uint(keyID), mergeErr)
+						req = originalReq
+					}
+				}
+			}
+		}
+	}
+
 	if req.IsActive != nil {
 		key.IsActive = *req.IsActive
 	}
@@ -194,7 +379,6 @@ func (h *APIKeyHandler) UpdateAPIKey(c *gin.Context) {
 		return
 	}
 
-	// 记录操作日志
 	logger.LogAPIKeyOperation(h.db, c, "update", key.ID, map[string]interface{}{
 		"key_name":   req.KeyName,
 		"is_active":  req.IsActive,
@@ -202,5 +386,24 @@ func (h *APIKeyHandler) UpdateAPIKey(c *gin.Context) {
 	})
 
 	response.Success(c, key)
-}
 
+	if h.pluginManager != nil {
+		afterPayload := buildAPIKeyHookPayload(&key)
+		afterPayload["admin_id"] = adminIDValue
+		afterPayload["source"] = "admin_api"
+		go func(execCtx *service.ExecutionContext, payload map[string]interface{}, updatedID uint) {
+			_, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+				Hook:    "apikey.update.after",
+				Payload: payload,
+			}, execCtx)
+			if hookErr != nil {
+				log.Printf("apikey.update.after hook execution failed: admin=%d api_key=%d err=%v", adminIDValue, updatedID, hookErr)
+			}
+		}(cloneAdminHookExecutionContext(buildAdminHookExecutionContext(c, adminID, map[string]string{
+			"hook_resource": "api_key",
+			"hook_source":   "admin_api",
+			"hook_action":   "update",
+			"api_key_id":    strconv.FormatUint(keyID, 10),
+		})), afterPayload, key.ID)
+	}
+}

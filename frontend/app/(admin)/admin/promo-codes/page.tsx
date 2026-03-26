@@ -1,17 +1,13 @@
 'use client'
 
-import { useState } from 'react'
+import { useDeferredValue, useState } from 'react'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import { getAdminPromoCodes, deletePromoCode } from '@/lib/api'
 import { DataTable } from '@/components/admin/data-table'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import {
-  Plus,
-  RefreshCw,
-  Pencil,
-  Trash2,
-} from 'lucide-react'
+import { Card, CardContent } from '@/components/ui/card'
+import { Plus, RefreshCw, Pencil, Trash2 } from 'lucide-react'
 import Link from 'next/link'
 import toast from 'react-hot-toast'
 import { Input } from '@/components/ui/input'
@@ -35,6 +31,10 @@ import {
 import { useLocale } from '@/hooks/use-locale'
 import { getTranslations } from '@/lib/i18n'
 import { usePageTitle } from '@/hooks/use-page-title'
+import { resolveApiErrorMessage } from '@/lib/api-error'
+import { PluginExtensionList } from '@/components/plugins/plugin-extension-list'
+import { PluginSlot } from '@/components/plugins/plugin-slot'
+import { usePluginExtensionBatch } from '@/lib/plugin-extension-batch'
 
 interface PromoCode {
   id: number
@@ -51,29 +51,54 @@ interface PromoCode {
   expires_at: string | null
 }
 
+function buildAdminPromoCodeSummary(promo: PromoCode) {
+  return {
+    id: promo.id,
+    code: promo.code,
+    name: promo.name,
+    discount_type: promo.discount_type,
+    discount_value_minor: promo.discount_value_minor,
+    max_discount_minor: promo.max_discount_minor,
+    min_order_amount_minor: promo.min_order_amount_minor,
+    total_quantity: promo.total_quantity,
+    used_quantity: promo.used_quantity,
+    reserved_quantity: promo.reserved_quantity,
+    status: promo.status,
+    expires_at: promo.expires_at,
+  }
+}
+
 export default function AdminPromoCodesPage() {
   const [page, setPage] = useState(1)
   const [status, setStatus] = useState<string | undefined>()
   const [search, setSearch] = useState('')
   const [deleteId, setDeleteId] = useState<number | null>(null)
+  const deferredSearch = useDeferredValue(search)
   const { locale } = useLocale()
   const t = getTranslations(locale)
   usePageTitle(t.pageTitle.adminPromoCodes)
 
   const statusConfig: Record<string, { label: string; color: string }> = {
-    active: { label: t.promoCode.active, color: 'bg-green-500/20 text-green-700 dark:text-green-400' },
-    inactive: { label: t.promoCode.inactive, color: 'bg-gray-500/20 text-gray-700 dark:text-gray-400' },
+    active: {
+      label: t.promoCode.active,
+      color: 'bg-green-500/20 text-green-700 dark:text-green-400',
+    },
+    inactive: {
+      label: t.promoCode.inactive,
+      color: 'bg-gray-500/20 text-gray-700 dark:text-gray-400',
+    },
     expired: { label: t.promoCode.expired, color: 'bg-red-500/20 text-red-700 dark:text-red-400' },
   }
 
   const { data, isLoading, refetch } = useQuery({
-    queryKey: ['adminPromoCodes', page, status, search],
-    queryFn: () => getAdminPromoCodes({
-      page,
-      limit: 20,
-      status: status === 'all' ? undefined : status,
-      search: search || undefined,
-    }),
+    queryKey: ['adminPromoCodes', page, status, deferredSearch],
+    queryFn: () =>
+      getAdminPromoCodes({
+        page,
+        limit: 20,
+        status: status === 'all' ? undefined : status,
+        search: deferredSearch || undefined,
+      }),
   })
 
   // 删除优惠码
@@ -84,8 +109,8 @@ export default function AdminPromoCodesPage() {
       refetch()
       setDeleteId(null)
     },
-    onError: (error: Error) => {
-      toast.error(`${t.promoCode.deleteFailed}: ${error.message}`)
+    onError: (error: unknown) => {
+      toast.error(resolveApiErrorMessage(error, t, t.promoCode.deleteFailed))
     },
   })
 
@@ -94,9 +119,7 @@ export default function AdminPromoCodesPage() {
       header: t.promoCode.code,
       cell: ({ row }: { row: { original: PromoCode } }) => {
         const promo = row.original
-        return (
-          <div className="font-mono font-medium">{promo.code}</div>
-        )
+        return <div className="font-mono font-medium">{promo.code}</div>
       },
     },
     {
@@ -123,10 +146,8 @@ export default function AdminPromoCodesPage() {
         const total = promo.total_quantity === 0 ? t.promoCode.unlimited : promo.total_quantity
         return (
           <div className="flex flex-col gap-0.5">
-            <div className="font-semibold tabular-nums">
-              {promo.used_quantity}
-            </div>
-            <div className="text-xs text-muted-foreground tabular-nums">
+            <div className="font-semibold tabular-nums">{promo.used_quantity}</div>
+            <div className="text-xs tabular-nums text-muted-foreground">
               {t.promoCode.reservedQuantity}: {promo.reserved_quantity}
               {' · '}
               {t.promoCode.totalQuantity}: {total}
@@ -140,11 +161,7 @@ export default function AdminPromoCodesPage() {
       cell: ({ row }: { row: { original: PromoCode } }) => {
         const promoStatus = row.original.status
         const config = statusConfig[promoStatus] || statusConfig['inactive']
-        return (
-          <Badge className={config.color}>
-            {config.label}
-          </Badge>
-        )
+        return <Badge className={config.color}>{config.label}</Badge>
       },
     },
     {
@@ -161,30 +178,82 @@ export default function AdminPromoCodesPage() {
       header: t.admin.actions,
       cell: ({ row }: { row: { original: PromoCode } }) => {
         const promo = row.original
+        const rowExtensions = adminPromoCodeRowActionExtensions[String(promo.id)] || []
         return (
           <div className="flex items-center gap-2">
             <Button asChild size="sm" variant="outline">
               <Link href={`/admin/promo-codes/${promo.id}`}>
-                <Pencil className="w-4 h-4" />
+                <Pencil className="h-4 w-4" />
               </Link>
             </Button>
-            <Button
-              size="sm"
-              variant="destructive"
-              onClick={() => setDeleteId(promo.id)}
-            >
-              <Trash2 className="w-4 h-4" />
+            <Button size="sm" variant="destructive" onClick={() => setDeleteId(promo.id)}>
+              <Trash2 className="h-4 w-4" />
             </Button>
+            {rowExtensions.length > 0 ? (
+              <PluginExtensionList extensions={rowExtensions} display="inline" />
+            ) : null}
           </div>
         )
       },
     },
   ]
+  const promoCodes = data?.data?.items || []
+  const totalPromoCodes = Number(data?.data?.pagination?.total || 0)
+  const promoFilterBadges = [
+    deferredSearch.trim() ? `${t.common.search}: ${deferredSearch.trim()}` : null,
+    status
+      ? `${t.promoCode.status}: ${(statusConfig[status] || statusConfig.inactive).label}`
+      : null,
+  ].filter(Boolean) as string[]
+  const deleteTarget = deleteId ? promoCodes.find((item: PromoCode) => item.id === deleteId) : null
+  const adminPromoCodesPluginContext = {
+    view: 'admin_promo_codes',
+    filters: {
+      search: deferredSearch.trim() || undefined,
+      status: status || undefined,
+    },
+    pagination: {
+      page,
+      total_pages: data?.data?.pagination?.total_pages || 1,
+      total: totalPromoCodes,
+    },
+    summary: {
+      total_records: totalPromoCodes,
+      filtered_count: promoCodes.length,
+      active_filter_count: promoFilterBadges.length,
+    },
+  }
+  const adminPromoCodeRowActionItems = promoCodes.map((promo: PromoCode, index: number) => ({
+    key: String(promo.id),
+    slot: 'admin.promo_codes.row_actions',
+    path: '/admin/promo-codes',
+    hostContext: {
+      view: 'admin_promo_codes_row',
+      promo_code: buildAdminPromoCodeSummary(promo),
+      row: {
+        index: index + 1,
+      },
+      filters: adminPromoCodesPluginContext.filters,
+      summary: adminPromoCodesPluginContext.summary,
+    },
+  }))
+  const adminPromoCodeRowActionExtensions = usePluginExtensionBatch({
+    scope: 'admin',
+    path: '/admin/promo-codes',
+    items: adminPromoCodeRowActionItems,
+    enabled: adminPromoCodeRowActionItems.length > 0,
+  })
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold">{t.promoCode.promoCodeManagement}</h1>
+      <PluginSlot slot="admin.promo_codes.top" context={adminPromoCodesPluginContext} />
+      <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+        <div>
+          <h1 className="text-3xl font-bold">{t.promoCode.promoCodeManagement}</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {t.admin.totalRecords.replace('{count}', String(totalPromoCodes))}
+          </p>
+        </div>
         <div className="flex gap-2">
           <Button asChild>
             <Link href="/admin/promo-codes/new">
@@ -200,37 +269,45 @@ export default function AdminPromoCodesPage() {
       </div>
 
       {/* 筛选器 */}
-      <div className="flex gap-4">
-        <Input
-          placeholder={t.promoCode.searchPlaceholder}
-          value={search}
-          onChange={(e) => {
-            setSearch(e.target.value)
-            setPage(1)
-          }}
-          className="max-w-xs"
-        />
-        <Select
-          value={status || 'all'}
-          onValueChange={(value) => {
-            setStatus(value === 'all' ? undefined : value)
-            setPage(1)
-          }}
-        >
-          <SelectTrigger className="w-[150px]">
-            <SelectValue placeholder={t.promoCode.status} />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">{t.promoCode.allStatus}</SelectItem>
-            <SelectItem value="active">{t.promoCode.active}</SelectItem>
-            <SelectItem value="inactive">{t.promoCode.inactive}</SelectItem>
-          </SelectContent>
-        </Select>
+      <div className="flex flex-col gap-3">
+        <PluginSlot slot="admin.promo_codes.filters" context={adminPromoCodesPluginContext} />
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div className="flex gap-4">
+            <Input
+              placeholder={t.promoCode.searchPlaceholder}
+              value={search}
+              onChange={(e) => {
+                setSearch(e.target.value)
+                setPage(1)
+              }}
+              className="max-w-xs"
+            />
+            <Select
+              value={status || 'all'}
+              onValueChange={(value) => {
+                setStatus(value === 'all' ? undefined : value)
+                setPage(1)
+              }}
+            >
+              <SelectTrigger className="w-[150px]">
+                <SelectValue placeholder={t.promoCode.status} />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">{t.promoCode.allStatus}</SelectItem>
+                <SelectItem value="active">{t.promoCode.active}</SelectItem>
+                <SelectItem value="inactive">{t.promoCode.inactive}</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+        {promoFilterBadges.length > 0 ? (
+          <p className="text-sm text-muted-foreground">{promoFilterBadges.join(' · ')}</p>
+        ) : null}
       </div>
 
       <DataTable
         columns={columns}
-        data={data?.data?.items || []}
+        data={promoCodes}
         isLoading={isLoading}
         pagination={{
           page,
@@ -245,7 +322,23 @@ export default function AdminPromoCodesPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>{t.admin.confirmDelete}</AlertDialogTitle>
             <AlertDialogDescription>
-              {t.promoCode.confirmDelete}
+              <div className="space-y-3">
+                <p>{t.promoCode.confirmDelete}</p>
+                {deleteTarget ? (
+                  <div className="rounded-md border border-dashed bg-muted/20 p-3 text-xs text-foreground">
+                    <div className="font-medium">{deleteTarget.code}</div>
+                    <div className="mt-1 flex flex-wrap items-center gap-2 text-muted-foreground">
+                      <span>{deleteTarget.name || '-'}</span>
+                      <span>
+                        {(statusConfig[deleteTarget.status] || statusConfig.inactive).label}
+                      </span>
+                      <span>
+                        {t.promoCode.usedQuantity}: {deleteTarget.used_quantity}
+                      </span>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

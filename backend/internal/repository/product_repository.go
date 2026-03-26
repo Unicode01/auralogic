@@ -1,7 +1,9 @@
 package repository
 
 import (
+	"errors"
 	"fmt"
+	"strings"
 
 	"auralogic/internal/models"
 	"gorm.io/gorm"
@@ -37,6 +39,50 @@ func (r *ProductRepository) FindBySKU(sku string) (*models.Product, error) {
 	var product models.Product
 	err := r.db.Where("sku = ?", sku).First(&product).Error
 	return &product, err
+}
+
+func (r *ProductRepository) FindBySKUs(skus []string) (map[string]*models.Product, error) {
+	if len(skus) == 0 {
+		return map[string]*models.Product{}, nil
+	}
+
+	uniqueSKUs := make([]string, 0, len(skus))
+	seen := make(map[string]struct{}, len(skus))
+	for _, sku := range skus {
+		normalized := strings.TrimSpace(sku)
+		if normalized == "" {
+			continue
+		}
+		if _, exists := seen[normalized]; exists {
+			continue
+		}
+		seen[normalized] = struct{}{}
+		uniqueSKUs = append(uniqueSKUs, normalized)
+	}
+	if len(uniqueSKUs) == 0 {
+		return map[string]*models.Product{}, nil
+	}
+	if len(uniqueSKUs) == 1 {
+		product, err := r.FindBySKU(uniqueSKUs[0])
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return map[string]*models.Product{}, nil
+			}
+			return nil, err
+		}
+		return map[string]*models.Product{product.SKU: product}, nil
+	}
+
+	var products []models.Product
+	if err := r.db.Where("sku IN ?", uniqueSKUs).Find(&products).Error; err != nil {
+		return nil, err
+	}
+
+	productBySKU := make(map[string]*models.Product, len(products))
+	for i := range products {
+		productBySKU[products[i].SKU] = &products[i]
+	}
+	return productBySKU, nil
 }
 
 // Delete 删除商品（软删除）

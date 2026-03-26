@@ -1,16 +1,20 @@
 package form
 
 import (
+	"errors"
 	"strings"
 
-	"github.com/gin-gonic/gin"
 	"auralogic/internal/config"
 	"auralogic/internal/database"
+	"auralogic/internal/middleware"
+	"auralogic/internal/models"
 	"auralogic/internal/pkg/constants"
 	"auralogic/internal/pkg/logger"
 	"auralogic/internal/pkg/response"
 	"auralogic/internal/pkg/validator"
 	"auralogic/internal/service"
+	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 type ShippingHandler struct {
@@ -33,15 +37,19 @@ func (h *ShippingHandler) GetForm(c *gin.Context) {
 		return
 	}
 
-	order, err := h.orderService.OrderRepo.FindByFormToken(token)
+	order, err := h.loadFormOrder(c, token)
 	if err != nil {
-		response.NotFound(c, "Form not found or expired")
+		h.respondFormOrderLoadError(c, err)
 		return
 	}
 
 	// Check if form has been submitted
 	if order.FormSubmittedAt != nil {
 		response.BadRequest(c, "Form has already been submitted")
+		return
+	}
+	if order.FormExpiresAt != nil && models.NowFunc().After(*order.FormExpiresAt) {
+		response.NotFound(c, "Form not found or expired")
 		return
 	}
 
@@ -181,9 +189,9 @@ func (h *ShippingHandler) SubmitForm(c *gin.Context) {
 	// ============= Business logic processing =============
 
 	// Query order first, validate email
-	order, err := h.orderService.OrderRepo.FindByFormToken(req.FormToken)
+	order, err := h.loadFormOrder(c, req.FormToken)
 	if err != nil {
-		response.BadRequest(c, "Form not found or expired")
+		h.respondFormOrderLoadError(c, err)
 		return
 	}
 
@@ -228,6 +236,7 @@ func (h *ShippingHandler) SubmitForm(c *gin.Context) {
 		req.PrivacyProtected,
 		req.Password,
 		req.UserRemark,
+		h.currentUserID(c),
 	)
 	if err != nil {
 		// Log failure
@@ -280,6 +289,28 @@ func (h *ShippingHandler) SubmitForm(c *gin.Context) {
 		"message":           message,
 		"login_url":         h.cfg.App.URL + "/login",
 	})
+}
+
+func (h *ShippingHandler) currentUserID(c *gin.Context) *uint {
+	if userID, exists := middleware.GetUserID(c); exists {
+		return &userID
+	}
+	return nil
+}
+
+func (h *ShippingHandler) loadFormOrder(c *gin.Context, token string) (*models.Order, error) {
+	return h.orderService.GetShippingFormOrder(token, h.currentUserID(c))
+}
+
+func (h *ShippingHandler) respondFormOrderLoadError(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, gorm.ErrRecordNotFound):
+		response.NotFound(c, "Form not found or expired")
+	case errors.Is(err, service.ErrShippingFormAccessDenied):
+		response.Forbidden(c, "No permission to access this form")
+	default:
+		response.InternalServerError(c, "Failed to load form", err)
+	}
 }
 
 // GetCountries Get list of supported countries
