@@ -115,6 +115,27 @@ func (r *UserRepository) UpdateConsumptionStats(userID uint, totalSpentMinor int
 		}).Error
 }
 
+func (r *UserRepository) ApplyConsumptionStatsDelta(userID uint, totalSpentMinorDelta int64, totalOrderCountDelta int64) error {
+	if totalSpentMinorDelta == 0 && totalOrderCountDelta == 0 {
+		return nil
+	}
+
+	return r.db.Model(&models.User{}).
+		Where("id = ?", userID).
+		Updates(map[string]interface{}{
+			"total_spent_minor": gorm.Expr(
+				"CASE WHEN total_spent_minor + ? < 0 THEN 0 ELSE total_spent_minor + ? END",
+				totalSpentMinorDelta,
+				totalSpentMinorDelta,
+			),
+			"total_order_count": gorm.Expr(
+				"CASE WHEN total_order_count + ? < 0 THEN 0 ELSE total_order_count + ? END",
+				totalOrderCountDelta,
+				totalOrderCountDelta,
+			),
+		}).Error
+}
+
 // Delete 删除用户（软删除）
 func (r *UserRepository) Delete(id uint) error {
 	return r.db.Delete(&models.User{}, id).Error

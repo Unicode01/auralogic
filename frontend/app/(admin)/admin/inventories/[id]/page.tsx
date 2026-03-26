@@ -19,12 +19,10 @@ import { useToast } from '@/hooks/use-toast'
 import { useLocale } from '@/hooks/use-locale'
 import { getTranslations } from '@/lib/i18n'
 import { usePageTitle } from '@/hooks/use-page-title'
+import { resolveApiErrorMessage } from '@/lib/api-error'
+import { PluginSlot } from '@/components/plugins/plugin-slot'
 
-export default function InventoryDetailPage({
-  params,
-}: {
-  params: Promise<{ id: string }>
-}) {
+export default function InventoryDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
   const router = useRouter()
   const queryClient = useQueryClient()
@@ -74,8 +72,8 @@ export default function InventoryDetailPage({
       toast.success(t.admin.invUpdateSuccess)
       queryClient.invalidateQueries({ queryKey: ['inventory', id] })
     },
-    onError: (error: Error) => {
-      toast.error(error.message || t.admin.invUpdateFailed)
+    onError: (error: unknown) => {
+      toast.error(resolveApiErrorMessage(error, t, t.admin.invUpdateFailed))
     },
   })
 
@@ -90,8 +88,8 @@ export default function InventoryDetailPage({
       setAdjustReason('')
       setAdjustNotes('')
     },
-    onError: (error: Error) => {
-      toast.error(error.message || t.admin.invAdjustFailed)
+    onError: (error: unknown) => {
+      toast.error(resolveApiErrorMessage(error, t, t.admin.invAdjustFailed))
     },
   })
 
@@ -152,12 +150,20 @@ export default function InventoryDetailPage({
     const newAvailable = inventory.available_quantity + availableDelta
 
     if (newStock < 0) {
-      toast.error(t.admin.invStockInsufficient.replace('{current}', inventory.stock.toString()).replace('{delta}', Math.abs(stockDelta).toString()))
+      toast.error(
+        t.admin.invStockInsufficient
+          .replace('{current}', inventory.stock.toString())
+          .replace('{delta}', Math.abs(stockDelta).toString())
+      )
       return
     }
 
     if (newAvailable < 0) {
-      toast.error(t.admin.invAvailableInsufficient.replace('{current}', inventory.available_quantity.toString()).replace('{delta}', Math.abs(availableDelta).toString()))
+      toast.error(
+        t.admin.invAvailableInsufficient
+          .replace('{current}', inventory.available_quantity.toString())
+          .replace('{delta}', Math.abs(availableDelta).toString())
+      )
       return
     }
 
@@ -187,16 +193,46 @@ export default function InventoryDetailPage({
   }
 
   const getAvailableStock = () => {
-    const available = inventory.available_quantity - inventory.sold_quantity - inventory.reserved_quantity
+    const available =
+      inventory.available_quantity - inventory.sold_quantity - inventory.reserved_quantity
     return Math.max(0, available)
   }
 
   const isLowStock = () => {
     return getRemainingStock() <= inventory.safety_stock
   }
+  const adminInventoryDetailPluginContext = {
+    view: 'admin_inventory_detail',
+    inventory: {
+      id: inventory.id,
+      product_id: inventory.product_id,
+      sku: inventory.sku || undefined,
+      name: inventory.name || undefined,
+      is_active: Boolean(inventory.is_active),
+      stock: inventory.stock,
+      available_quantity: inventory.available_quantity,
+      sold_quantity: inventory.sold_quantity,
+      reserved_quantity: inventory.reserved_quantity,
+      safety_stock: inventory.safety_stock,
+    },
+    product: inventory.product
+      ? {
+          id: inventory.product.id,
+          name: inventory.product.name,
+          sku: inventory.product.sku,
+        }
+      : undefined,
+    summary: {
+      remaining_stock: getRemainingStock(),
+      available_stock: getAvailableStock(),
+      is_low_stock: isLowStock(),
+      attribute_count: Object.keys(inventory.attributes || {}).length,
+    },
+  }
 
   return (
     <div className="space-y-6">
+      <PluginSlot slot="admin.inventory_detail.top" context={adminInventoryDetailPluginContext} />
       {/* 页面标题 */}
       <div className="flex items-center gap-4">
         <Button variant="outline" size="sm" asChild>
@@ -206,15 +242,17 @@ export default function InventoryDetailPage({
           </Link>
         </Button>
         <div>
-          <h1 className="text-lg md:text-xl font-bold">{t.admin.invDetailTitle.replace('{id}', id)}</h1>
-          <p className="text-muted-foreground mt-1">
+          <h1 className="text-lg font-bold md:text-xl">
+            {t.admin.invDetailTitle.replace('{id}', id)}
+          </h1>
+          <p className="mt-1 text-muted-foreground">
             {inventory.product?.name} - {inventory.sku}
           </p>
         </div>
       </div>
 
       {/* 库存统计 */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium">{t.admin.invActualStock}</CardTitle>
@@ -233,7 +271,9 @@ export default function InventoryDetailPage({
               {getRemainingStock()}
             </div>
             {isLowStock() && (
-              <Badge variant="destructive" className="mt-2">{t.admin.invLowStock}</Badge>
+              <Badge variant="destructive" className="mt-2">
+                {t.admin.invLowStock}
+              </Badge>
             )}
           </CardContent>
         </Card>
@@ -265,7 +305,7 @@ export default function InventoryDetailPage({
         <CardContent>
           <div className="flex flex-wrap gap-2">
             {Object.entries(inventory.attributes || {}).map(([key, value]) => (
-              <Badge key={key} variant="outline" className="text-base px-4 py-2">
+              <Badge key={key} variant="outline" className="px-4 py-2 text-base">
                 {key}: {value as string}
               </Badge>
             ))}
@@ -294,7 +334,7 @@ export default function InventoryDetailPage({
                 <CardTitle>{t.admin.invEditConfigTitle}</CardTitle>
               </CardHeader>
               <CardContent className="space-y-6">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
                   <div className="space-y-2">
                     <Label htmlFor="stock">{t.admin.invStockQty}</Label>
                     <Input
@@ -351,11 +391,7 @@ export default function InventoryDetailPage({
                 </div>
 
                 <div className="flex items-center space-x-2">
-                  <Switch
-                    id="active"
-                    checked={isActive}
-                    onCheckedChange={setIsActive}
-                  />
+                  <Switch id="active" checked={isActive} onCheckedChange={setIsActive} />
                   <Label htmlFor="active">{t.admin.invEnableConfig}</Label>
                 </div>
 
@@ -374,12 +410,10 @@ export default function InventoryDetailPage({
             <Card>
               <CardHeader>
                 <CardTitle>{t.admin.invAdjustTitle}</CardTitle>
-                <CardDescription>
-                  {t.admin.invAdjustDesc}
-                </CardDescription>
+                <CardDescription>{t.admin.invAdjustDesc}</CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                   <div className="space-y-2">
                     <Label htmlFor="adjust-stock">{t.admin.invStockDelta}</Label>
                     <Input
@@ -390,7 +424,12 @@ export default function InventoryDetailPage({
                       placeholder={t.admin.invStockDeltaPlaceholder}
                     />
                     <p className="text-sm text-muted-foreground">
-                      {t.admin.invCurrentStock.replace('{current}', inventory.stock.toString()).replace('{after}', (inventory.stock + (parseInt(adjustStockValue) || 0)).toString())}
+                      {t.admin.invCurrentStock
+                        .replace('{current}', inventory.stock.toString())
+                        .replace(
+                          '{after}',
+                          (inventory.stock + (parseInt(adjustStockValue) || 0)).toString()
+                        )}
                     </p>
                   </div>
 
@@ -404,7 +443,14 @@ export default function InventoryDetailPage({
                       placeholder={t.admin.invStockDeltaPlaceholder}
                     />
                     <p className="text-sm text-muted-foreground">
-                      {t.admin.invCurrentAvailable.replace('{current}', inventory.available_quantity.toString()).replace('{after}', (inventory.available_quantity + (parseInt(adjustAvailableValue) || 0)).toString())}
+                      {t.admin.invCurrentAvailable
+                        .replace('{current}', inventory.available_quantity.toString())
+                        .replace(
+                          '{after}',
+                          (
+                            inventory.available_quantity + (parseInt(adjustAvailableValue) || 0)
+                          ).toString()
+                        )}
                     </p>
                   </div>
                 </div>

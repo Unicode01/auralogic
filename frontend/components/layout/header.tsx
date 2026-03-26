@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useAuth } from '@/hooks/use-auth'
+import { useAuthEntry } from '@/hooks/use-auth-entry'
 import { Button } from '@/components/ui/button'
 import { UserNav } from './user-nav'
 import { Package } from 'lucide-react'
@@ -11,6 +12,7 @@ import { getTranslations } from '@/lib/i18n'
 
 export function Header() {
   const { user, isAuthenticated, isLoading } = useAuth()
+  const { goToAuth } = useAuthEntry()
   const { locale } = useLocale()
   const t = getTranslations(locale)
   const [mounted, setMounted] = useState(false)
@@ -31,13 +33,22 @@ export function Header() {
         {/* 用户菜单 */}
         <div>
           {!mounted || isLoading ? (
-            <div className="h-10 w-20 animate-pulse bg-muted rounded" />
+            <div className="h-10 w-20 rounded bg-muted animate-pulse sm:w-40" />
           ) : isAuthenticated ? (
             <UserNav user={user} />
           ) : (
-            <Button asChild>
-              <Link href="/login">{t.auth.login}</Link>
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="ghost"
+                className="hidden sm:inline-flex"
+                onClick={() => goToAuth('/register')}
+              >
+                {t.auth.register}
+              </Button>
+              <Button onClick={() => goToAuth('/login')}>
+                {t.auth.login}
+              </Button>
+            </div>
           )}
         </div>
       </div>

@@ -59,11 +59,10 @@ COPY --from=frontend-builder /build/.next/static /app/frontend/.next/static
 COPY --from=frontend-builder /build/public /app/frontend/public
 
 # 创建必要目录
-RUN mkdir -p /app/backend/config /app/backend/data /app/backend/logs /app/backend/uploads
+RUN mkdir -p /app/backend/config /app/backend/bootstrap /app/backend/data /app/backend/logs /app/backend/uploads
 
 # 复制构建脚本生成的配置文件
 COPY docker-build/config.json /app/backend/config/config.json
-COPY docker-build/admin.json /app/backend/config/admin.json
 
 # 复制运行时配置
 COPY docker-build/nginx.conf /etc/nginx/nginx.conf

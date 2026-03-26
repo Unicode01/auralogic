@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"log"
 	"strconv"
 	"strings"
 
@@ -11,24 +12,27 @@ import (
 	"auralogic/internal/pkg/password"
 	"auralogic/internal/pkg/response"
 	"auralogic/internal/repository"
+	"auralogic/internal/service"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
 type UserHandler struct {
-	userRepo  *repository.UserRepository
-	orderRepo *repository.OrderRepository
-	db        *gorm.DB
-	cfg       *config.Config
+	userRepo      *repository.UserRepository
+	orderRepo     *repository.OrderRepository
+	db            *gorm.DB
+	cfg           *config.Config
+	pluginManager *service.PluginManagerService
 }
 
-func NewUserHandler(userRepo *repository.UserRepository, db *gorm.DB, cfg *config.Config) *UserHandler {
+func NewUserHandler(userRepo *repository.UserRepository, db *gorm.DB, cfg *config.Config, pluginManager *service.PluginManagerService) *UserHandler {
 	return &UserHandler{
-		userRepo:  userRepo,
-		orderRepo: repository.NewOrderRepository(db),
-		db:        db,
-		cfg:       cfg,
+		userRepo:      userRepo,
+		orderRepo:     repository.NewOrderRepository(db),
+		db:            db,
+		cfg:           cfg,
+		pluginManager: pluginManager,
 	}
 }
 
@@ -100,7 +104,72 @@ func (h *UserHandler) CreateUser(c *gin.Context) {
 		response.BadRequest(c, "Invalid request parameters")
 		return
 	}
+	adminID, _ := middleware.GetUserID(c)
 	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
+	initialIsActive := true
+
+	if h.pluginManager != nil {
+		hookExecCtx := buildAdminHookExecutionContext(c, &adminID, map[string]string{
+			"resource_type": "user",
+		})
+		hookResult, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+			Hook: "user.admin.create.before",
+			Payload: map[string]interface{}{
+				"source":           "admin_api",
+				"email":            req.Email,
+				"password_present": strings.TrimSpace(req.Password) != "",
+				"name":             req.Name,
+				"role":             req.Role,
+				"is_active":        initialIsActive,
+			},
+		}, hookExecCtx)
+		if hookErr != nil {
+			log.Printf("user.admin.create.before hook execution failed: email=%s err=%v", req.Email, hookErr)
+		} else if hookResult != nil {
+			if hookResult.Blocked {
+				reason := strings.TrimSpace(hookResult.BlockReason)
+				if reason == "" {
+					reason = "User creation rejected by plugin"
+				}
+				response.BadRequest(c, reason)
+				return
+			}
+			if hookResult.Payload != nil {
+				if value, exists := hookResult.Payload["email"]; exists {
+					email, convErr := adminHookValueToString(value)
+					if convErr != nil {
+						log.Printf("user.admin.create.before email decode failed: %v", convErr)
+					} else {
+						req.Email = strings.ToLower(strings.TrimSpace(email))
+					}
+				}
+				if value, exists := hookResult.Payload["name"]; exists {
+					name, convErr := adminHookValueToString(value)
+					if convErr != nil {
+						log.Printf("user.admin.create.before name decode failed: %v", convErr)
+					} else {
+						req.Name = strings.TrimSpace(name)
+					}
+				}
+				if value, exists := hookResult.Payload["role"]; exists {
+					role, convErr := adminHookValueToString(value)
+					if convErr != nil {
+						log.Printf("user.admin.create.before role decode failed: %v", convErr)
+					} else {
+						req.Role = strings.TrimSpace(role)
+					}
+				}
+				if value, exists := hookResult.Payload["is_active"]; exists {
+					updated, ok, convErr := orderValueToOptionalBool(value)
+					if convErr != nil {
+						log.Printf("user.admin.create.before is_active decode failed: %v", convErr)
+					} else if ok {
+						initialIsActive = updated
+					}
+				}
+			}
+		}
+	}
 
 	// Check if email already exists
 	if _, err := h.userRepo.FindByEmail(req.Email); err == nil {
@@ -133,7 +202,9 @@ func (h *UserHandler) CreateUser(c *gin.Context) {
 	policy := h.cfg.Security.PasswordPolicy
 	if err := password.ValidatePasswordPolicy(req.Password, policy.MinLength, policy.RequireUppercase,
 		policy.RequireLowercase, policy.RequireNumber, policy.RequireSpecial); err != nil {
-		// Password policy errors are safe to show.
+		if respondAdminPasswordPolicyBizError(c, err) {
+			return
+		}
 		response.BadRequest(c, err.Error())
 		return
 	}
@@ -151,7 +222,7 @@ func (h *UserHandler) CreateUser(c *gin.Context) {
 		PasswordHash:         hashedPassword,
 		Name:                 req.Name,
 		Role:                 req.Role,
-		IsActive:             true,
+		IsActive:             initialIsActive,
 		EmailVerified:        true,
 		EmailNotifyMarketing: true,
 		SMSNotifyMarketing:   true,
@@ -168,6 +239,31 @@ func (h *UserHandler) CreateUser(c *gin.Context) {
 		"name":  user.Name,
 		"role":  user.Role,
 	})
+
+	if h.pluginManager != nil {
+		afterPayload := map[string]interface{}{
+			"source":         "admin_api",
+			"user_id":        user.ID,
+			"email":          user.Email,
+			"name":           user.Name,
+			"role":           user.Role,
+			"is_active":      user.IsActive,
+			"email_verified": user.EmailVerified,
+			"created_by":     adminID,
+		}
+		go func(execCtx *service.ExecutionContext, payload map[string]interface{}, email string) {
+			_, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+				Hook:    "user.admin.create.after",
+				Payload: payload,
+			}, execCtx)
+			if hookErr != nil {
+				log.Printf("user.admin.create.after hook execution failed: email=%s err=%v", email, hookErr)
+			}
+		}(cloneAdminHookExecutionContext(buildAdminHookExecutionContext(c, &adminID, map[string]string{
+			"resource_type": "user",
+			"resource_id":   strconv.FormatUint(uint64(user.ID), 10),
+		})), afterPayload, user.Email)
+	}
 
 	response.Success(c, userToResponse(user))
 }
@@ -300,11 +396,73 @@ func (h *UserHandler) UpdateUser(c *gin.Context) {
 		response.BadRequest(c, "Invalid request parameters")
 		return
 	}
+	adminID, _ := middleware.GetUserID(c)
 
 	user, err := h.userRepo.FindByID(uint(userID))
 	if err != nil {
 		response.NotFound(c, "User not found")
 		return
+	}
+
+	if h.pluginManager != nil {
+		beforePayload := map[string]interface{}{
+			"source":       "admin_api",
+			"user_id":      user.ID,
+			"email":        user.Email,
+			"name":         req.Name,
+			"role":         req.Role,
+			"password_set": req.Password != nil && strings.TrimSpace(*req.Password) != "",
+		}
+		if req.IsActive != nil {
+			beforePayload["is_active"] = *req.IsActive
+		}
+
+		hookExecCtx := buildAdminHookExecutionContext(c, &adminID, map[string]string{
+			"resource_type": "user",
+			"resource_id":   strconv.FormatUint(userID, 10),
+		})
+		hookResult, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+			Hook:    "user.admin.update.before",
+			Payload: beforePayload,
+		}, hookExecCtx)
+		if hookErr != nil {
+			log.Printf("user.admin.update.before hook execution failed: user_id=%d err=%v", user.ID, hookErr)
+		} else if hookResult != nil {
+			if hookResult.Blocked {
+				reason := strings.TrimSpace(hookResult.BlockReason)
+				if reason == "" {
+					reason = "User update rejected by plugin"
+				}
+				response.BadRequest(c, reason)
+				return
+			}
+			if hookResult.Payload != nil {
+				if value, exists := hookResult.Payload["name"]; exists {
+					name, convErr := adminHookValueToString(value)
+					if convErr != nil {
+						log.Printf("user.admin.update.before name decode failed: %v", convErr)
+					} else {
+						req.Name = strings.TrimSpace(name)
+					}
+				}
+				if value, exists := hookResult.Payload["role"]; exists {
+					role, convErr := adminHookValueToString(value)
+					if convErr != nil {
+						log.Printf("user.admin.update.before role decode failed: %v", convErr)
+					} else {
+						req.Role = strings.TrimSpace(role)
+					}
+				}
+				if value, exists := hookResult.Payload["is_active"]; exists {
+					updated, ok, convErr := orderValueToOptionalBool(value)
+					if convErr != nil {
+						log.Printf("user.admin.update.before is_active decode failed: %v", convErr)
+					} else if ok {
+						req.IsActive = &updated
+					}
+				}
+			}
+		}
 	}
 
 	// Only super admin can modify roles
@@ -327,6 +485,9 @@ func (h *UserHandler) UpdateUser(c *gin.Context) {
 			policy := h.cfg.Security.PasswordPolicy
 			if err := password.ValidatePasswordPolicy(newPwd, policy.MinLength, policy.RequireUppercase,
 				policy.RequireLowercase, policy.RequireNumber, policy.RequireSpecial); err != nil {
+				if respondAdminPasswordPolicyBizError(c, err) {
+					return
+				}
 				response.BadRequest(c, err.Error())
 				return
 			}
@@ -374,6 +535,31 @@ func (h *UserHandler) UpdateUser(c *gin.Context) {
 	}
 	logger.LogUserOperation(h.db, c, "update", user.ID, details)
 
+	if h.pluginManager != nil {
+		afterPayload := map[string]interface{}{
+			"source":           "admin_api",
+			"user_id":          user.ID,
+			"email":            user.Email,
+			"name":             user.Name,
+			"role":             user.Role,
+			"is_active":        user.IsActive,
+			"password_changed": passwordChanged,
+			"updated_by":       adminID,
+		}
+		go func(execCtx *service.ExecutionContext, payload map[string]interface{}, targetID uint) {
+			_, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+				Hook:    "user.admin.update.after",
+				Payload: payload,
+			}, execCtx)
+			if hookErr != nil {
+				log.Printf("user.admin.update.after hook execution failed: user_id=%d err=%v", targetID, hookErr)
+			}
+		}(cloneAdminHookExecutionContext(buildAdminHookExecutionContext(c, &adminID, map[string]string{
+			"resource_type": "user",
+			"resource_id":   strconv.FormatUint(uint64(user.ID), 10),
+		})), afterPayload, user.ID)
+	}
+
 	response.Success(c, userToResponse(user))
 }
 
@@ -385,7 +571,7 @@ func (h *UserHandler) DeleteUser(c *gin.Context) {
 		return
 	}
 
-	currentUserID := middleware.MustGetUserID(c)
+	currentUserID, _ := middleware.GetUserID(c)
 
 	// Cannot delete yourself
 	if uint(userID) == currentUserID {
@@ -409,6 +595,34 @@ func (h *UserHandler) DeleteUser(c *gin.Context) {
 		return
 	}
 
+	if h.pluginManager != nil {
+		hookExecCtx := buildAdminHookExecutionContext(c, &currentUserID, map[string]string{
+			"resource_type": "user",
+			"resource_id":   strconv.FormatUint(userID, 10),
+		})
+		hookResult, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+			Hook: "user.admin.delete.before",
+			Payload: map[string]interface{}{
+				"source":    "admin_api",
+				"user_id":   user.ID,
+				"email":     user.Email,
+				"name":      user.Name,
+				"role":      user.Role,
+				"is_active": user.IsActive,
+			},
+		}, hookExecCtx)
+		if hookErr != nil {
+			log.Printf("user.admin.delete.before hook execution failed: user_id=%d err=%v", user.ID, hookErr)
+		} else if hookResult != nil && hookResult.Blocked {
+			reason := strings.TrimSpace(hookResult.BlockReason)
+			if reason == "" {
+				reason = "User deletion rejected by plugin"
+			}
+			response.BadRequest(c, reason)
+			return
+		}
+	}
+
 	// Soft delete user
 	if err := h.userRepo.Delete(uint(userID)); err != nil {
 		response.InternalError(c, "DeleteFailed")
@@ -420,6 +634,30 @@ func (h *UserHandler) DeleteUser(c *gin.Context) {
 		"email": user.Email,
 		"name":  user.Name,
 	})
+
+	if h.pluginManager != nil {
+		afterPayload := map[string]interface{}{
+			"source":     "admin_api",
+			"user_id":    user.ID,
+			"email":      user.Email,
+			"name":       user.Name,
+			"role":       user.Role,
+			"is_active":  user.IsActive,
+			"deleted_by": currentUserID,
+		}
+		go func(execCtx *service.ExecutionContext, payload map[string]interface{}, targetID uint) {
+			_, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+				Hook:    "user.admin.delete.after",
+				Payload: payload,
+			}, execCtx)
+			if hookErr != nil {
+				log.Printf("user.admin.delete.after hook execution failed: user_id=%d err=%v", targetID, hookErr)
+			}
+		}(cloneAdminHookExecutionContext(buildAdminHookExecutionContext(c, &currentUserID, map[string]string{
+			"resource_type": "user",
+			"resource_id":   strconv.FormatUint(userID, 10),
+		})), afterPayload, user.ID)
+	}
 
 	response.Success(c, gin.H{
 		"message": "User has been deleted",

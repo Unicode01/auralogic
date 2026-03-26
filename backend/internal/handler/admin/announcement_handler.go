@@ -13,16 +13,18 @@ import (
 )
 
 type AnnouncementHandler struct {
-	db           *gorm.DB
-	emailService *service.EmailService
-	smsService   *service.SMSService
+	db            *gorm.DB
+	emailService  *service.EmailService
+	smsService    *service.SMSService
+	pluginManager *service.PluginManagerService
 }
 
-func NewAnnouncementHandler(db *gorm.DB, emailService *service.EmailService, smsService *service.SMSService) *AnnouncementHandler {
+func NewAnnouncementHandler(db *gorm.DB, emailService *service.EmailService, smsService *service.SMSService, pluginManager *service.PluginManagerService) *AnnouncementHandler {
 	return &AnnouncementHandler{
-		db:           db,
-		emailService: emailService,
-		smsService:   smsService,
+		db:            db,
+		emailService:  emailService,
+		smsService:    smsService,
+		pluginManager: pluginManager,
 	}
 }
 
@@ -35,6 +37,25 @@ func normalizeAnnouncementCategory(category string) string {
 		return ""
 	}
 	return c
+}
+
+func buildAnnouncementHookPayload(announcement *models.Announcement) map[string]interface{} {
+	if announcement == nil {
+		return map[string]interface{}{}
+	}
+
+	return map[string]interface{}{
+		"announcement_id":   announcement.ID,
+		"title":             announcement.Title,
+		"content":           announcement.Content,
+		"category":          announcement.Category,
+		"send_email":        announcement.SendEmail,
+		"send_sms":          announcement.SendSMS,
+		"is_mandatory":      announcement.IsMandatory,
+		"require_full_read": announcement.RequireFullRead,
+		"created_at":        announcement.CreatedAt,
+		"updated_at":        announcement.UpdatedAt,
+	}
 }
 
 func (h *AnnouncementHandler) dispatchAnnouncement(announcement *models.Announcement) {
@@ -117,6 +138,51 @@ func (h *AnnouncementHandler) CreateAnnouncement(c *gin.Context) {
 		response.BadRequest(c, "Invalid request parameters")
 		return
 	}
+	adminID := getOptionalUserID(c)
+	adminIDValue := uint(0)
+	if adminID != nil {
+		adminIDValue = *adminID
+	}
+	if h.pluginManager != nil {
+		originalReq := req
+		hookPayload, payloadErr := adminHookStructToPayload(req)
+		if payloadErr != nil {
+			log.Printf("announcement.create.before payload build failed: admin=%d err=%v", adminIDValue, payloadErr)
+		} else {
+			hookPayload["admin_id"] = adminIDValue
+			hookPayload["source"] = "admin_api"
+			hookResult, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+				Hook:    "announcement.create.before",
+				Payload: hookPayload,
+			}, buildAdminHookExecutionContext(c, adminID, map[string]string{
+				"hook_resource": "announcement",
+				"hook_source":   "admin_api",
+			}))
+			if hookErr != nil {
+				log.Printf("announcement.create.before hook execution failed: admin=%d err=%v", adminIDValue, hookErr)
+			} else if hookResult != nil {
+				if hookResult.Blocked {
+					reason := strings.TrimSpace(hookResult.BlockReason)
+					if reason == "" {
+						reason = "Announcement creation rejected by plugin"
+					}
+					response.BadRequest(c, reason)
+					return
+				}
+				if hookResult.Payload != nil {
+					if mergeErr := mergeAdminHookStructPatch(&req, hookResult.Payload); mergeErr != nil {
+						log.Printf("announcement.create.before payload apply failed, fallback to original request: admin=%d err=%v", adminIDValue, mergeErr)
+						req = originalReq
+					}
+				}
+			}
+		}
+	}
+	req.Title = strings.TrimSpace(req.Title)
+	if req.Title == "" {
+		response.BadRequest(c, "Title is required")
+		return
+	}
 
 	category := normalizeAnnouncementCategory(req.Category)
 	if category == "" {
@@ -136,6 +202,25 @@ func (h *AnnouncementHandler) CreateAnnouncement(c *gin.Context) {
 	if err := h.db.Create(&announcement).Error; err != nil {
 		response.InternalError(c, "CreateFailed")
 		return
+	}
+
+	if h.pluginManager != nil {
+		afterPayload := buildAnnouncementHookPayload(&announcement)
+		afterPayload["admin_id"] = adminIDValue
+		afterPayload["source"] = "admin_api"
+		go func(execCtx *service.ExecutionContext, payload map[string]interface{}, announcementID uint) {
+			_, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+				Hook:    "announcement.create.after",
+				Payload: payload,
+			}, execCtx)
+			if hookErr != nil {
+				log.Printf("announcement.create.after hook execution failed: admin=%d announcement=%d err=%v", adminIDValue, announcementID, hookErr)
+			}
+		}(cloneAdminHookExecutionContext(buildAdminHookExecutionContext(c, adminID, map[string]string{
+			"hook_resource":   "announcement",
+			"hook_source":     "admin_api",
+			"announcement_id": strconv.FormatUint(uint64(announcement.ID), 10),
+		})), afterPayload, announcement.ID)
 	}
 
 	// Async dispatch: do not block admin request on bulk sending.
@@ -187,9 +272,53 @@ func (h *AnnouncementHandler) UpdateAnnouncement(c *gin.Context) {
 		response.BadRequest(c, "Invalid request parameters")
 		return
 	}
+	adminID := getOptionalUserID(c)
+	adminIDValue := uint(0)
+	if adminID != nil {
+		adminIDValue = *adminID
+	}
+	if h.pluginManager != nil {
+		originalReq := req
+		hookPayload, payloadErr := adminHookStructToPayload(req)
+		if payloadErr != nil {
+			log.Printf("announcement.update.before payload build failed: admin=%d announcement=%d err=%v", adminIDValue, uint(id), payloadErr)
+		} else {
+			hookPayload["announcement_id"] = uint(id)
+			hookPayload["current"] = buildAnnouncementHookPayload(&announcement)
+			hookPayload["admin_id"] = adminIDValue
+			hookPayload["source"] = "admin_api"
+			hookResult, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+				Hook:    "announcement.update.before",
+				Payload: hookPayload,
+			}, buildAdminHookExecutionContext(c, adminID, map[string]string{
+				"hook_resource":   "announcement",
+				"hook_source":     "admin_api",
+				"announcement_id": strconv.FormatUint(id, 10),
+			}))
+			if hookErr != nil {
+				log.Printf("announcement.update.before hook execution failed: admin=%d announcement=%d err=%v", adminIDValue, uint(id), hookErr)
+			} else if hookResult != nil {
+				if hookResult.Blocked {
+					reason := strings.TrimSpace(hookResult.BlockReason)
+					if reason == "" {
+						reason = "Announcement update rejected by plugin"
+					}
+					response.BadRequest(c, reason)
+					return
+				}
+				if hookResult.Payload != nil {
+					if mergeErr := mergeAdminHookStructPatch(&req, hookResult.Payload); mergeErr != nil {
+						log.Printf("announcement.update.before payload apply failed, fallback to original request: admin=%d announcement=%d err=%v", adminIDValue, uint(id), mergeErr)
+						req = originalReq
+					}
+				}
+			}
+		}
+	}
+	beforeAnnouncement := announcement
 
 	if req.Title != "" {
-		announcement.Title = req.Title
+		announcement.Title = strings.TrimSpace(req.Title)
 	}
 	if req.Content != "" {
 		announcement.Content = req.Content
@@ -219,6 +348,31 @@ func (h *AnnouncementHandler) UpdateAnnouncement(c *gin.Context) {
 		response.InternalError(c, "UpdateFailed")
 		return
 	}
+	if h.pluginManager != nil {
+		afterPayload := buildAnnouncementHookPayload(&announcement)
+		afterPayload["before_title"] = beforeAnnouncement.Title
+		afterPayload["before_content"] = beforeAnnouncement.Content
+		afterPayload["before_category"] = beforeAnnouncement.Category
+		afterPayload["before_send_email"] = beforeAnnouncement.SendEmail
+		afterPayload["before_send_sms"] = beforeAnnouncement.SendSMS
+		afterPayload["before_is_mandatory"] = beforeAnnouncement.IsMandatory
+		afterPayload["before_require_full_read"] = beforeAnnouncement.RequireFullRead
+		afterPayload["admin_id"] = adminIDValue
+		afterPayload["source"] = "admin_api"
+		go func(execCtx *service.ExecutionContext, payload map[string]interface{}) {
+			_, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+				Hook:    "announcement.update.after",
+				Payload: payload,
+			}, execCtx)
+			if hookErr != nil {
+				log.Printf("announcement.update.after hook execution failed: admin=%d announcement=%d err=%v", adminIDValue, uint(id), hookErr)
+			}
+		}(cloneAdminHookExecutionContext(buildAdminHookExecutionContext(c, adminID, map[string]string{
+			"hook_resource":   "announcement",
+			"hook_source":     "admin_api",
+			"announcement_id": strconv.FormatUint(id, 10),
+		})), afterPayload)
+	}
 	response.Success(c, announcement)
 }
 
@@ -229,6 +383,39 @@ func (h *AnnouncementHandler) DeleteAnnouncement(c *gin.Context) {
 		response.BadRequest(c, "Invalid ID")
 		return
 	}
+	adminID := getOptionalUserID(c)
+	adminIDValue := uint(0)
+	if adminID != nil {
+		adminIDValue = *adminID
+	}
+	var announcement models.Announcement
+	if err := h.db.First(&announcement, uint(id)).Error; err != nil {
+		response.NotFound(c, "Announcement not found")
+		return
+	}
+	if h.pluginManager != nil {
+		hookPayload := buildAnnouncementHookPayload(&announcement)
+		hookPayload["admin_id"] = adminIDValue
+		hookPayload["source"] = "admin_api"
+		hookResult, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+			Hook:    "announcement.delete.before",
+			Payload: hookPayload,
+		}, buildAdminHookExecutionContext(c, adminID, map[string]string{
+			"hook_resource":   "announcement",
+			"hook_source":     "admin_api",
+			"announcement_id": strconv.FormatUint(id, 10),
+		}))
+		if hookErr != nil {
+			log.Printf("announcement.delete.before hook execution failed: admin=%d announcement=%d err=%v", adminIDValue, uint(id), hookErr)
+		} else if hookResult != nil && hookResult.Blocked {
+			reason := strings.TrimSpace(hookResult.BlockReason)
+			if reason == "" {
+				reason = "Announcement deletion rejected by plugin"
+			}
+			response.BadRequest(c, reason)
+			return
+		}
+	}
 
 	if err := h.db.Delete(&models.Announcement{}, uint(id)).Error; err != nil {
 		response.InternalError(c, "DeleteFailed")
@@ -237,6 +424,25 @@ func (h *AnnouncementHandler) DeleteAnnouncement(c *gin.Context) {
 
 	// 同时清理已读记录
 	h.db.Where("announcement_id = ?", uint(id)).Delete(&models.AnnouncementRead{})
+
+	if h.pluginManager != nil {
+		afterPayload := buildAnnouncementHookPayload(&announcement)
+		afterPayload["admin_id"] = adminIDValue
+		afterPayload["source"] = "admin_api"
+		go func(execCtx *service.ExecutionContext, payload map[string]interface{}) {
+			_, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+				Hook:    "announcement.delete.after",
+				Payload: payload,
+			}, execCtx)
+			if hookErr != nil {
+				log.Printf("announcement.delete.after hook execution failed: admin=%d announcement=%d err=%v", adminIDValue, uint(id), hookErr)
+			}
+		}(cloneAdminHookExecutionContext(buildAdminHookExecutionContext(c, adminID, map[string]string{
+			"hook_resource":   "announcement",
+			"hook_source":     "admin_api",
+			"announcement_id": strconv.FormatUint(id, 10),
+		})), afterPayload)
+	}
 
 	response.Success(c, gin.H{"message": "Announcement deleted"})
 }

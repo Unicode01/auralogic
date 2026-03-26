@@ -21,19 +21,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import {
-  Tabs,
-  TabsList,
-  TabsTrigger,
-  TabsContent,
-} from '@/components/ui/tabs'
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import toast from 'react-hot-toast'
-import { ArrowLeft, Save, Loader2 } from 'lucide-react'
+import { ArrowLeft, BookOpen, Loader2, Save } from 'lucide-react'
 import Link from 'next/link'
 import { useLocale } from '@/hooks/use-locale'
 import { getTranslations } from '@/lib/i18n'
 import { usePageTitle } from '@/hooks/use-page-title'
 import { MarkdownMessage } from '@/components/ui/markdown-message'
+import { resolveApiErrorMessage } from '@/lib/api-error'
+import { PluginSlot } from '@/components/plugins/plugin-slot'
 
 interface ArticleForm {
   title: string
@@ -49,6 +46,10 @@ export default function EditKnowledgeArticlePage() {
   const t = getTranslations(locale)
   usePageTitle(t.pageTitle.adminKnowledgeArticleEdit)
   const articleId = Number(params.id)
+  const formatKnowledgeError = (error: unknown, fallback: string) => {
+    const detail = resolveApiErrorMessage(error, t, fallback)
+    return detail === fallback ? fallback : `${fallback}: ${detail}`
+  }
 
   const [form, setForm] = useState<ArticleForm>({
     title: '',
@@ -58,7 +59,12 @@ export default function EditKnowledgeArticlePage() {
   })
 
   // Fetch article
-  const { data: articleData, isLoading } = useQuery({
+  const {
+    data: articleData,
+    isLoading,
+    isError: articleLoadFailed,
+    refetch: refetchArticle,
+  } = useQuery({
     queryKey: ['adminKnowledgeArticle', articleId],
     queryFn: () => getAdminKnowledgeArticle(articleId),
     enabled: !!articleId,
@@ -75,7 +81,10 @@ export default function EditKnowledgeArticlePage() {
   const categories: KnowledgeCategory[] = categoriesData?.data || []
 
   // Flatten categories for select options
-  const flattenCategories = (cats: KnowledgeCategory[], depth = 0): { id: number; name: string; depth: number }[] => {
+  const flattenCategories = (
+    cats: KnowledgeCategory[],
+    depth = 0
+  ): { id: number; name: string; depth: number }[] => {
     const result: { id: number; name: string; depth: number }[] = []
     for (const cat of cats) {
       result.push({ id: cat.id, name: cat.name, depth })
@@ -87,6 +96,53 @@ export default function EditKnowledgeArticlePage() {
   }
 
   const flatCategories = flattenCategories(categories)
+  const selectedCategoryLabel =
+    flatCategories.find((cat) => cat.id === form.category_id)?.name || t.knowledge.uncategorized
+  const initialArticle = articleData?.data
+  const isDirty = Boolean(
+    initialArticle &&
+    (form.title !== (initialArticle.title || '') ||
+      form.category_id !== (initialArticle.category_id || undefined) ||
+      form.sort_order !== (initialArticle.sort_order ?? 0) ||
+      form.content !== (initialArticle.content || ''))
+  )
+  const contentCharCount = form.content.trim().length
+  const contentLineCount = form.content ? form.content.replace(/\r\n/g, '\n').split('\n').length : 0
+  const adminKnowledgeArticleDetailPluginContext = {
+    view: 'admin_knowledge_article_detail',
+    resource_id: articleId,
+    article: initialArticle
+      ? {
+          id: articleId,
+          title: initialArticle.title,
+          category_id: initialArticle.category_id,
+          sort_order: initialArticle.sort_order,
+          created_at: initialArticle.created_at,
+          updated_at: initialArticle.updated_at,
+        }
+      : {
+          id: Number.isFinite(articleId) ? articleId : undefined,
+        },
+    form: {
+      title: form.title || undefined,
+      category_id: form.category_id,
+      sort_order: form.sort_order,
+      content_length: contentCharCount,
+      content_line_count: contentLineCount,
+      dirty: isDirty,
+    },
+    state: {
+      load_failed: articleLoadFailed && !initialArticle,
+      not_found: !isLoading && !articleLoadFailed && !initialArticle,
+    },
+  }
+
+  const formatKnowledgeTime = (value?: string) => {
+    if (!value) return '-'
+    const date = new Date(value)
+    if (Number.isNaN(date.getTime())) return value
+    return date.toLocaleString(locale === 'zh' ? 'zh-CN' : 'en-US', { hour12: false })
+  }
 
   // Populate form when article data loads
   useEffect(() => {
@@ -113,8 +169,8 @@ export default function EditKnowledgeArticlePage() {
       toast.success(t.knowledge.articleUpdated)
       router.push('/admin/knowledge')
     },
-    onError: (error: Error) => {
-      toast.error(`${t.knowledge.updateFailed}: ${error.message}`)
+    onError: (error: unknown) => {
+      toast.error(formatKnowledgeError(error, t.knowledge.updateFailed))
     },
   })
 
@@ -122,7 +178,7 @@ export default function EditKnowledgeArticlePage() {
     e.preventDefault()
 
     if (!form.title.trim()) {
-      toast.error(`${t.knowledge.articleTitle} is required`)
+      toast.error(t.knowledge.articleTitleRequired)
       return
     }
 
@@ -133,34 +189,121 @@ export default function EditKnowledgeArticlePage() {
     return (
       <div className="flex items-center justify-center py-12">
         <div className="text-center">
-          <Loader2 className="h-8 w-8 animate-spin mx-auto mb-4" />
+          <Loader2 className="mx-auto mb-4 h-8 w-8 animate-spin" />
           <p className="text-muted-foreground">{t.common.loading}</p>
         </div>
       </div>
     )
   }
 
-  return (
-    <div className="space-y-6">
-      <div className="flex items-center gap-4">
-        <Button variant="outline" size="sm" asChild>
+  if (articleLoadFailed && !initialArticle) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 text-center">
+        <BookOpen className="mb-4 h-12 w-12 text-muted-foreground" />
+        <p className="text-base font-medium">{t.knowledge.detailLoadFailed}</p>
+        <p className="mb-4 mt-2 max-w-md text-sm text-muted-foreground">
+          {t.knowledge.detailLoadFailedDesc}
+        </p>
+        <div className="flex flex-wrap justify-center gap-2">
+          <Button variant="outline" onClick={() => refetchArticle()}>
+            {t.common.refresh}
+          </Button>
+          <Button variant="ghost" asChild>
+            <Link href="/admin/knowledge">{t.common.back}</Link>
+          </Button>
+        </div>
+        <PluginSlot
+          slot="admin.knowledge_article_detail.load_failed"
+          context={{ ...adminKnowledgeArticleDetailPluginContext, section: 'detail_state' }}
+        />
+      </div>
+    )
+  }
+
+  if (!initialArticle) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 text-center">
+        <BookOpen className="mb-4 h-12 w-12 text-muted-foreground" />
+        <p className="text-base font-medium">{t.knowledge.articleNotFound}</p>
+        <p className="mb-4 mt-2 max-w-md text-sm text-muted-foreground">
+          {t.knowledge.articleNotFoundDesc}
+        </p>
+        <Button variant="outline" asChild>
           <Link href="/admin/knowledge">
-            <ArrowLeft className="h-4 w-4 md:mr-1.5" />
-            <span className="hidden md:inline">{t.common.back}</span>
+            <ArrowLeft className="mr-2 h-4 w-4" />
+            {t.common.back}
           </Link>
         </Button>
-        <h1 className="text-lg md:text-xl font-bold">
-          {t.knowledge.editArticle}
-        </h1>
+        <PluginSlot
+          slot="admin.knowledge_article_detail.not_found"
+          context={{ ...adminKnowledgeArticleDetailPluginContext, section: 'detail_state' }}
+        />
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-6">
+      <PluginSlot
+        slot="admin.knowledge_article_detail.top"
+        context={adminKnowledgeArticleDetailPluginContext}
+      />
+      <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
+        <div className="flex items-center gap-4">
+          <Button variant="outline" size="sm" asChild>
+            <Link href="/admin/knowledge">
+              <ArrowLeft className="h-4 w-4 md:mr-1.5" />
+              <span className="hidden md:inline">{t.common.back}</span>
+            </Link>
+          </Button>
+          <h1 className="text-lg font-bold md:text-xl">{t.knowledge.editArticle}</h1>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button type="button" variant="outline" asChild>
+            <Link href="/admin/knowledge">{t.common.cancel}</Link>
+          </Button>
+          <Button
+            type="submit"
+            form="knowledge-article-edit-form"
+            disabled={saveMutation.isPending}
+          >
+            <Save className="mr-2 h-4 w-4" />
+            {saveMutation.isPending ? t.admin.saving : t.common.save}
+          </Button>
+        </div>
       </div>
 
-      <form onSubmit={handleSubmit} className="space-y-6">
+      <form id="knowledge-article-edit-form" onSubmit={handleSubmit} className="space-y-6">
         <Card>
           <CardHeader>
             <CardTitle>{t.knowledge.editArticle}</CardTitle>
+            <div className="mt-2 flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
+              <span>#{articleId}</span>
+              {isDirty ? <span>{t.knowledge.articleUnsavedChanges}</span> : null}
+              <span>{t.knowledge.selectCategory}: {selectedCategoryLabel}</span>
+              <span>{t.knowledge.sortOrder}: {form.sort_order}</span>
+              <span>
+                {t.knowledge.articleContentChars.replace('{count}', String(contentCharCount))}
+              </span>
+              <span>
+                {t.knowledge.articleContentLines.replace('{count}', String(contentLineCount))}
+              </span>
+            </div>
+            <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+              <span>
+                {t.knowledge.articleCreatedAt}: {formatKnowledgeTime(initialArticle?.created_at)}
+              </span>
+              <span>
+                {t.knowledge.articleUpdatedAt}: {formatKnowledgeTime(initialArticle?.updated_at)}
+              </span>
+            </div>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <PluginSlot
+              slot="admin.knowledge_article_detail.form.top"
+              context={{ ...adminKnowledgeArticleDetailPluginContext, section: 'form' }}
+            />
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
               <div className="space-y-2">
                 <Label htmlFor="title">
                   {t.knowledge.articleTitle} <span className="text-red-500">*</span>
@@ -192,7 +335,8 @@ export default function EditKnowledgeArticlePage() {
                       <SelectItem value="none">{t.knowledge.uncategorized}</SelectItem>
                       {flatCategories.map((cat) => (
                         <SelectItem key={cat.id} value={cat.id.toString()}>
-                          {'  '.repeat(cat.depth)}{cat.name}
+                          {'  '.repeat(cat.depth)}
+                          {cat.name}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -228,17 +372,11 @@ export default function EditKnowledgeArticlePage() {
                   />
                 </TabsContent>
                 <TabsContent value="preview">
-                  <div className="min-h-[400px] border rounded-md p-4">
+                  <div className="min-h-[400px] rounded-md border p-4">
                     {form.content ? (
-                      <MarkdownMessage
-                        content={form.content}
-                        allowHtml
-                        className="markdown-body"
-                      />
+                      <MarkdownMessage content={form.content} allowHtml className="markdown-body" />
                     ) : (
-                      <p className="text-muted-foreground">
-                        {t.knowledge.noPreviewContent}
-                      </p>
+                      <p className="text-muted-foreground">{t.knowledge.noPreviewContent}</p>
                     )}
                   </div>
                 </TabsContent>
@@ -247,14 +385,20 @@ export default function EditKnowledgeArticlePage() {
           </CardContent>
         </Card>
 
-        <div className="flex justify-end gap-4">
-          <Button type="button" variant="outline" asChild>
-            <Link href="/admin/knowledge">{t.common.cancel}</Link>
-          </Button>
-          <Button type="submit" disabled={saveMutation.isPending}>
-            <Save className="mr-2 h-4 w-4" />
-            {saveMutation.isPending ? t.admin.saving : t.common.save}
-          </Button>
+        <div className="space-y-3">
+          <PluginSlot
+            slot="admin.knowledge_article_detail.submit.before"
+            context={{ ...adminKnowledgeArticleDetailPluginContext, section: 'submit' }}
+          />
+          <div className="flex justify-end gap-4">
+            <Button type="button" variant="outline" asChild>
+              <Link href="/admin/knowledge">{t.common.cancel}</Link>
+            </Button>
+            <Button type="submit" disabled={saveMutation.isPending}>
+              <Save className="mr-2 h-4 w-4" />
+              {saveMutation.isPending ? t.admin.saving : t.common.save}
+            </Button>
+          </div>
         </div>
       </form>
     </div>

@@ -115,6 +115,12 @@ func main() {
 		"ticket.view",
 		"ticket.reply",
 		"ticket.status_update",
+		// Market
+		"market.view",
+		"market.install",
+		"market.history",
+		"market.review",
+		"market.manage",
 	}
 
 	adminPerm := &models.AdminPermission{

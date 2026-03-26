@@ -1,0 +1,26 @@
+{
+  "name": "@auralogic/js-market",
+  "version": "0.1.34",
+  "private": true,
+  "description": "Official market plugin for AuraLogic js_worker runtime.",
+  "scripts": {
+    "sdk:ensure": "node ../sdk/scripts/ensure-dist.mjs",
+    "sync:manifest": "node ../sdk/scripts/sync-plugin-manifest.mjs . --profile=market",
+    "clean": "node ./scripts/clean.mjs",
+    "build": "npm run sdk:ensure && npm run clean && node ./scripts/build.mjs --minify",
+    "i18n:check": "node ./scripts/check-i18n.mjs",
+    "typecheck": "npm run sdk:ensure && tsc --noEmit -p tsconfig.json",
+    "validate:manifest": "node ../sdk/scripts/validate-plugin-manifest.mjs .",
+    "dev": "npm run sdk:ensure && node ./scripts/build.mjs --watch",
+    "package": "npm run validate:manifest && npm run i18n:check && npm run build && node ./scripts/package.mjs"
+  },
+  "dependencies": {
+    "@auralogic/plugin-sdk": "file:../sdk"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.19",
+    "esbuild": "^0.25.10",
+    "typescript": "^5.8.2",
+    "yazl": "^3.3.1"
+  }
+}

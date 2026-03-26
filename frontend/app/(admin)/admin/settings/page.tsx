@@ -1,8 +1,21 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import Link from 'next/link'
+import { useState, useEffect, useCallback, useRef, type ReactNode } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { getSettings, updateSettings, testSMTP, testSMS, getEmailTemplates, getEmailTemplate, updateEmailTemplate, getLandingPage, updateLandingPage, resetLandingPage } from '@/lib/api'
+import {
+  getSettings,
+  updateSettings,
+  testSMTP,
+  testSMS,
+  getEmailTemplates,
+  getEmailTemplate,
+  updateEmailTemplate,
+  importAdminTemplatePackage,
+  getLandingPage,
+  updateLandingPage,
+  resetLandingPage,
+} from '@/lib/api'
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -10,11 +23,48 @@ import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
 import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { useToast } from '@/hooks/use-toast'
 import { useLocale } from '@/hooks/use-locale'
 import { getTranslations } from '@/lib/i18n'
 import { usePageTitle } from '@/hooks/use-page-title'
-import { Settings, Database, Mail, Shield, Zap, Package, Save, TestTube, FileUp, Globe, Cloud, FileText, MessageSquare, Sun, Moon, Monitor, Image, Mic, Palette, Plus, Trash2, FileCode, ShieldCheck, Layout, RotateCcw, BarChart3 } from 'lucide-react'
+import {
+  Settings,
+  Database,
+  Mail,
+  Shield,
+  Zap,
+  Package,
+  Save,
+  TestTube,
+  FileUp,
+  Globe,
+  Cloud,
+  FileText,
+  MessageSquare,
+  Sun,
+  Moon,
+  Monitor,
+  Image,
+  Mic,
+  Palette,
+  Plus,
+  Trash2,
+  FileCode,
+  ShieldCheck,
+  Layout,
+  RotateCcw,
+  BarChart3,
+} from 'lucide-react'
 import { useForm } from 'react-hook-form'
 import {
   Select,
@@ -28,10 +78,30 @@ import { html } from '@codemirror/lang-html'
 import { css } from '@codemirror/lang-css'
 import { javascript } from '@codemirror/lang-javascript'
 import { useTheme } from '@/contexts/theme-context'
+import { resolveApiErrorMessage } from '@/lib/api-error'
+import { usePluginBootstrapQuery } from '@/lib/plugin-bootstrap-query'
+import {
+  buildAdminMarketPluginPageHref,
+  findAdminMarketPluginBasePath,
+} from '@/lib/plugin-market-route'
+import { PluginSlot } from '@/components/plugins/plugin-slot'
 
 // 单独的页面规则编辑卡片组件，使用本地state避免每次输入都重渲染整个设置页面
 interface PageRule {
-  name: string; pattern: string; match_type: string; css: string; js: string; enabled: boolean
+  name: string
+  pattern: string
+  match_type: string
+  css: string
+  js: string
+  enabled: boolean
+}
+
+function formatBytes(bytes: number) {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B'
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`
 }
 
 function PageRuleItem({
@@ -63,14 +133,14 @@ function PageRuleItem({
 
   return (
     <Card className={`border ${local.enabled ? 'border-primary/30' : 'border-muted opacity-60'}`}>
-      <CardContent className="pt-4 space-y-3">
+      <CardContent className="space-y-3 pt-4">
         <div className="flex items-center justify-between gap-2">
-          <div className="flex-1 grid grid-cols-1 md:grid-cols-3 gap-2">
+          <div className="grid flex-1 grid-cols-1 gap-2 md:grid-cols-3">
             <div>
               <Label className="text-xs">{t.admin.ruleName}</Label>
               <Input
                 value={local.name}
-                onChange={(e) => setLocal(prev => ({ ...prev, name: e.target.value }))}
+                onChange={(e) => setLocal((prev) => ({ ...prev, name: e.target.value }))}
                 onBlur={handleBlur}
                 placeholder={t.admin.ruleName}
                 className="mt-1 h-8 text-sm"
@@ -80,10 +150,10 @@ function PageRuleItem({
               <Label className="text-xs">{t.admin.matchPattern}</Label>
               <Input
                 value={local.pattern}
-                onChange={(e) => setLocal(prev => ({ ...prev, pattern: e.target.value }))}
+                onChange={(e) => setLocal((prev) => ({ ...prev, pattern: e.target.value }))}
                 onBlur={handleBlur}
                 placeholder={local.match_type === 'regex' ? '^/products/[^/]+$' : '/products'}
-                className="mt-1 h-8 text-sm font-mono"
+                className="mt-1 h-8 font-mono text-sm"
               />
             </div>
             <div>
@@ -127,18 +197,18 @@ function PageRuleItem({
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
           <div>
             <Label className="text-xs">CSS</Label>
             <CodeMirror
               value={local.css}
               extensions={[css()]}
-              onChange={(v) => setLocal(prev => ({ ...prev, css: v }))}
+              onChange={(v) => setLocal((prev) => ({ ...prev, css: v }))}
               onBlur={handleBlur}
               placeholder={t.admin.cssPlaceholder}
               height="100px"
               theme={cmTheme}
-              className="mt-1 rounded-md border border-input overflow-hidden text-xs"
+              className="mt-1 overflow-hidden rounded-md border border-input text-xs"
               basicSetup={{ lineNumbers: false, foldGutter: false }}
             />
           </div>
@@ -147,12 +217,12 @@ function PageRuleItem({
             <CodeMirror
               value={local.js}
               extensions={[javascript()]}
-              onChange={(v) => setLocal(prev => ({ ...prev, js: v }))}
+              onChange={(v) => setLocal((prev) => ({ ...prev, js: v }))}
               onBlur={handleBlur}
               placeholder={t.admin.jsPlaceholder}
               height="100px"
               theme={cmTheme}
-              className="mt-1 rounded-md border border-input overflow-hidden text-xs"
+              className="mt-1 overflow-hidden rounded-md border border-input text-xs"
               basicSetup={{ lineNumbers: false, foldGutter: false }}
             />
           </div>
@@ -189,7 +259,7 @@ function TemplateEditor({
   if (isPreview) {
     return (
       <>
-        <div className="border rounded-md overflow-hidden bg-white">
+        <div className="overflow-hidden rounded-md border bg-background">
           <iframe
             srcDoc={local}
             className="w-full border-0"
@@ -199,16 +269,11 @@ function TemplateEditor({
           />
         </div>
         <div className="flex items-center gap-2">
-          <Button
-            onClick={() => onSave(local)}
-            disabled={isSaving}
-          >
+          <Button onClick={() => onSave(local)} disabled={isSaving}>
             <Save className="mr-2 h-4 w-4" />
             {isSaving ? t.admin.saving : t.admin.saveTemplate}
           </Button>
-          <p className="text-xs text-muted-foreground">
-            {t.admin.templateTip}
-          </p>
+          <p className="text-xs text-muted-foreground">{t.admin.templateTip}</p>
         </div>
       </>
     )
@@ -223,26 +288,26 @@ function TemplateEditor({
         onBlur={() => onChange(local)}
         height="500px"
         theme={cmTheme}
-        className="rounded-md border overflow-hidden"
+        className="overflow-hidden rounded-md border"
       />
       <div className="flex items-center gap-2">
-        <Button
-          onClick={() => onSave(local)}
-          disabled={isSaving}
-        >
+        <Button onClick={() => onSave(local)} disabled={isSaving}>
           <Save className="mr-2 h-4 w-4" />
           {isSaving ? t.admin.saving : t.admin.saveTemplate}
         </Button>
-        <p className="text-xs text-muted-foreground">
-          {t.admin.templateTip}
-        </p>
+        <p className="text-xs text-muted-foreground">{t.admin.templateTip}</p>
       </div>
     </>
   )
 }
 
 interface AuthBrandingData {
-  mode: string; title: string; title_en: string; subtitle: string; subtitle_en: string; custom_html: string
+  mode: string
+  title: string
+  title_en: string
+  subtitle: string
+  subtitle_en: string
+  custom_html: string
 }
 
 function AuthBrandingCard({
@@ -252,6 +317,7 @@ function AuthBrandingCard({
   t,
   primaryColor,
   cmTheme,
+  actions,
 }: {
   initial: AuthBrandingData
   onSave: (data: AuthBrandingData) => void
@@ -259,25 +325,36 @@ function AuthBrandingCard({
   t: any
   primaryColor?: string
   cmTheme?: 'light' | 'dark'
+  actions?: ReactNode
 }) {
   const [local, setLocal] = useState<AuthBrandingData>(initial)
   const [preview, setPreview] = useState(false)
 
-  useEffect(() => { setLocal(initial) }, [initial])
+  useEffect(() => {
+    setLocal(initial)
+  }, [initial])
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Layout className="h-5 w-5" />
-          {t.admin.authBranding}
-        </CardTitle>
-        <CardDescription>{t.admin.authBrandingDesc}</CardDescription>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="space-y-1">
+            <CardTitle className="flex items-center gap-2">
+              <Layout className="h-5 w-5" />
+              {t.admin.authBranding}
+            </CardTitle>
+            <CardDescription>{t.admin.authBrandingDesc}</CardDescription>
+          </div>
+          {actions ? <div className="flex flex-wrap gap-2">{actions}</div> : null}
+        </div>
       </CardHeader>
       <CardContent className="space-y-4">
         <div>
           <Label>{t.admin.authBrandingMode}</Label>
-          <Select value={local.mode} onValueChange={(v) => setLocal(prev => ({ ...prev, mode: v }))}>
+          <Select
+            value={local.mode}
+            onValueChange={(v) => setLocal((prev) => ({ ...prev, mode: v }))}
+          >
             <SelectTrigger className="mt-1.5">
               <SelectValue />
             </SelectTrigger>
@@ -293,42 +370,81 @@ function AuthBrandingCard({
             <p className="text-xs text-muted-foreground">{t.admin.authBrandingDefaultHint}</p>
             <div>
               <Label>{t.admin.authBrandingTitle}</Label>
-              <Input className="mt-1" value={local.title} onChange={(e) => setLocal(prev => ({ ...prev, title: e.target.value }))} placeholder="现代化电商管理平台" />
+              <Input
+                className="mt-1"
+                value={local.title}
+                onChange={(e) => setLocal((prev) => ({ ...prev, title: e.target.value }))}
+                placeholder={t.admin.authBrandingTitlePlaceholder}
+              />
             </div>
             <div>
               <Label>{t.admin.authBrandingTitleEn}</Label>
-              <Input className="mt-1" value={local.title_en} onChange={(e) => setLocal(prev => ({ ...prev, title_en: e.target.value }))} placeholder="Modern E-commerce Platform" />
+              <Input
+                className="mt-1"
+                value={local.title_en}
+                onChange={(e) => setLocal((prev) => ({ ...prev, title_en: e.target.value }))}
+                placeholder={t.admin.authBrandingTitleEnPlaceholder}
+              />
             </div>
             <div>
               <Label>{t.admin.authBrandingSubtitle}</Label>
-              <Input className="mt-1" value={local.subtitle} onChange={(e) => setLocal(prev => ({ ...prev, subtitle: e.target.value }))} />
+              <Input
+                className="mt-1"
+                value={local.subtitle}
+                onChange={(e) => setLocal((prev) => ({ ...prev, subtitle: e.target.value }))}
+              />
             </div>
             <div>
               <Label>{t.admin.authBrandingSubtitleEn}</Label>
-              <Input className="mt-1" value={local.subtitle_en} onChange={(e) => setLocal(prev => ({ ...prev, subtitle_en: e.target.value }))} />
+              <Input
+                className="mt-1"
+                value={local.subtitle_en}
+                onChange={(e) => setLocal((prev) => ({ ...prev, subtitle_en: e.target.value }))}
+              />
             </div>
           </div>
         ) : (
           <div className="space-y-3">
             <p className="text-xs text-muted-foreground">{t.admin.authBrandingCustomHint}</p>
-            <div className="rounded-md border bg-muted/30 p-3 text-sm space-y-1">
+            <div className="space-y-1 rounded-md border bg-muted/30 p-3 text-sm">
               <p className="font-medium">{t.admin.landingPageVariables}</p>
-              <div className="flex flex-wrap gap-2 mt-2">
-                {['{{.AppName}}', '{{.AppURL}}', '{{.LogoURL}}', '{{.PrimaryColor}}', '{{.Year}}'].map(v => (
-                  <Badge key={v} variant="secondary" className="font-mono text-xs">{v}</Badge>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {[
+                  '{{.AppName}}',
+                  '{{.AppURL}}',
+                  '{{.LogoURL}}',
+                  '{{.PrimaryColor}}',
+                  '{{.Year}}',
+                ].map((v) => (
+                  <Badge key={v} variant="secondary" className="font-mono text-xs">
+                    {v}
+                  </Badge>
                 ))}
               </div>
             </div>
             <div className="flex items-center gap-2">
-              <Button variant={preview ? 'outline' : 'default'} size="sm" onClick={() => setPreview(false)}>
-                <FileCode className="mr-1.5 h-4 w-4" />{t.admin.code}
+              <Button
+                variant={preview ? 'outline' : 'default'}
+                size="sm"
+                onClick={() => setPreview(false)}
+              >
+                <FileCode className="mr-1.5 h-4 w-4" />
+                {t.admin.code}
               </Button>
-              <Button variant={preview ? 'default' : 'outline'} size="sm" onClick={() => setPreview(true)}>
-                <Globe className="mr-1.5 h-4 w-4" />{t.admin.preview}
+              <Button
+                variant={preview ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setPreview(true)}
+              >
+                <Globe className="mr-1.5 h-4 w-4" />
+                {t.admin.preview}
               </Button>
             </div>
             {preview ? (
-              <div className="border rounded-md overflow-hidden bg-primary" style={primaryColor ? { backgroundColor: `hsl(${primaryColor})` } : undefined}>
+              <div
+                className="overflow-hidden rounded-md border bg-primary"
+                style={primaryColor ? { backgroundColor: `hsl(${primaryColor})` } : undefined}
+              >
                 <div
                   className="w-full"
                   style={{ minHeight: '400px' }}
@@ -339,10 +455,10 @@ function AuthBrandingCard({
               <CodeMirror
                 value={local.custom_html}
                 extensions={[html()]}
-                onChange={(v) => setLocal(prev => ({ ...prev, custom_html: v }))}
+                onChange={(v) => setLocal((prev) => ({ ...prev, custom_html: v }))}
                 height="300px"
                 theme={cmTheme}
-                className="rounded-md border overflow-hidden"
+                className="overflow-hidden rounded-md border"
               />
             )}
           </div>
@@ -369,6 +485,12 @@ export default function SettingsPage() {
   const [showVirtualStockRemark, setShowVirtualStockRemark] = useState(false)
   const [invoiceTemplateType, setInvoiceTemplateType] = useState('builtin')
   const [invoiceCustomTemplate, setInvoiceCustomTemplate] = useState('')
+  const [pluginPlatformEnabled, setPluginPlatformEnabled] = useState(true)
+  const [pluginAllowedRuntimes, setPluginAllowedRuntimes] = useState<string[]>(['grpc'])
+  const [pluginAllowedTypesText, setPluginAllowedTypesText] = useState('')
+  const [pluginDefaultRuntime, setPluginDefaultRuntime] = useState('grpc')
+  const [pluginSandboxLevel, setPluginSandboxLevel] = useState('balanced')
+  const [pluginWorkerArgsText, setPluginWorkerArgsText] = useState('')
   const queryClient = useQueryClient()
   const { resolvedTheme } = useTheme()
   const toast = useToast()
@@ -386,16 +508,35 @@ export default function SettingsPage() {
     onSuccess: (res: any) => {
       const maintenanceMessages: string[] = []
       if (typeof res?.data?.payment_card_cache_cleared === 'number') {
-        maintenanceMessages.push(`${t.admin.paymentCacheCleared}: ${res.data.payment_card_cache_cleared}`)
+        maintenanceMessages.push(
+          `${t.admin.paymentCacheCleared}: ${res.data.payment_card_cache_cleared}`
+        )
       }
       if (typeof res?.data?.js_program_cache_cleared === 'number') {
-        maintenanceMessages.push(`${t.admin.jsProgramCacheCleared}: ${res.data.js_program_cache_cleared}`)
+        maintenanceMessages.push(
+          `${t.admin.jsProgramCacheCleared}: ${res.data.js_program_cache_cleared}`
+        )
       }
       if (typeof res?.data?.permission_cache_cleared === 'number') {
-        maintenanceMessages.push(`${t.admin.permissionCacheCleared}: ${res.data.permission_cache_cleared}`)
+        maintenanceMessages.push(
+          `${t.admin.permissionCacheCleared}: ${res.data.permission_cache_cleared}`
+        )
       }
       if (typeof res?.data?.runtime_redis_cache_cleared === 'number') {
-        maintenanceMessages.push(`${t.admin.runtimeRedisCacheCleared}: ${res.data.runtime_redis_cache_cleared}`)
+        maintenanceMessages.push(
+          `${t.admin.runtimeRedisCacheCleared}: ${res.data.runtime_redis_cache_cleared}`
+        )
+      }
+      if (typeof res?.data?.unreferenced_files_deleted === 'number') {
+        maintenanceMessages.push(
+          t.admin.unreferencedFilesCleared
+            .replace('{files}', String(res.data.unreferenced_files_deleted))
+            .replace('{dirs}', String(res?.data?.unreferenced_dirs_deleted ?? 0))
+            .replace('{size}', formatBytes(res?.data?.unreferenced_bytes_deleted ?? 0))
+        )
+      }
+      if (res?.data?.js_worker_restarted === true) {
+        maintenanceMessages.push(t.admin.jsWorkerRestarted)
       }
 
       if (maintenanceMessages.length > 0) {
@@ -413,7 +554,7 @@ export default function SettingsPage() {
       } catch {}
     },
     onError: (error: any) => {
-      toast.error(error.message || t.admin.saveFailed)
+      toast.error(resolveApiErrorMessage(error, t, t.admin.saveFailed))
     },
   })
 
@@ -423,7 +564,7 @@ export default function SettingsPage() {
       toast.success(t.admin.testEmailSent)
     },
     onError: (error: any) => {
-      toast.error(error.message || t.admin.testFailed)
+      toast.error(resolveApiErrorMessage(error, t, t.admin.testFailed))
     },
   })
 
@@ -433,7 +574,7 @@ export default function SettingsPage() {
       toast.success(t.admin.testSmsSent)
     },
     onError: (error: any) => {
-      toast.error(error.message || t.admin.testFailed)
+      toast.error(resolveApiErrorMessage(error, t, t.admin.testFailed))
     },
   })
 
@@ -441,6 +582,7 @@ export default function SettingsPage() {
   const [selectedTemplate, setSelectedTemplate] = useState('')
   const [templateContent, setTemplateContent] = useState('')
   const [templatePreview, setTemplatePreview] = useState(false)
+  const emailTemplatePackageInputRef = useRef<HTMLInputElement>(null)
 
   const { data: emailTemplatesData } = useQuery({
     queryKey: ['emailTemplates'],
@@ -455,7 +597,7 @@ export default function SettingsPage() {
   })
 
   useEffect(() => {
-    if (templateData?.data?.content) {
+    if (templateData?.data && typeof templateData.data.content === 'string') {
       setTemplateContent(templateData.data.content)
     }
   }, [templateData])
@@ -468,13 +610,58 @@ export default function SettingsPage() {
       queryClient.invalidateQueries({ queryKey: ['emailTemplate', selectedTemplate] })
     },
     onError: (error: any) => {
-      toast.error(error.message || t.admin.saveFailed)
+      toast.error(resolveApiErrorMessage(error, t, t.admin.saveFailed))
     },
   })
 
   // 落地页编辑
   const [landingHtml, setLandingHtml] = useState('')
   const [landingPreview, setLandingPreview] = useState(false)
+  const [landingResetDialogOpen, setLandingResetDialogOpen] = useState(false)
+  const invoiceTemplatePackageInputRef = useRef<HTMLInputElement>(null)
+  const authBrandingTemplatePackageInputRef = useRef<HTMLInputElement>(null)
+  const landingTemplatePackageInputRef = useRef<HTMLInputElement>(null)
+  const pageRulesTemplatePackageInputRef = useRef<HTMLInputElement>(null)
+  const [templatePackageImportKind, setTemplatePackageImportKind] = useState<
+    | 'email_template'
+    | 'landing_page_template'
+    | 'invoice_template'
+    | 'auth_branding_template'
+    | 'page_rule_pack'
+    | null
+  >(null)
+  const selectedTemplateMarketName = selectedTemplate.replace(/\.html$/i, '')
+  const adminBootstrapQuery = usePluginBootstrapQuery({
+    scope: 'admin',
+    path: '/admin',
+    staleTime: 5 * 60 * 1000,
+  })
+  const marketPluginBasePath = findAdminMarketPluginBasePath(adminBootstrapQuery.data)
+  const emailTemplateMarketHref = buildAdminMarketPluginPageHref(marketPluginBasePath, {
+    kind: 'email_template',
+    name: selectedTemplate ? selectedTemplateMarketName : undefined,
+    email_key: selectedTemplate ? selectedTemplateMarketName : undefined,
+  })
+  const landingPageMarketHref = buildAdminMarketPluginPageHref(marketPluginBasePath, {
+    kind: 'landing_page_template',
+    name: 'home',
+    landing_slug: 'home',
+  })
+  const invoiceTemplateMarketHref = buildAdminMarketPluginPageHref(marketPluginBasePath, {
+    kind: 'invoice_template',
+    name: 'invoice',
+    target_key: 'invoice',
+  })
+  const authBrandingMarketHref = buildAdminMarketPluginPageHref(marketPluginBasePath, {
+    kind: 'auth_branding_template',
+    name: 'auth_branding',
+    target_key: 'auth_branding',
+  })
+  const pageRulesMarketHref = buildAdminMarketPluginPageHref(marketPluginBasePath, {
+    kind: 'page_rule_pack',
+    name: 'page_rules',
+    target_key: 'page_rules',
+  })
 
   const { data: landingPageData } = useQuery({
     queryKey: ['landingPage'],
@@ -483,7 +670,7 @@ export default function SettingsPage() {
   })
 
   useEffect(() => {
-    if (landingPageData?.data?.html_content) {
+    if (landingPageData?.data && typeof landingPageData.data.html_content === 'string') {
       setLandingHtml(landingPageData.data.html_content)
     }
   }, [landingPageData])
@@ -495,7 +682,7 @@ export default function SettingsPage() {
       queryClient.invalidateQueries({ queryKey: ['landingPage'] })
     },
     onError: (error: any) => {
-      toast.error(error.message || t.admin.landingPageSaveFailed)
+      toast.error(resolveApiErrorMessage(error, t, t.admin.landingPageSaveFailed))
     },
   })
 
@@ -503,13 +690,97 @@ export default function SettingsPage() {
     mutationFn: () => resetLandingPage(),
     onSuccess: (res: any) => {
       toast.success(t.admin.landingPageResetSuccess)
+      setLandingResetDialogOpen(false)
       if (res?.data?.html_content) {
         setLandingHtml(res.data.html_content)
       }
       queryClient.invalidateQueries({ queryKey: ['landingPage'] })
     },
     onError: (error: any) => {
-      toast.error(error.message || t.admin.landingPageResetFailed)
+      toast.error(resolveApiErrorMessage(error, t, t.admin.landingPageResetFailed))
+    },
+  })
+
+  const importTemplatePackageMutation = useMutation({
+    mutationFn: ({
+      file,
+      expectedKind,
+      targetKey,
+    }: {
+      file: File
+      expectedKind:
+        | 'email_template'
+        | 'landing_page_template'
+        | 'invoice_template'
+        | 'auth_branding_template'
+        | 'page_rule_pack'
+      targetKey?: string
+    }) => importAdminTemplatePackage(file, expectedKind, targetKey),
+    onSuccess: (res: any, variables) => {
+      const returnedKind = String(res?.data?.kind || '').trim()
+      const kind =
+        returnedKind === 'email_template' ||
+        returnedKind === 'landing_page_template' ||
+        returnedKind === 'invoice_template' ||
+        returnedKind === 'auth_branding_template' ||
+        returnedKind === 'page_rule_pack'
+          ? returnedKind
+          : variables.expectedKind
+      const targetKey = String(res?.data?.resolved?.target_key || '').trim()
+      queryClient.invalidateQueries({ queryKey: ['settings'] })
+
+      if (kind === 'email_template') {
+        queryClient.invalidateQueries({ queryKey: ['emailTemplates'] })
+        if (typeof res?.data?.saved?.filename === 'string' && res.data.saved.filename) {
+          setSelectedTemplate(res.data.saved.filename)
+          queryClient.invalidateQueries({ queryKey: ['emailTemplate', res.data.saved.filename] })
+        }
+        if (typeof res?.data?.saved?.content === 'string') {
+          setTemplateContent(res.data.saved.content)
+        }
+        setTemplatePreview(false)
+      } else if (kind === 'landing_page_template') {
+        queryClient.invalidateQueries({ queryKey: ['landingPage'] })
+        if (typeof res?.data?.saved?.html_content === 'string') {
+          setLandingHtml(res.data.saved.html_content)
+        }
+        setLandingPreview(false)
+      } else if (kind === 'invoice_template') {
+        if (typeof res?.data?.saved?.custom_template === 'string') {
+          setInvoiceCustomTemplate(res.data.saved.custom_template)
+        }
+        if (typeof res?.data?.saved?.template_type === 'string') {
+          setInvoiceTemplateType(res.data.saved.template_type)
+        } else {
+          setInvoiceTemplateType('custom')
+        }
+      } else if (kind === 'auth_branding_template') {
+        queryClient.invalidateQueries({ queryKey: ['publicConfig'] })
+      } else if (kind === 'page_rule_pack') {
+        if (Array.isArray(res?.data?.saved?.rules)) {
+          setPageRules(res.data.saved.rules)
+        } else if (Array.isArray(res?.data?.saved?.page_rules)) {
+          setPageRules(res.data.saved.page_rules)
+        }
+        queryClient.invalidateQueries({ queryKey: ['publicConfig'] })
+        try {
+          localStorage.removeItem('auralogic-page-inject')
+        } catch {}
+      }
+
+      const successMessage =
+        typeof res?.data?.message === 'string' && res.data.message.trim()
+          ? res.data.message
+          : targetKey
+            ? t.admin.templatePackageImportedTarget.replace('{target}', targetKey)
+            : t.admin.templatePackageImportSuccess
+      toast.success(successMessage)
+    },
+    onError: (error: any) => {
+      toast.error(resolveApiErrorMessage(error, t, t.admin.templatePackageImportFailed))
+    },
+    onSettled: () => {
+      setTemplatePackageImportKind(null)
     },
   })
 
@@ -531,6 +802,27 @@ export default function SettingsPage() {
   }
 
   const settingsData = settings?.data
+  const adminSettingsPluginContext = {
+    view: 'admin_settings',
+    active_tab: activeTab,
+    summary: {
+      default_theme: defaultTheme,
+      smtp_enabled: Boolean(settingsData?.smtp?.enabled),
+      sms_enabled: Boolean(settingsData?.sms?.enabled),
+      ticket_enabled: Boolean(settingsData?.ticket?.enabled),
+      analytics_enabled: Boolean(settingsData?.analytics?.enabled),
+      invoice_enabled: invoiceEnabled,
+      plugin_platform_enabled: pluginPlatformEnabled,
+      page_rule_count: pageRules.length,
+    },
+    market: {
+      email_template_available: Boolean(emailTemplateMarketHref),
+      landing_page_available: Boolean(landingPageMarketHref),
+      invoice_template_available: Boolean(invoiceTemplateMarketHref),
+      auth_branding_available: Boolean(authBrandingMarketHref),
+      page_rule_pack_available: Boolean(pageRulesMarketHref),
+    },
+  }
 
   // 当设置数据加载后，初始化默认主题和个性化配置
   useEffect(() => {
@@ -560,6 +852,27 @@ export default function SettingsPage() {
     if (settingsData?.order) {
       setShowVirtualStockRemark(!!settingsData.order.show_virtual_stock_remark)
     }
+    if (settingsData?.plugin) {
+      const allowedRuntimes =
+        Array.isArray(settingsData.plugin.allowed_runtimes) &&
+        settingsData.plugin.allowed_runtimes.length > 0
+          ? settingsData.plugin.allowed_runtimes
+          : ['grpc']
+      setPluginPlatformEnabled(settingsData.plugin.enabled ?? true)
+      setPluginAllowedRuntimes(allowedRuntimes)
+      setPluginAllowedTypesText(
+        Array.isArray(settingsData.plugin.allowed_types)
+          ? settingsData.plugin.allowed_types.join('\n')
+          : ''
+      )
+      setPluginDefaultRuntime(settingsData.plugin.default_runtime || allowedRuntimes[0] || 'grpc')
+      setPluginSandboxLevel(settingsData.plugin?.sandbox?.level || 'balanced')
+      setPluginWorkerArgsText(
+        Array.isArray(settingsData.plugin?.sandbox?.js_worker_args)
+          ? settingsData.plugin.sandbox.js_worker_args.join('\n')
+          : ''
+      )
+    }
   }, [settingsData])
 
   // 处理表单提交
@@ -570,7 +883,7 @@ export default function SettingsPage() {
   }
 
   const handlePageRuleUpdate = useCallback((index: number, updated: PageRule) => {
-    setPageRules(prev => {
+    setPageRules((prev) => {
       const next = [...prev]
       next[index] = updated
       return next
@@ -578,27 +891,53 @@ export default function SettingsPage() {
   }, [])
 
   const handlePageRuleDelete = useCallback((index: number) => {
-    setPageRules(prev => prev.filter((_, i) => i !== index))
+    setPageRules((prev) => prev.filter((_, i) => i !== index))
   }, [])
+
+  const togglePluginRuntime = useCallback(
+    (runtime: string, enabled: boolean) => {
+      setPluginAllowedRuntimes((prev) => {
+        let next = prev
+        if (enabled) {
+          if (!prev.includes(runtime)) {
+            next = [...prev, runtime]
+          }
+        } else {
+          next = prev.filter((item) => item !== runtime)
+        }
+
+        if (next.length === 0) {
+          next = ['grpc']
+        }
+
+        if (!next.includes(pluginDefaultRuntime)) {
+          setPluginDefaultRuntime(next[0] || 'grpc')
+        }
+        return next
+      })
+    },
+    [pluginDefaultRuntime]
+  )
 
   if (isLoading) {
     return (
       <div className="space-y-6">
         <h1 className="text-3xl font-bold">{t.admin.systemSettings}</h1>
-        <div className="text-center py-8">{t.common.loading}</div>
+        <div className="py-8 text-center">{t.common.loading}</div>
       </div>
     )
   }
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <PluginSlot slot="admin.settings.top" context={adminSettingsPluginContext} />
+      <div>
         <h1 className="text-3xl font-bold">{t.admin.systemSettings}</h1>
-        <Badge variant="secondary">{t.admin.superAdminBadge}</Badge>
+        <p className="mt-1 text-sm text-muted-foreground">{t.admin.superAdminBadge}</p>
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="inline-flex overflow-x-auto h-auto flex-wrap gap-1 p-1">
+        <TabsList className="inline-flex h-auto flex-wrap gap-1 overflow-x-auto p-1">
           <TabsTrigger value="general" className="gap-1.5 px-3">
             <Settings className="h-4 w-4 shrink-0" />
             {t.admin.tabGeneral}
@@ -623,6 +962,10 @@ export default function SettingsPage() {
             <Package className="h-4 w-4 shrink-0" />
             {t.admin.tabOrder}
           </TabsTrigger>
+          <TabsTrigger value="plugins" className="gap-1.5 px-3">
+            <Cloud className="h-4 w-4 shrink-0" />
+            {t.admin.tabPlugins}
+          </TabsTrigger>
           <TabsTrigger value="ticket" className="gap-1.5 px-3">
             <MessageSquare className="h-4 w-4 shrink-0" />
             {t.admin.tabTicket}
@@ -643,7 +986,7 @@ export default function SettingsPage() {
             <Palette className="h-4 w-4 shrink-0" />
             {t.admin.tabPersonalization}
           </TabsTrigger>
-<TabsTrigger value="advanced" className="gap-1.5 px-3">
+          <TabsTrigger value="advanced" className="gap-1.5 px-3">
             <Database className="h-4 w-4 shrink-0" />
             {t.admin.tabAdvanced}
           </TabsTrigger>
@@ -689,9 +1032,7 @@ export default function SettingsPage() {
                     placeholder="http://localhost:3000"
                     className="mt-1.5"
                   />
-                  <p className="text-xs text-muted-foreground mt-1">
-                    {t.admin.appUrlHint}
-                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">{t.admin.appUrlHint}</p>
                 </div>
 
                 <div>
@@ -721,23 +1062,15 @@ export default function SettingsPage() {
                       </SelectItem>
                     </SelectContent>
                   </Select>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    {t.admin.defaultThemeHint}
-                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">{t.admin.defaultThemeHint}</p>
                 </div>
 
                 <div className="flex items-center justify-between">
                   <div>
                     <Label htmlFor="debug">{t.admin.debugMode}</Label>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      {t.admin.debugModeHint}
-                    </p>
+                    <p className="mt-1 text-xs text-muted-foreground">{t.admin.debugModeHint}</p>
                   </div>
-                  <Switch
-                    id="debug"
-                    name="debug"
-                    defaultChecked={settingsData?.app?.debug}
-                  />
+                  <Switch id="debug" name="debug" defaultChecked={settingsData?.app?.debug} />
                 </div>
 
                 <Button type="submit" disabled={updateMutation.isPending}>
@@ -747,6 +1080,10 @@ export default function SettingsPage() {
               </form>
             </CardContent>
           </Card>
+          <PluginSlot
+            slot="admin.settings.sections.after_basic"
+            context={{ ...adminSettingsPluginContext, section: 'general_basic' }}
+          />
         </TabsContent>
 
         {/* SMTP设置 */}
@@ -777,9 +1114,7 @@ export default function SettingsPage() {
                 <div className="flex items-center justify-between">
                   <div>
                     <Label htmlFor="smtp_enabled">{t.admin.enableSmtp}</Label>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      {t.admin.enableSmtpHint}
-                    </p>
+                    <p className="mt-1 text-xs text-muted-foreground">{t.admin.enableSmtpHint}</p>
                   </div>
                   <Switch
                     id="smtp_enabled"
@@ -830,7 +1165,7 @@ export default function SettingsPage() {
                     placeholder={t.admin.passwordPlaceholder}
                     className="mt-1.5"
                   />
-                  <p className="text-xs text-muted-foreground mt-1">
+                  <p className="mt-1 text-xs text-muted-foreground">
                     {t.admin.passwordSecurityHint}
                   </p>
                 </div>
@@ -870,7 +1205,9 @@ export default function SettingsPage() {
                     onClick={(e) => {
                       const toEmail = prompt(t.admin.enterTestEmail)
                       if (!toEmail) return
-                      const formData = new FormData((e.currentTarget as HTMLElement).closest('form') as HTMLFormElement)
+                      const formData = new FormData(
+                        (e.currentTarget as HTMLElement).closest('form') as HTMLFormElement
+                      )
                       testSMTPMutation.mutate({
                         host: formData.get('host') as string,
                         port: parseInt(formData.get('port') as string),
@@ -898,16 +1235,20 @@ export default function SettingsPage() {
             <CardContent className="space-y-6">
               {/* 用户相关 */}
               <div>
-                <h4 className="text-sm font-medium mb-3">{t.admin.userSection}</h4>
+                <h4 className="mb-3 text-sm font-medium">{t.admin.userSection}</h4>
                 <div className="space-y-3">
                   <div className="flex items-center justify-between">
                     <div>
                       <Label>{t.admin.registrationWelcomeEmail}</Label>
-                      <p className="text-xs text-muted-foreground mt-0.5">{t.admin.registrationWelcomeEmailDesc}</p>
+                      <p className="mt-0.5 text-xs text-muted-foreground">
+                        {t.admin.registrationWelcomeEmailDesc}
+                      </p>
                     </div>
                     <Switch
                       checked={emailNotifications.user_register || false}
-                      onCheckedChange={(v) => setEmailNotifications(prev => ({ ...prev, user_register: v }))}
+                      onCheckedChange={(v) =>
+                        setEmailNotifications((prev) => ({ ...prev, user_register: v }))
+                      }
                     />
                   </div>
                 </div>
@@ -915,66 +1256,90 @@ export default function SettingsPage() {
 
               {/* 订单相关 */}
               <div>
-                <h4 className="text-sm font-medium mb-3">{t.admin.orderSection}</h4>
+                <h4 className="mb-3 text-sm font-medium">{t.admin.orderSection}</h4>
                 <div className="space-y-3">
                   <div className="flex items-center justify-between">
                     <div>
                       <Label>{t.admin.orderCreatedNotify}</Label>
-                      <p className="text-xs text-muted-foreground mt-0.5">{t.admin.orderCreatedNotifyDesc}</p>
+                      <p className="mt-0.5 text-xs text-muted-foreground">
+                        {t.admin.orderCreatedNotifyDesc}
+                      </p>
                     </div>
                     <Switch
                       checked={emailNotifications.order_created || false}
-                      onCheckedChange={(v) => setEmailNotifications(prev => ({ ...prev, order_created: v }))}
+                      onCheckedChange={(v) =>
+                        setEmailNotifications((prev) => ({ ...prev, order_created: v }))
+                      }
                     />
                   </div>
                   <div className="flex items-center justify-between">
                     <div>
                       <Label>{t.admin.paymentConfirmed}</Label>
-                      <p className="text-xs text-muted-foreground mt-0.5">{t.admin.paymentConfirmedDesc}</p>
+                      <p className="mt-0.5 text-xs text-muted-foreground">
+                        {t.admin.paymentConfirmedDesc}
+                      </p>
                     </div>
                     <Switch
                       checked={emailNotifications.order_paid || false}
-                      onCheckedChange={(v) => setEmailNotifications(prev => ({ ...prev, order_paid: v }))}
+                      onCheckedChange={(v) =>
+                        setEmailNotifications((prev) => ({ ...prev, order_paid: v }))
+                      }
                     />
                   </div>
                   <div className="flex items-center justify-between">
                     <div>
                       <Label>{t.admin.orderShipped}</Label>
-                      <p className="text-xs text-muted-foreground mt-0.5">{t.admin.orderShippedDesc}</p>
+                      <p className="mt-0.5 text-xs text-muted-foreground">
+                        {t.admin.orderShippedDesc}
+                      </p>
                     </div>
                     <Switch
                       checked={emailNotifications.order_shipped || false}
-                      onCheckedChange={(v) => setEmailNotifications(prev => ({ ...prev, order_shipped: v }))}
+                      onCheckedChange={(v) =>
+                        setEmailNotifications((prev) => ({ ...prev, order_shipped: v }))
+                      }
                     />
                   </div>
                   <div className="flex items-center justify-between">
                     <div>
                       <Label>{t.admin.orderCompleted}</Label>
-                      <p className="text-xs text-muted-foreground mt-0.5">{t.admin.orderCompletedDesc}</p>
+                      <p className="mt-0.5 text-xs text-muted-foreground">
+                        {t.admin.orderCompletedDesc}
+                      </p>
                     </div>
                     <Switch
                       checked={emailNotifications.order_completed || false}
-                      onCheckedChange={(v) => setEmailNotifications(prev => ({ ...prev, order_completed: v }))}
+                      onCheckedChange={(v) =>
+                        setEmailNotifications((prev) => ({ ...prev, order_completed: v }))
+                      }
                     />
                   </div>
                   <div className="flex items-center justify-between">
                     <div>
                       <Label>{t.admin.orderCancelled}</Label>
-                      <p className="text-xs text-muted-foreground mt-0.5">{t.admin.orderCancelledDesc}</p>
+                      <p className="mt-0.5 text-xs text-muted-foreground">
+                        {t.admin.orderCancelledDesc}
+                      </p>
                     </div>
                     <Switch
                       checked={emailNotifications.order_cancelled || false}
-                      onCheckedChange={(v) => setEmailNotifications(prev => ({ ...prev, order_cancelled: v }))}
+                      onCheckedChange={(v) =>
+                        setEmailNotifications((prev) => ({ ...prev, order_cancelled: v }))
+                      }
                     />
                   </div>
                   <div className="flex items-center justify-between">
                     <div>
                       <Label>{t.admin.resubmitRequired}</Label>
-                      <p className="text-xs text-muted-foreground mt-0.5">{t.admin.resubmitRequiredDesc}</p>
+                      <p className="mt-0.5 text-xs text-muted-foreground">
+                        {t.admin.resubmitRequiredDesc}
+                      </p>
                     </div>
                     <Switch
                       checked={emailNotifications.order_resubmit || false}
-                      onCheckedChange={(v) => setEmailNotifications(prev => ({ ...prev, order_resubmit: v }))}
+                      onCheckedChange={(v) =>
+                        setEmailNotifications((prev) => ({ ...prev, order_resubmit: v }))
+                      }
                     />
                   </div>
                 </div>
@@ -982,46 +1347,62 @@ export default function SettingsPage() {
 
               {/* 工单相关 */}
               <div>
-                <h4 className="text-sm font-medium mb-3">{t.admin.ticketSection}</h4>
+                <h4 className="mb-3 text-sm font-medium">{t.admin.ticketSection}</h4>
                 <div className="space-y-3">
                   <div className="flex items-center justify-between">
                     <div>
                       <Label>{t.admin.ticketCreatedNotify}</Label>
-                      <p className="text-xs text-muted-foreground mt-0.5">{t.admin.ticketCreatedNotifyDesc}</p>
+                      <p className="mt-0.5 text-xs text-muted-foreground">
+                        {t.admin.ticketCreatedNotifyDesc}
+                      </p>
                     </div>
                     <Switch
                       checked={emailNotifications.ticket_created || false}
-                      onCheckedChange={(v) => setEmailNotifications(prev => ({ ...prev, ticket_created: v }))}
+                      onCheckedChange={(v) =>
+                        setEmailNotifications((prev) => ({ ...prev, ticket_created: v }))
+                      }
                     />
                   </div>
                   <div className="flex items-center justify-between">
                     <div>
                       <Label>{t.admin.adminReply}</Label>
-                      <p className="text-xs text-muted-foreground mt-0.5">{t.admin.adminReplyDesc}</p>
+                      <p className="mt-0.5 text-xs text-muted-foreground">
+                        {t.admin.adminReplyDesc}
+                      </p>
                     </div>
                     <Switch
                       checked={emailNotifications.ticket_admin_reply || false}
-                      onCheckedChange={(v) => setEmailNotifications(prev => ({ ...prev, ticket_admin_reply: v }))}
+                      onCheckedChange={(v) =>
+                        setEmailNotifications((prev) => ({ ...prev, ticket_admin_reply: v }))
+                      }
                     />
                   </div>
                   <div className="flex items-center justify-between">
                     <div>
                       <Label>{t.admin.userReply}</Label>
-                      <p className="text-xs text-muted-foreground mt-0.5">{t.admin.userReplyDesc}</p>
+                      <p className="mt-0.5 text-xs text-muted-foreground">
+                        {t.admin.userReplyDesc}
+                      </p>
                     </div>
                     <Switch
                       checked={emailNotifications.ticket_user_reply || false}
-                      onCheckedChange={(v) => setEmailNotifications(prev => ({ ...prev, ticket_user_reply: v }))}
+                      onCheckedChange={(v) =>
+                        setEmailNotifications((prev) => ({ ...prev, ticket_user_reply: v }))
+                      }
                     />
                   </div>
                   <div className="flex items-center justify-between">
                     <div>
                       <Label>{t.admin.ticketResolved}</Label>
-                      <p className="text-xs text-muted-foreground mt-0.5">{t.admin.ticketResolvedDesc}</p>
+                      <p className="mt-0.5 text-xs text-muted-foreground">
+                        {t.admin.ticketResolvedDesc}
+                      </p>
                     </div>
                     <Switch
                       checked={emailNotifications.ticket_resolved || false}
-                      onCheckedChange={(v) => setEmailNotifications(prev => ({ ...prev, ticket_resolved: v }))}
+                      onCheckedChange={(v) =>
+                        setEmailNotifications((prev) => ({ ...prev, ticket_resolved: v }))
+                      }
                     />
                   </div>
                 </div>
@@ -1032,9 +1413,7 @@ export default function SettingsPage() {
                 disabled={updateMutation.isPending}
               >
                 <Save className="mr-2 h-4 w-4" />
-                {updateMutation.isPending
-                  ? t.admin.saving
-                  : t.admin.saveNotificationSettings}
+                {updateMutation.isPending ? t.admin.saving : t.admin.saveNotificationSettings}
               </Button>
             </CardContent>
           </Card>
@@ -1049,7 +1428,13 @@ export default function SettingsPage() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <Label>{t.admin.selectTemplate}</Label>
-                  <Select value={selectedTemplate} onValueChange={(v) => { setSelectedTemplate(v); setTemplatePreview(false) }}>
+                  <Select
+                    value={selectedTemplate}
+                    onValueChange={(v) => {
+                      setSelectedTemplate(v)
+                      setTemplatePreview(false)
+                    }}
+                  >
                     <SelectTrigger className="mt-1.5">
                       <SelectValue placeholder={t.admin.chooseTemplate} />
                     </SelectTrigger>
@@ -1057,13 +1442,56 @@ export default function SettingsPage() {
                       {(emailTemplatesData?.data || []).map((tmpl: any) => (
                         <SelectItem key={tmpl.filename} value={tmpl.filename}>
                           {templateEventLabels[tmpl.event] || tmpl.event}
-                          {tmpl.locale ? ` (${tmpl.locale === 'zh' ? t.admin.chinese : t.admin.english})` : ''}
+                          {tmpl.locale
+                            ? ` (${tmpl.locale === 'zh' ? t.admin.chinese : t.admin.english})`
+                            : ''}
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
                 </div>
               </div>
+              <div className="flex flex-wrap gap-2">
+                {emailTemplateMarketHref ? (
+                  <Button variant="outline" asChild>
+                    <Link href={emailTemplateMarketHref}>{t.admin.pluginImportFromMarket}</Link>
+                  </Button>
+                ) : (
+                  <Button variant="outline" disabled title={t.admin.pluginMarketUnavailableHint}>
+                    {t.admin.pluginImportFromMarket}
+                  </Button>
+                )}
+                <Button
+                  variant="outline"
+                  onClick={() => emailTemplatePackageInputRef.current?.click()}
+                  disabled={importTemplatePackageMutation.isPending}
+                >
+                  <FileUp className="mr-2 h-4 w-4" />
+                  {importTemplatePackageMutation.isPending &&
+                  templatePackageImportKind === 'email_template'
+                    ? t.admin.templatePackageImporting
+                    : t.admin.templatePackageImport}
+                </Button>
+                <input
+                  ref={emailTemplatePackageInputRef}
+                  type="file"
+                  accept=".zip,application/zip"
+                  className="hidden"
+                  onChange={(event) => {
+                    const file = event.target.files?.[0]
+                    event.currentTarget.value = ''
+                    if (!file) {
+                      return
+                    }
+                    setTemplatePackageImportKind('email_template')
+                    importTemplatePackageMutation.mutate({
+                      file,
+                      expectedKind: 'email_template',
+                    })
+                  }}
+                />
+              </div>
+              <p className="text-xs text-muted-foreground">{t.admin.templatePackageImportHint}</p>
 
               {selectedTemplate && (
                 <>
@@ -1087,14 +1515,14 @@ export default function SettingsPage() {
                   </div>
 
                   {isTemplateFetching ? (
-                    <div className="text-center py-8 text-muted-foreground">
-                      {t.common.loading}
-                    </div>
+                    <div className="py-8 text-center text-muted-foreground">{t.common.loading}</div>
                   ) : (
                     <TemplateEditor
                       content={templateContent}
                       onChange={setTemplateContent}
-                      onSave={(content) => saveTemplateMutation.mutate({ filename: selectedTemplate, content })}
+                      onSave={(content) =>
+                        saveTemplateMutation.mutate({ filename: selectedTemplate, content })
+                      }
                       isSaving={saveTemplateMutation.isPending}
                       isPreview={templatePreview}
                       t={t}
@@ -1154,15 +1582,21 @@ export default function SettingsPage() {
                 <div className="flex items-center justify-between">
                   <div>
                     <Label htmlFor="sms_enabled">{t.admin.enableSms}</Label>
-                    <p className="text-xs text-muted-foreground mt-1">{t.admin.enableSmsHint}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">{t.admin.enableSmsHint}</p>
                   </div>
-                  <Switch id="sms_enabled" name="sms_enabled" defaultChecked={settingsData?.sms?.enabled} />
+                  <Switch
+                    id="sms_enabled"
+                    name="sms_enabled"
+                    defaultChecked={settingsData?.sms?.enabled}
+                  />
                 </div>
 
                 <div>
                   <Label>{t.admin.smsProvider}</Label>
                   <Select value={smsProvider} onValueChange={setSmsProvider}>
-                    <SelectTrigger className="mt-1.5"><SelectValue /></SelectTrigger>
+                    <SelectTrigger className="mt-1.5">
+                      <SelectValue />
+                    </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="aliyun">{t.admin.smsProviderAliyun}</SelectItem>
                       <SelectItem value="aliyun_dypns">{t.admin.smsProviderAliyunDypns}</SelectItem>
@@ -1173,51 +1607,95 @@ export default function SettingsPage() {
                 </div>
 
                 {(smsProvider === 'aliyun' || smsProvider === 'aliyun_dypns') && (
-                  <div className="space-y-3 border rounded-md p-4">
+                  <div className="space-y-3 rounded-md border p-4">
                     <div>
                       <Label>{t.admin.aliyunAccessKeyId}</Label>
-                      <Input name="aliyun_access_key_id" defaultValue={settingsData?.sms?.aliyun_access_key_id || ''} className="mt-1.5" />
+                      <Input
+                        name="aliyun_access_key_id"
+                        defaultValue={settingsData?.sms?.aliyun_access_key_id || ''}
+                        className="mt-1.5"
+                      />
                     </div>
                     <div>
                       <Label>{t.admin.aliyunAccessSecret}</Label>
-                      <Input name="aliyun_access_key_secret" type="password" placeholder={t.admin.passwordPlaceholder} className="mt-1.5" />
+                      <Input
+                        name="aliyun_access_key_secret"
+                        type="password"
+                        placeholder={t.admin.passwordPlaceholder}
+                        className="mt-1.5"
+                      />
                     </div>
                     <div>
                       <Label>{t.admin.aliyunSignName}</Label>
-                      <Input name="aliyun_sign_name" defaultValue={settingsData?.sms?.aliyun_sign_name || ''} className="mt-1.5" />
+                      <Input
+                        name="aliyun_sign_name"
+                        defaultValue={settingsData?.sms?.aliyun_sign_name || ''}
+                        className="mt-1.5"
+                      />
                     </div>
                     <div>
                       <Label>{t.admin.aliyunTemplateCode}</Label>
-                      <Input name="aliyun_template_code" defaultValue={settingsData?.sms?.aliyun_template_code || ''} className="mt-1.5" />
+                      <Input
+                        name="aliyun_template_code"
+                        defaultValue={settingsData?.sms?.aliyun_template_code || ''}
+                        className="mt-1.5"
+                      />
                     </div>
-                    <div className="border-t pt-3 space-y-3">
+                    <div className="space-y-3 border-t pt-3">
                       <p className="text-xs text-muted-foreground">{t.admin.smsTemplateHint}</p>
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                      <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
                         <div>
                           <Label>{t.admin.smsTemplateLogin}</Label>
-                          <Input name="template_login" defaultValue={settingsData?.sms?.templates?.login || ''} placeholder="SMS_001" className="mt-1.5" />
+                          <Input
+                            name="template_login"
+                            defaultValue={settingsData?.sms?.templates?.login || ''}
+                            placeholder="SMS_001"
+                            className="mt-1.5"
+                          />
                         </div>
                         <div>
                           <Label>{t.admin.smsTemplateRegister}</Label>
-                          <Input name="template_register" defaultValue={settingsData?.sms?.templates?.register || ''} placeholder="SMS_002" className="mt-1.5" />
+                          <Input
+                            name="template_register"
+                            defaultValue={settingsData?.sms?.templates?.register || ''}
+                            placeholder="SMS_002"
+                            className="mt-1.5"
+                          />
                         </div>
                         <div>
                           <Label>{t.admin.smsTemplateResetPassword}</Label>
-                          <Input name="template_reset_password" defaultValue={settingsData?.sms?.templates?.reset_password || ''} placeholder="SMS_003" className="mt-1.5" />
+                          <Input
+                            name="template_reset_password"
+                            defaultValue={settingsData?.sms?.templates?.reset_password || ''}
+                            placeholder="SMS_003"
+                            className="mt-1.5"
+                          />
                         </div>
                         <div>
                           <Label>{t.admin.smsTemplateBindPhone}</Label>
-                          <Input name="template_bind_phone" defaultValue={settingsData?.sms?.templates?.bind_phone || ''} placeholder="SMS_004" className="mt-1.5" />
+                          <Input
+                            name="template_bind_phone"
+                            defaultValue={settingsData?.sms?.templates?.bind_phone || ''}
+                            placeholder="SMS_004"
+                            className="mt-1.5"
+                          />
                         </div>
                       </div>
                     </div>
                     {smsProvider === 'aliyun_dypns' && (
-                      <div className="border-t pt-3 space-y-3">
+                      <div className="space-y-3 border-t pt-3">
                         <p className="text-xs text-muted-foreground">{t.admin.dypnsDesc}</p>
                         <div>
                           <Label>{t.admin.dypnsCodeLength}</Label>
-                          <Input name="dypns_code_length" type="number" defaultValue={settingsData?.sms?.dypns_code_length || 6} className="mt-1.5" />
-                          <p className="text-xs text-muted-foreground mt-1">{t.admin.dypnsCodeLengthHint}</p>
+                          <Input
+                            name="dypns_code_length"
+                            type="number"
+                            defaultValue={settingsData?.sms?.dypns_code_length || 6}
+                            className="mt-1.5"
+                          />
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            {t.admin.dypnsCodeLengthHint}
+                          </p>
                         </div>
                       </div>
                     )}
@@ -1225,44 +1703,76 @@ export default function SettingsPage() {
                 )}
 
                 {smsProvider === 'twilio' && (
-                  <div className="space-y-3 border rounded-md p-4">
+                  <div className="space-y-3 rounded-md border p-4">
                     <div>
                       <Label>{t.admin.twilioAccountSid}</Label>
-                      <Input name="twilio_account_sid" defaultValue={settingsData?.sms?.twilio_account_sid || ''} className="mt-1.5" />
+                      <Input
+                        name="twilio_account_sid"
+                        defaultValue={settingsData?.sms?.twilio_account_sid || ''}
+                        className="mt-1.5"
+                      />
                     </div>
                     <div>
                       <Label>{t.admin.twilioAuthToken}</Label>
-                      <Input name="twilio_auth_token" type="password" placeholder={t.admin.passwordPlaceholder} className="mt-1.5" />
+                      <Input
+                        name="twilio_auth_token"
+                        type="password"
+                        placeholder={t.admin.passwordPlaceholder}
+                        className="mt-1.5"
+                      />
                     </div>
                     <div>
                       <Label>{t.admin.twilioFromNumber}</Label>
-                      <Input name="twilio_from_number" defaultValue={settingsData?.sms?.twilio_from_number || ''} className="mt-1.5" />
+                      <Input
+                        name="twilio_from_number"
+                        defaultValue={settingsData?.sms?.twilio_from_number || ''}
+                        className="mt-1.5"
+                      />
                     </div>
                   </div>
                 )}
 
                 {smsProvider === 'custom' && (
-                  <div className="space-y-3 border rounded-md p-4">
+                  <div className="space-y-3 rounded-md border p-4">
                     <div>
                       <Label>{t.admin.customUrl}</Label>
-                      <Input name="custom_url" defaultValue={settingsData?.sms?.custom_url || ''} className="mt-1.5" />
+                      <Input
+                        name="custom_url"
+                        defaultValue={settingsData?.sms?.custom_url || ''}
+                        className="mt-1.5"
+                      />
                     </div>
                     <div>
                       <Label>{t.admin.customMethod}</Label>
-                      <Input name="custom_method" defaultValue={settingsData?.sms?.custom_method || 'POST'} className="mt-1.5" />
+                      <Input
+                        name="custom_method"
+                        defaultValue={settingsData?.sms?.custom_method || 'POST'}
+                        className="mt-1.5"
+                      />
                     </div>
                     <div>
                       <Label>{t.admin.customHeaders}</Label>
-                      <Input name="custom_headers" defaultValue={settingsData?.sms?.custom_headers ? JSON.stringify(settingsData.sms.custom_headers) : ''} placeholder='{"Content-Type":"application/json"}' className="mt-1.5" />
+                      <Input
+                        name="custom_headers"
+                        defaultValue={
+                          settingsData?.sms?.custom_headers
+                            ? JSON.stringify(settingsData.sms.custom_headers)
+                            : ''
+                        }
+                        placeholder='{"Content-Type":"application/json"}'
+                        className="mt-1.5"
+                      />
                     </div>
                     <div>
                       <Label>{t.admin.customBodyTemplate}</Label>
                       <textarea
                         name="custom_body_template"
                         defaultValue={settingsData?.sms?.custom_body_template || ''}
-                        className="mt-1.5 w-full min-h-[80px] rounded-md border border-input bg-background px-3 py-2 text-sm"
+                        className="mt-1.5 min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                       />
-                      <p className="text-xs text-muted-foreground mt-1">{t.admin.customBodyTemplateHint}</p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {t.admin.customBodyTemplateHint}
+                      </p>
                     </div>
                   </div>
                 )}
@@ -1310,97 +1820,166 @@ export default function SettingsPage() {
                       login: {
                         allow_password_login: formData.get('allow_password_login') === 'on',
                         allow_registration: formData.get('allow_registration') === 'on',
-                        allow_guest_product_browse: formData.get('allow_guest_product_browse') === 'on',
-                        require_email_verification: formData.get('require_email_verification') === 'on',
+                        allow_guest_product_browse:
+                          formData.get('allow_guest_product_browse') === 'on',
+                        require_email_verification:
+                          formData.get('require_email_verification') === 'on',
                         allow_email_login: formData.get('allow_email_login') === 'on',
                         allow_password_reset: formData.get('allow_password_reset') === 'on',
                         allow_phone_login: formData.get('allow_phone_login') === 'on',
                         allow_phone_register: formData.get('allow_phone_register') === 'on',
-                        allow_phone_password_reset: formData.get('allow_phone_password_reset') === 'on',
+                        allow_phone_password_reset:
+                          formData.get('allow_phone_password_reset') === 'on',
                       },
                     })
                   }}
                   className="space-y-4"
                 >
                   {/* Password & Registration */}
-                  <div className="text-sm font-medium text-muted-foreground border-b pb-1">{t.admin.loginCategoryPassword}</div>
+                  <div className="border-b pb-1 text-sm font-medium text-muted-foreground">
+                    {t.admin.loginCategoryPassword}
+                  </div>
 
                   <div className="flex items-center justify-between">
                     <div>
                       <Label htmlFor="allow_password_login">{t.admin.allowPasswordLogin}</Label>
-                      <p className="text-xs text-muted-foreground mt-1">{t.admin.allowPasswordLoginHint}</p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {t.admin.allowPasswordLoginHint}
+                      </p>
                     </div>
-                    <Switch id="allow_password_login" name="allow_password_login" defaultChecked={settingsData?.security?.login?.allow_password_login} />
+                    <Switch
+                      id="allow_password_login"
+                      name="allow_password_login"
+                      defaultChecked={settingsData?.security?.login?.allow_password_login}
+                    />
                   </div>
 
                   <div className="flex items-center justify-between">
                     <div>
                       <Label htmlFor="allow_registration">{t.admin.allowRegistration}</Label>
-                      <p className="text-xs text-muted-foreground mt-1">{t.admin.allowRegistrationHint}</p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {t.admin.allowRegistrationHint}
+                      </p>
                     </div>
-                    <Switch id="allow_registration" name="allow_registration" defaultChecked={settingsData?.security?.login?.allow_registration} />
+                    <Switch
+                      id="allow_registration"
+                      name="allow_registration"
+                      defaultChecked={settingsData?.security?.login?.allow_registration}
+                    />
                   </div>
 
                   <div className="flex items-center justify-between">
                     <div>
-                      <Label htmlFor="allow_guest_product_browse">{t.admin.allowGuestProductBrowse}</Label>
-                      <p className="text-xs text-muted-foreground mt-1">{t.admin.allowGuestProductBrowseHint}</p>
+                      <Label htmlFor="allow_guest_product_browse">
+                        {t.admin.allowGuestProductBrowse}
+                      </Label>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {t.admin.allowGuestProductBrowseHint}
+                      </p>
                     </div>
-                    <Switch id="allow_guest_product_browse" name="allow_guest_product_browse" defaultChecked={settingsData?.security?.login?.allow_guest_product_browse} />
+                    <Switch
+                      id="allow_guest_product_browse"
+                      name="allow_guest_product_browse"
+                      defaultChecked={settingsData?.security?.login?.allow_guest_product_browse}
+                    />
                   </div>
 
                   {/* Email Verification */}
-                  <div className="text-sm font-medium text-muted-foreground border-b pb-1 pt-2">{t.admin.loginCategoryEmail}</div>
+                  <div className="border-b pb-1 pt-2 text-sm font-medium text-muted-foreground">
+                    {t.admin.loginCategoryEmail}
+                  </div>
 
                   <div className="flex items-center justify-between">
                     <div>
-                      <Label htmlFor="require_email_verification">{t.admin.requireEmailVerification}</Label>
-                      <p className="text-xs text-muted-foreground mt-1">{t.admin.requireEmailVerificationHint}</p>
+                      <Label htmlFor="require_email_verification">
+                        {t.admin.requireEmailVerification}
+                      </Label>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {t.admin.requireEmailVerificationHint}
+                      </p>
                     </div>
-                    <Switch id="require_email_verification" name="require_email_verification" defaultChecked={settingsData?.security?.login?.require_email_verification} />
+                    <Switch
+                      id="require_email_verification"
+                      name="require_email_verification"
+                      defaultChecked={settingsData?.security?.login?.require_email_verification}
+                    />
                   </div>
 
                   <div className="flex items-center justify-between">
                     <div>
                       <Label htmlFor="allow_email_login">{t.admin.allowEmailLogin}</Label>
-                      <p className="text-xs text-muted-foreground mt-1">{t.admin.allowEmailLoginHint}</p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {t.admin.allowEmailLoginHint}
+                      </p>
                     </div>
-                    <Switch id="allow_email_login" name="allow_email_login" defaultChecked={settingsData?.security?.login?.allow_email_login} />
+                    <Switch
+                      id="allow_email_login"
+                      name="allow_email_login"
+                      defaultChecked={settingsData?.security?.login?.allow_email_login}
+                    />
                   </div>
 
                   <div className="flex items-center justify-between">
                     <div>
                       <Label htmlFor="allow_password_reset">{t.admin.allowPasswordReset}</Label>
-                      <p className="text-xs text-muted-foreground mt-1">{t.admin.allowPasswordResetHint}</p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {t.admin.allowPasswordResetHint}
+                      </p>
                     </div>
-                    <Switch id="allow_password_reset" name="allow_password_reset" defaultChecked={settingsData?.security?.login?.allow_password_reset} />
+                    <Switch
+                      id="allow_password_reset"
+                      name="allow_password_reset"
+                      defaultChecked={settingsData?.security?.login?.allow_password_reset}
+                    />
                   </div>
 
                   {/* Phone (SMS) */}
-                  <div className="text-sm font-medium text-muted-foreground border-b pb-1 pt-2">{t.admin.loginCategoryPhone}</div>
+                  <div className="border-b pb-1 pt-2 text-sm font-medium text-muted-foreground">
+                    {t.admin.loginCategoryPhone}
+                  </div>
 
                   <div className="flex items-center justify-between">
                     <div>
                       <Label htmlFor="allow_phone_login">{t.admin.allowPhoneLogin}</Label>
-                      <p className="text-xs text-muted-foreground mt-1">{t.admin.allowPhoneLoginHint}</p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {t.admin.allowPhoneLoginHint}
+                      </p>
                     </div>
-                    <Switch id="allow_phone_login" name="allow_phone_login" defaultChecked={settingsData?.security?.login?.allow_phone_login} />
+                    <Switch
+                      id="allow_phone_login"
+                      name="allow_phone_login"
+                      defaultChecked={settingsData?.security?.login?.allow_phone_login}
+                    />
                   </div>
 
                   <div className="flex items-center justify-between">
                     <div>
                       <Label htmlFor="allow_phone_register">{t.admin.allowPhoneRegister}</Label>
-                      <p className="text-xs text-muted-foreground mt-1">{t.admin.allowPhoneRegisterHint}</p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {t.admin.allowPhoneRegisterHint}
+                      </p>
                     </div>
-                    <Switch id="allow_phone_register" name="allow_phone_register" defaultChecked={settingsData?.security?.login?.allow_phone_register} />
+                    <Switch
+                      id="allow_phone_register"
+                      name="allow_phone_register"
+                      defaultChecked={settingsData?.security?.login?.allow_phone_register}
+                    />
                   </div>
 
                   <div className="flex items-center justify-between">
                     <div>
-                      <Label htmlFor="allow_phone_password_reset">{t.admin.allowPhonePasswordReset}</Label>
-                      <p className="text-xs text-muted-foreground mt-1">{t.admin.allowPhonePasswordResetHint}</p>
+                      <Label htmlFor="allow_phone_password_reset">
+                        {t.admin.allowPhonePasswordReset}
+                      </Label>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {t.admin.allowPhonePasswordResetHint}
+                      </p>
                     </div>
-                    <Switch id="allow_phone_password_reset" name="allow_phone_password_reset" defaultChecked={settingsData?.security?.login?.allow_phone_password_reset} />
+                    <Switch
+                      id="allow_phone_password_reset"
+                      name="allow_phone_password_reset"
+                      defaultChecked={settingsData?.security?.login?.allow_phone_password_reset}
+                    />
                   </div>
 
                   <Button type="submit" disabled={updateMutation.isPending}>
@@ -1494,15 +2073,15 @@ export default function SettingsPage() {
             </Card>
 
             {/* OAuth - Google */}
-            <Card>
+            <Card
+              className={pluginPlatformEnabled ? '' : 'border-dashed border-muted-foreground/40'}
+            >
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                   <Shield className="h-5 w-5" />
                   {t.admin.captchaSettings}
                 </CardTitle>
-                <CardDescription>
-                  {t.admin.captchaSettingsDesc}
-                </CardDescription>
+                <CardDescription>{t.admin.captchaSettingsDesc}</CardDescription>
               </CardHeader>
               <CardContent>
                 <form
@@ -1516,7 +2095,8 @@ export default function SettingsPage() {
                         secret_key: formData.get('captcha_secret_key') || '',
                         enable_for_login: formData.get('captcha_enable_login') === 'on',
                         enable_for_register: formData.get('captcha_enable_register') === 'on',
-                        enable_for_serial_verify: formData.get('captcha_enable_serial_verify') === 'on',
+                        enable_for_serial_verify:
+                          formData.get('captcha_enable_serial_verify') === 'on',
                         enable_for_bind: formData.get('captcha_enable_bind') === 'on',
                       },
                     })
@@ -1546,7 +2126,11 @@ export default function SettingsPage() {
                           id="captcha_site_key"
                           name="captcha_site_key"
                           defaultValue={settingsData?.security?.captcha?.site_key || ''}
-                          placeholder={captchaProvider === 'cloudflare' ? 'Turnstile Site Key' : 'reCAPTCHA Site Key'}
+                          placeholder={
+                            captchaProvider === 'cloudflare'
+                              ? 'Turnstile Site Key'
+                              : 'reCAPTCHA Site Key'
+                          }
                           className="mt-1.5"
                         />
                       </div>
@@ -1557,7 +2141,11 @@ export default function SettingsPage() {
                           name="captcha_secret_key"
                           type="password"
                           defaultValue={settingsData?.security?.captcha?.secret_key || ''}
-                          placeholder={captchaProvider === 'cloudflare' ? 'Turnstile Secret Key' : 'reCAPTCHA Secret Key'}
+                          placeholder={
+                            captchaProvider === 'cloudflare'
+                              ? 'Turnstile Secret Key'
+                              : 'reCAPTCHA Secret Key'
+                          }
                           className="mt-1.5"
                         />
                       </div>
@@ -1569,7 +2157,7 @@ export default function SettingsPage() {
                       <div className="flex items-center justify-between">
                         <div>
                           <Label htmlFor="captcha_enable_login">{t.admin.loginCaptcha}</Label>
-                          <p className="text-xs text-muted-foreground mt-1">
+                          <p className="mt-1 text-xs text-muted-foreground">
                             {t.admin.loginCaptchaHint}
                           </p>
                         </div>
@@ -1583,7 +2171,7 @@ export default function SettingsPage() {
                       <div className="flex items-center justify-between">
                         <div>
                           <Label htmlFor="captcha_enable_register">{t.admin.registerCaptcha}</Label>
-                          <p className="text-xs text-muted-foreground mt-1">
+                          <p className="mt-1 text-xs text-muted-foreground">
                             {t.admin.registerCaptchaHint}
                           </p>
                         </div>
@@ -1596,8 +2184,10 @@ export default function SettingsPage() {
 
                       <div className="flex items-center justify-between">
                         <div>
-                          <Label htmlFor="captcha_enable_serial_verify">{t.admin.serialVerifyCaptcha}</Label>
-                          <p className="text-xs text-muted-foreground mt-1">
+                          <Label htmlFor="captcha_enable_serial_verify">
+                            {t.admin.serialVerifyCaptcha}
+                          </Label>
+                          <p className="mt-1 text-xs text-muted-foreground">
                             {t.admin.serialVerifyCaptchaHint}
                           </p>
                         </div>
@@ -1611,7 +2201,7 @@ export default function SettingsPage() {
                       <div className="flex items-center justify-between">
                         <div>
                           <Label htmlFor="captcha_enable_bind">{t.admin.bindCaptcha}</Label>
-                          <p className="text-xs text-muted-foreground mt-1">
+                          <p className="mt-1 text-xs text-muted-foreground">
                             {t.admin.bindCaptchaHint}
                           </p>
                         </div>
@@ -1660,7 +2250,7 @@ export default function SettingsPage() {
                   <div className="flex items-center justify-between">
                     <div>
                       <Label htmlFor="google_enabled">{t.admin.enableGoogleLogin}</Label>
-                      <p className="text-xs text-muted-foreground mt-1">
+                      <p className="mt-1 text-xs text-muted-foreground">
                         {t.admin.enableGoogleLoginHint}
                       </p>
                     </div>
@@ -1738,7 +2328,7 @@ export default function SettingsPage() {
                   <div className="flex items-center justify-between">
                     <div>
                       <Label htmlFor="github_enabled">{t.admin.enableGithubLogin}</Label>
-                      <p className="text-xs text-muted-foreground mt-1">
+                      <p className="mt-1 text-xs text-muted-foreground">
                         {t.admin.enableGithubLoginHint}
                       </p>
                     </div>
@@ -1818,7 +2408,7 @@ export default function SettingsPage() {
                 <div className="flex items-center justify-between">
                   <div>
                     <Label htmlFor="rate_enabled">{t.admin.enableRateLimit}</Label>
-                    <p className="text-xs text-muted-foreground mt-1">
+                    <p className="mt-1 text-xs text-muted-foreground">
                       {t.admin.enableRateLimitHint}
                     </p>
                   </div>
@@ -1873,7 +2463,7 @@ export default function SettingsPage() {
                   />
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
                   <div>
                     <Label htmlFor="order_create_limit">{t.admin.orderCreateLimit}</Label>
                     <Input
@@ -1884,7 +2474,7 @@ export default function SettingsPage() {
                       defaultValue={settingsData?.rate_limit?.order_create || 30}
                       className="mt-1.5"
                     />
-                    <p className="text-xs text-muted-foreground mt-1">
+                    <p className="mt-1 text-xs text-muted-foreground">
                       {t.admin.orderCreateLimitHint}
                     </p>
                   </div>
@@ -1898,7 +2488,7 @@ export default function SettingsPage() {
                       defaultValue={settingsData?.rate_limit?.payment_info || 120}
                       className="mt-1.5"
                     />
-                    <p className="text-xs text-muted-foreground mt-1">
+                    <p className="mt-1 text-xs text-muted-foreground">
                       {t.admin.paymentInfoLimitHint}
                     </p>
                   </div>
@@ -1912,7 +2502,7 @@ export default function SettingsPage() {
                       defaultValue={settingsData?.rate_limit?.payment_select || 60}
                       className="mt-1.5"
                     />
-                    <p className="text-xs text-muted-foreground mt-1">
+                    <p className="mt-1 text-xs text-muted-foreground">
                       {t.admin.paymentSelectLimitHint}
                     </p>
                   </div>
@@ -1940,7 +2530,7 @@ export default function SettingsPage() {
                   handleSubmit('email_rate_limit', {
                     hourly: parseInt(formData.get('email_hourly') as string) || 0,
                     daily: parseInt(formData.get('email_daily') as string) || 0,
-                    exceed_action: formData.get('email_exceed_action') as string || 'cancel',
+                    exceed_action: (formData.get('email_exceed_action') as string) || 'cancel',
                   })
                 }}
                 className="space-y-4"
@@ -1948,17 +2538,34 @@ export default function SettingsPage() {
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <Label htmlFor="email_hourly">{t.admin.rateLimitHourly}</Label>
-                    <Input id="email_hourly" name="email_hourly" type="number" defaultValue={settingsData?.email_rate_limit?.hourly || 0} className="mt-1.5" />
+                    <Input
+                      id="email_hourly"
+                      name="email_hourly"
+                      type="number"
+                      defaultValue={settingsData?.email_rate_limit?.hourly || 0}
+                      className="mt-1.5"
+                    />
                   </div>
                   <div>
                     <Label htmlFor="email_daily">{t.admin.rateLimitDaily}</Label>
-                    <Input id="email_daily" name="email_daily" type="number" defaultValue={settingsData?.email_rate_limit?.daily || 0} className="mt-1.5" />
+                    <Input
+                      id="email_daily"
+                      name="email_daily"
+                      type="number"
+                      defaultValue={settingsData?.email_rate_limit?.daily || 0}
+                      className="mt-1.5"
+                    />
                   </div>
                 </div>
                 <div>
                   <Label htmlFor="email_exceed_action">{t.admin.rateLimitExceedAction}</Label>
-                  <Select name="email_exceed_action" defaultValue={settingsData?.email_rate_limit?.exceed_action || 'cancel'}>
-                    <SelectTrigger className="mt-1.5"><SelectValue /></SelectTrigger>
+                  <Select
+                    name="email_exceed_action"
+                    defaultValue={settingsData?.email_rate_limit?.exceed_action || 'cancel'}
+                  >
+                    <SelectTrigger className="mt-1.5">
+                      <SelectValue />
+                    </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="cancel">{t.admin.rateLimitExceedCancel}</SelectItem>
                       <SelectItem value="delay">{t.admin.rateLimitExceedDelay}</SelectItem>
@@ -1987,7 +2594,7 @@ export default function SettingsPage() {
                   handleSubmit('sms_rate_limit', {
                     hourly: parseInt(formData.get('sms_hourly') as string) || 0,
                     daily: parseInt(formData.get('sms_daily') as string) || 0,
-                    exceed_action: formData.get('sms_exceed_action') as string || 'cancel',
+                    exceed_action: (formData.get('sms_exceed_action') as string) || 'cancel',
                   })
                 }}
                 className="space-y-4"
@@ -1995,17 +2602,34 @@ export default function SettingsPage() {
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <Label htmlFor="sms_hourly">{t.admin.rateLimitHourly}</Label>
-                    <Input id="sms_hourly" name="sms_hourly" type="number" defaultValue={settingsData?.sms_rate_limit?.hourly || 0} className="mt-1.5" />
+                    <Input
+                      id="sms_hourly"
+                      name="sms_hourly"
+                      type="number"
+                      defaultValue={settingsData?.sms_rate_limit?.hourly || 0}
+                      className="mt-1.5"
+                    />
                   </div>
                   <div>
                     <Label htmlFor="sms_daily">{t.admin.rateLimitDaily}</Label>
-                    <Input id="sms_daily" name="sms_daily" type="number" defaultValue={settingsData?.sms_rate_limit?.daily || 0} className="mt-1.5" />
+                    <Input
+                      id="sms_daily"
+                      name="sms_daily"
+                      type="number"
+                      defaultValue={settingsData?.sms_rate_limit?.daily || 0}
+                      className="mt-1.5"
+                    />
                   </div>
                 </div>
                 <div>
                   <Label htmlFor="sms_exceed_action">{t.admin.rateLimitExceedAction}</Label>
-                  <Select name="sms_exceed_action" defaultValue={settingsData?.sms_rate_limit?.exceed_action || 'cancel'}>
-                    <SelectTrigger className="mt-1.5"><SelectValue /></SelectTrigger>
+                  <Select
+                    name="sms_exceed_action"
+                    defaultValue={settingsData?.sms_rate_limit?.exceed_action || 'cancel'}
+                  >
+                    <SelectTrigger className="mt-1.5">
+                      <SelectValue />
+                    </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="cancel">{t.admin.rateLimitExceedCancel}</SelectItem>
                       <SelectItem value="delay">{t.admin.rateLimitExceedDelay}</SelectItem>
@@ -2033,7 +2657,9 @@ export default function SettingsPage() {
                 onSubmit={(e) => {
                   e.preventDefault()
                   const formData = new FormData(e.currentTarget)
-                  const allowedTypes = (formData.get('allowed_types') as string).split(',').map(s => s.trim())
+                  const allowedTypes = (formData.get('allowed_types') as string)
+                    .split(',')
+                    .map((s) => s.trim())
                   handleSubmit('upload', {
                     dir: formData.get('dir'),
                     max_size: parseInt(formData.get('max_size') as string) * 1024 * 1024,
@@ -2068,13 +2694,14 @@ export default function SettingsPage() {
                   <Input
                     id="allowed_types"
                     name="allowed_types"
-                    defaultValue={settingsData?.upload?.allowed_types?.join(', ') || '.jpg, .jpeg, .png, .gif, .webp'}
+                    defaultValue={
+                      settingsData?.upload?.allowed_types?.join(', ') ||
+                      '.jpg, .jpeg, .png, .gif, .webp'
+                    }
                     placeholder=".jpg, .jpeg, .png"
                     className="mt-1.5"
                   />
-                  <p className="text-xs text-muted-foreground mt-1">
-                    {t.admin.separateWithComma}
-                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">{t.admin.separateWithComma}</p>
                 </div>
 
                 <Button type="submit" disabled={updateMutation.isPending}>
@@ -2110,10 +2737,7 @@ export default function SettingsPage() {
                 >
                   <div>
                     <Label htmlFor="log_level">{t.admin.logLevel}</Label>
-                    <Select
-                      name="log_level"
-                      defaultValue={settingsData?.log?.level || 'info'}
-                    >
+                    <Select name="log_level" defaultValue={settingsData?.log?.level || 'info'}>
                       <SelectTrigger id="log_level" className="mt-1.5">
                         <SelectValue />
                       </SelectTrigger>
@@ -2128,10 +2752,7 @@ export default function SettingsPage() {
 
                   <div>
                     <Label htmlFor="log_format">{t.admin.logFormat}</Label>
-                    <Select
-                      name="log_format"
-                      defaultValue={settingsData?.log?.format || 'json'}
-                    >
+                    <Select name="log_format" defaultValue={settingsData?.log?.format || 'json'}>
                       <SelectTrigger id="log_format" className="mt-1.5">
                         <SelectValue />
                       </SelectTrigger>
@@ -2144,10 +2765,7 @@ export default function SettingsPage() {
 
                   <div>
                     <Label htmlFor="log_output">{t.admin.logOutput}</Label>
-                    <Select
-                      name="log_output"
-                      defaultValue={settingsData?.log?.output || 'stdout'}
-                    >
+                    <Select name="log_output" defaultValue={settingsData?.log?.output || 'stdout'}>
                       <SelectTrigger id="log_output" className="mt-1.5">
                         <SelectValue />
                       </SelectTrigger>
@@ -2188,7 +2806,10 @@ export default function SettingsPage() {
                   onSubmit={(e) => {
                     e.preventDefault()
                     const formData = new FormData(e.currentTarget)
-                    const origins = (formData.get('allowed_origins') as string).split('\n').map(o => o.trim()).filter(Boolean)
+                    const origins = (formData.get('allowed_origins') as string)
+                      .split('\n')
+                      .map((o) => o.trim())
+                      .filter(Boolean)
                     handleSubmit('security', {
                       cors: {
                         allowed_origins: origins,
@@ -2204,7 +2825,7 @@ export default function SettingsPage() {
                       id="allowed_origins"
                       name="allowed_origins"
                       defaultValue={settingsData?.security?.cors?.allowed_origins?.join('\n') || ''}
-                      placeholder={"http://localhost:3000\nhttps://example.com"}
+                      placeholder={'http://localhost:3000\nhttps://example.com'}
                       rows={5}
                       className="mt-1.5 w-full rounded-md border border-input bg-background px-3 py-2"
                     />
@@ -2235,9 +2856,7 @@ export default function SettingsPage() {
                   <ShieldCheck className="h-5 w-5" />
                   {t.admin.ipHeaderConfig}
                 </CardTitle>
-                <CardDescription>
-                  {t.admin.ipHeaderConfigDesc}
-                </CardDescription>
+                <CardDescription>{t.admin.ipHeaderConfigDesc}</CardDescription>
               </CardHeader>
               <CardContent>
                 <form
@@ -2267,13 +2886,19 @@ export default function SettingsPage() {
                       placeholder="CF-Connecting-IP, X-Real-IP, X-Forwarded-For"
                       className="mt-1.5"
                     />
-                    <p className="text-xs text-muted-foreground mt-2">
-                      {t.admin.ipHeaderHint}
-                    </p>
-                    <ul className="text-xs text-muted-foreground mt-1 ml-4 list-disc space-y-0.5">
-                      <li><code className="bg-muted px-1 py-0.5 rounded">CF-Connecting-IP</code> - Cloudflare</li>
-                      <li><code className="bg-muted px-1 py-0.5 rounded">X-Real-IP</code> - Nginx</li>
-                      <li><code className="bg-muted px-1 py-0.5 rounded">X-Forwarded-For</code> - {t.admin.standardProxy}</li>
+                    <p className="mt-2 text-xs text-muted-foreground">{t.admin.ipHeaderHint}</p>
+                    <ul className="ml-4 mt-1 list-disc space-y-0.5 text-xs text-muted-foreground">
+                      <li>
+                        <code className="rounded bg-muted px-1 py-0.5">CF-Connecting-IP</code> -
+                        Cloudflare
+                      </li>
+                      <li>
+                        <code className="rounded bg-muted px-1 py-0.5">X-Real-IP</code> - Nginx
+                      </li>
+                      <li>
+                        <code className="rounded bg-muted px-1 py-0.5">X-Forwarded-For</code> -{' '}
+                        {t.admin.standardProxy}
+                      </li>
                     </ul>
                   </div>
 
@@ -2287,7 +2912,7 @@ export default function SettingsPage() {
                       rows={5}
                       className="mt-1.5 w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-sm"
                     />
-                    <p className="text-xs text-muted-foreground mt-2">
+                    <p className="mt-2 text-xs text-muted-foreground">
                       {t.admin.trustedProxiesHint}
                     </p>
                   </div>
@@ -2308,31 +2933,17 @@ export default function SettingsPage() {
               <CardContent className="space-y-3">
                 <div>
                   <Label>{t.admin.host}</Label>
-                  <Input
-                    value={settingsData?.redis?.host || ''}
-                    disabled
-                    className="mt-1.5"
-                  />
+                  <Input value={settingsData?.redis?.host || ''} disabled className="mt-1.5" />
                 </div>
                 <div>
                   <Label>{t.admin.port}</Label>
-                  <Input
-                    value={settingsData?.redis?.port || ''}
-                    disabled
-                    className="mt-1.5"
-                  />
+                  <Input value={settingsData?.redis?.port || ''} disabled className="mt-1.5" />
                 </div>
                 <div>
                   <Label>{t.admin.database}</Label>
-                  <Input
-                    value={settingsData?.redis?.db || ''}
-                    disabled
-                    className="mt-1.5"
-                  />
+                  <Input value={settingsData?.redis?.db || ''} disabled className="mt-1.5" />
                 </div>
-                <p className="text-xs text-muted-foreground">
-                  {t.admin.redisConfigHint}
-                </p>
+                <p className="text-xs text-muted-foreground">{t.admin.redisConfigHint}</p>
               </CardContent>
             </Card>
 
@@ -2352,14 +2963,18 @@ export default function SettingsPage() {
                       clear_js_program_cache: formData.get('clear_js_program_cache') === 'on',
                       clear_permission_cache: formData.get('clear_permission_cache') === 'on',
                       clear_runtime_redis_cache: formData.get('clear_runtime_redis_cache') === 'on',
+                      delete_unreferenced_files: formData.get('delete_unreferenced_files') === 'on',
+                      restart_js_worker: formData.get('restart_js_worker') === 'on',
                     })
                   }}
                   className="space-y-4"
                 >
                   <div className="flex items-center justify-between">
                     <div>
-                      <Label htmlFor="clear_payment_card_cache">{t.admin.clearPaymentCardCache}</Label>
-                      <p className="text-xs text-muted-foreground mt-1">
+                      <Label htmlFor="clear_payment_card_cache">
+                        {t.admin.clearPaymentCardCache}
+                      </Label>
+                      <p className="mt-1 text-xs text-muted-foreground">
                         {t.admin.clearPaymentCardCacheHint}
                       </p>
                     </div>
@@ -2373,7 +2988,7 @@ export default function SettingsPage() {
                   <div className="flex items-center justify-between">
                     <div>
                       <Label htmlFor="clear_js_program_cache">{t.admin.clearJsProgramCache}</Label>
-                      <p className="text-xs text-muted-foreground mt-1">
+                      <p className="mt-1 text-xs text-muted-foreground">
                         {t.admin.clearJsProgramCacheHint}
                       </p>
                     </div>
@@ -2387,7 +3002,7 @@ export default function SettingsPage() {
                   <div className="flex items-center justify-between">
                     <div>
                       <Label htmlFor="clear_permission_cache">{t.admin.clearPermissionCache}</Label>
-                      <p className="text-xs text-muted-foreground mt-1">
+                      <p className="mt-1 text-xs text-muted-foreground">
                         {t.admin.clearPermissionCacheHint}
                       </p>
                     </div>
@@ -2400,14 +3015,46 @@ export default function SettingsPage() {
 
                   <div className="flex items-center justify-between">
                     <div>
-                      <Label htmlFor="clear_runtime_redis_cache">{t.admin.clearRuntimeRedisCache}</Label>
-                      <p className="text-xs text-muted-foreground mt-1">
+                      <Label htmlFor="clear_runtime_redis_cache">
+                        {t.admin.clearRuntimeRedisCache}
+                      </Label>
+                      <p className="mt-1 text-xs text-muted-foreground">
                         {t.admin.clearRuntimeRedisCacheHint}
                       </p>
                     </div>
                     <Switch
                       id="clear_runtime_redis_cache"
                       name="clear_runtime_redis_cache"
+                      defaultChecked={false}
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <Label htmlFor="delete_unreferenced_files">
+                        {t.admin.deleteUnreferencedFiles}
+                      </Label>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {t.admin.deleteUnreferencedFilesHint}
+                      </p>
+                    </div>
+                    <Switch
+                      id="delete_unreferenced_files"
+                      name="delete_unreferenced_files"
+                      defaultChecked={false}
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <Label htmlFor="restart_js_worker">{t.admin.restartJsWorker}</Label>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {t.admin.restartJsWorkerHint}
+                      </p>
+                    </div>
+                    <Switch
+                      id="restart_js_worker"
+                      name="restart_js_worker"
                       defaultChecked={false}
                     />
                   </div>
@@ -2422,251 +3069,955 @@ export default function SettingsPage() {
           </div>
         </TabsContent>
 
+        {/* 插件平台设置 */}
+        <TabsContent value="plugins">
+          <div className="space-y-4">
+            <Card
+              className={pluginPlatformEnabled ? '' : 'border-dashed border-muted-foreground/40'}
+            >
+              <CardHeader>
+                <CardTitle>{t.admin.pluginPlatformSettings}</CardTitle>
+                <CardDescription>{t.admin.pluginPlatformSettingsDesc}</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault()
+                    const formData = new FormData(e.currentTarget)
+                    const allowedTypes = pluginAllowedTypesText
+                      .split(/\r?\n|,/)
+                      .map((item) => item.trim().toLowerCase())
+                      .filter(Boolean)
+                    const workerArgs = pluginWorkerArgsText
+                      .split(/\r?\n/)
+                      .map((item) => item.trim())
+                      .filter(Boolean)
+
+                    handleSubmit('plugin', {
+                      _submitted: true,
+                      enabled: pluginPlatformEnabled,
+                      allowed_runtimes: pluginAllowedRuntimes,
+                      allowed_types: allowedTypes,
+                      default_runtime: pluginDefaultRuntime,
+                      artifact_dir: (formData.get('artifact_dir') as string) || '',
+                      js_fs_max_files: parseInt(
+                        (formData.get('js_fs_max_files') as string) || '2048',
+                        10
+                      ),
+                      js_fs_max_total_bytes: parseInt(
+                        (formData.get('js_fs_max_total_bytes') as string) ||
+                          String(128 * 1024 * 1024),
+                        10
+                      ),
+                      js_fs_max_read_bytes: parseInt(
+                        (formData.get('js_fs_max_read_bytes') as string) || String(4 * 1024 * 1024),
+                        10
+                      ),
+                      js_storage_max_keys: parseInt(
+                        (formData.get('js_storage_max_keys') as string) || '512',
+                        10
+                      ),
+                      js_storage_max_total_bytes: parseInt(
+                        (formData.get('js_storage_max_total_bytes') as string) ||
+                          String(4 * 1024 * 1024),
+                        10
+                      ),
+                      js_storage_max_value_bytes: parseInt(
+                        (formData.get('js_storage_max_value_bytes') as string) || String(64 * 1024),
+                        10
+                      ),
+                      frontend: {
+                        force_sanitize_html: formData.get('plugin_force_sanitize_html') === 'on',
+                        slot_animations_enabled:
+                          formData.get('plugin_slot_animations_enabled') === 'on',
+                      },
+                      sandbox: {
+                        level: pluginSandboxLevel,
+                        exec_timeout_ms: parseInt(
+                          (formData.get('exec_timeout_ms') as string) || '30000',
+                          10
+                        ),
+                        max_memory_mb: parseInt(
+                          (formData.get('max_memory_mb') as string) || '128',
+                          10
+                        ),
+                        max_concurrency: parseInt(
+                          (formData.get('max_concurrency') as string) || '4',
+                          10
+                        ),
+                        js_worker_socket_path: formData.get('js_worker_socket_path') || '',
+                        js_worker_auto_start: formData.get('js_worker_auto_start') === 'on',
+                        // UI no longer exposes this field in single-binary mode.
+                        // Preserve existing config value to avoid accidental overwrite.
+                        js_worker_binary: settingsData?.plugin?.sandbox?.js_worker_binary || '',
+                        js_worker_args: workerArgs,
+                        js_allow_network: formData.get('js_allow_network') === 'on',
+                        js_allow_file_system: formData.get('js_allow_file_system') === 'on',
+                      },
+                      execution: {
+                        hook_max_inflight: parseInt(
+                          (formData.get('hook_max_inflight') as string) || '64',
+                          10
+                        ),
+                        hook_max_retries: parseInt(
+                          (formData.get('hook_max_retries') as string) || '0',
+                          10
+                        ),
+                        hook_retry_backoff_ms: parseInt(
+                          (formData.get('hook_retry_backoff_ms') as string) || '100',
+                          10
+                        ),
+                        hook_before_timeout_ms: parseInt(
+                          (formData.get('hook_before_timeout_ms') as string) || '30000',
+                          10
+                        ),
+                        hook_after_timeout_ms: parseInt(
+                          (formData.get('hook_after_timeout_ms') as string) || '30000',
+                          10
+                        ),
+                        failure_threshold: parseInt(
+                          (formData.get('failure_threshold') as string) || '3',
+                          10
+                        ),
+                        failure_cooldown_ms: parseInt(
+                          (formData.get('failure_cooldown_ms') as string) || '30000',
+                          10
+                        ),
+                        execution_log_retention_days: parseInt(
+                          (formData.get('execution_log_retention_days') as string) || '90',
+                          10
+                        ),
+                      },
+                    })
+                  }}
+                  className="space-y-4"
+                >
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <Label htmlFor="plugin_enabled">{t.admin.pluginPlatformEnabled}</Label>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {t.admin.pluginPlatformEnabledDesc}
+                      </p>
+                    </div>
+                    <Switch
+                      id="plugin_enabled"
+                      checked={pluginPlatformEnabled}
+                      onCheckedChange={setPluginPlatformEnabled}
+                    />
+                  </div>
+
+                  {!pluginPlatformEnabled ? (
+                    <div className="rounded-lg border border-dashed border-muted-foreground/30 bg-muted/30 px-4 py-3 text-sm text-muted-foreground">
+                      {t.admin.pluginPlatformDisabledHint}
+                    </div>
+                  ) : null}
+
+                  <div
+                    className={pluginPlatformEnabled ? 'space-y-4' : 'hidden'}
+                    aria-hidden={!pluginPlatformEnabled}
+                  >
+                    <div className="space-y-3 rounded-xl border border-amber-300/70 bg-amber-50 p-4 dark:border-amber-900/60 dark:bg-amber-950/30">
+                      <div>
+                        <Label>{t.admin.pluginTrustedHtmlSection}</Label>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {t.admin.pluginTrustedHtmlSectionDesc}
+                        </p>
+                      </div>
+                      <div className="flex items-center justify-between rounded-md border border-amber-400/40 bg-background/70 px-3 py-2">
+                        <div>
+                          <Label htmlFor="plugin_force_sanitize_html">
+                            {t.admin.pluginForceSanitizeHtml}
+                          </Label>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            {t.admin.pluginForceSanitizeHtmlDesc}
+                          </p>
+                        </div>
+                        <Switch
+                          id="plugin_force_sanitize_html"
+                          name="plugin_force_sanitize_html"
+                          defaultChecked={
+                            settingsData?.plugin?.frontend?.force_sanitize_html ?? false
+                          }
+                        />
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        {t.admin.pluginForceSanitizeHtmlWarning}
+                      </p>
+                    </div>
+
+                    <div className="space-y-3 rounded-xl border border-input/70 bg-muted/20 p-4">
+                      <div>
+                        <Label>{t.admin.pluginFrontendDisplaySection}</Label>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {t.admin.pluginFrontendDisplaySectionDesc}
+                        </p>
+                      </div>
+                      <div className="flex items-center justify-between rounded-md border border-input/70 bg-background px-3 py-2">
+                        <div>
+                          <Label htmlFor="plugin_slot_animations_enabled">
+                            {t.admin.pluginSlotAnimationsEnabled}
+                          </Label>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            {t.admin.pluginSlotAnimationsEnabledDesc}
+                          </p>
+                        </div>
+                        <Switch
+                          id="plugin_slot_animations_enabled"
+                          name="plugin_slot_animations_enabled"
+                          defaultChecked={
+                            settingsData?.plugin?.frontend?.slot_animations_enabled ?? true
+                          }
+                        />
+                      </div>
+                    </div>
+
+                    <div className="space-y-3 rounded-xl border border-input/70 bg-muted/20 p-4">
+                      <div>
+                        <Label>{t.admin.pluginAllowedRuntimes}</Label>
+                      </div>
+                      <div className="grid gap-2 md:grid-cols-2">
+                        {[
+                          {
+                            value: 'grpc',
+                            label: t.admin.pluginRuntimeGrpc,
+                            description: t.admin.pluginRuntimeGrpcDesc,
+                          },
+                          {
+                            value: 'js_worker',
+                            label: t.admin.pluginRuntimeJsWorker,
+                            description: t.admin.pluginRuntimeJsWorkerDesc,
+                          },
+                        ].map((item) => {
+                          const checked = pluginAllowedRuntimes.includes(item.value)
+                          const keepOneLocked = checked && pluginAllowedRuntimes.length === 1
+                          return (
+                            <label
+                              key={item.value}
+                              className={`flex cursor-pointer items-start gap-3 rounded-lg border px-3 py-2.5 transition ${
+                                checked
+                                  ? 'border-primary/60 bg-primary/5 shadow-sm'
+                                  : 'border-input bg-background hover:border-primary/40 hover:bg-accent/20'
+                              } ${keepOneLocked ? 'cursor-not-allowed opacity-80' : ''}`}
+                            >
+                              <input
+                                type="checkbox"
+                                className="mt-0.5 h-4 w-4 accent-primary"
+                                checked={checked}
+                                disabled={keepOneLocked}
+                                onChange={(event) =>
+                                  togglePluginRuntime(item.value, event.target.checked)
+                                }
+                              />
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-sm font-medium">{item.label}</span>
+                                  <span className="font-mono text-[11px] text-muted-foreground">
+                                    {item.value}
+                                  </span>
+                                  {checked ? (
+                                    <Badge variant="secondary" className="h-5 px-1.5 text-[10px]">
+                                      {t.admin.enabled}
+                                    </Badge>
+                                  ) : null}
+                                </div>
+                                <p className="mt-1 text-xs text-muted-foreground">
+                                  {item.description}
+                                </p>
+                                {keepOneLocked ? (
+                                  <p className="mt-1 text-[11px] text-muted-foreground">
+                                    {t.admin.pluginAllowedRuntimesMinOne}
+                                  </p>
+                                ) : null}
+                              </div>
+                            </label>
+                          )
+                        })}
+                      </div>
+                    </div>
+
+                    <div className="space-y-3 rounded-xl border border-input/70 bg-muted/20 p-4">
+                      <div>
+                        <Label>{t.admin.pluginDefaultRuntime}</Label>
+                        <Select
+                          value={pluginDefaultRuntime}
+                          onValueChange={setPluginDefaultRuntime}
+                        >
+                          <SelectTrigger className="mt-1.5">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {pluginAllowedRuntimes.map((runtime) => (
+                              <SelectItem key={runtime} value={runtime}>
+                                {runtime === 'grpc'
+                                  ? t.admin.pluginRuntimeGrpc
+                                  : runtime === 'js_worker'
+                                    ? t.admin.pluginRuntimeJsWorker
+                                    : runtime}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      <div>
+                        <Label htmlFor="plugin_allowed_types">{t.admin.pluginAllowedTypes}</Label>
+                        <textarea
+                          id="plugin_allowed_types"
+                          value={pluginAllowedTypesText}
+                          onChange={(e) => setPluginAllowedTypesText(e.target.value)}
+                          placeholder={t.admin.pluginAllowedTypesPlaceholder}
+                          rows={4}
+                          className="mt-1.5 w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-sm"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="space-y-4 rounded-xl border border-input/70 bg-muted/20 p-4">
+                      <div>
+                        <Label>{t.admin.pluginSandboxLevel}</Label>
+                        <Select value={pluginSandboxLevel} onValueChange={setPluginSandboxLevel}>
+                          <SelectTrigger className="mt-1.5">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="strict">{t.admin.pluginSandboxStrict}</SelectItem>
+                            <SelectItem value="balanced">
+                              {t.admin.pluginSandboxBalanced}
+                            </SelectItem>
+                            <SelectItem value="permissive">
+                              {t.admin.pluginSandboxPermissive}
+                            </SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                        <div>
+                          <Label htmlFor="exec_timeout_ms">{t.admin.pluginExecTimeoutMs}</Label>
+                          <Input
+                            id="exec_timeout_ms"
+                            name="exec_timeout_ms"
+                            type="number"
+                            min="1000"
+                            defaultValue={settingsData?.plugin?.sandbox?.exec_timeout_ms ?? 30000}
+                            className="mt-1.5"
+                          />
+                        </div>
+                        <div>
+                          <Label htmlFor="max_memory_mb">{t.admin.pluginMaxMemoryMb}</Label>
+                          <Input
+                            id="max_memory_mb"
+                            name="max_memory_mb"
+                            type="number"
+                            min="16"
+                            defaultValue={settingsData?.plugin?.sandbox?.max_memory_mb ?? 128}
+                            className="mt-1.5"
+                          />
+                        </div>
+                        <div>
+                          <Label htmlFor="max_concurrency">{t.admin.pluginMaxConcurrency}</Label>
+                          <Input
+                            id="max_concurrency"
+                            name="max_concurrency"
+                            type="number"
+                            min="1"
+                            defaultValue={settingsData?.plugin?.sandbox?.max_concurrency ?? 4}
+                            className="mt-1.5"
+                          />
+                        </div>
+                      </div>
+
+                      <div
+                        className={
+                          pluginAllowedRuntimes.includes('js_worker') ? 'space-y-4' : 'hidden'
+                        }
+                        aria-hidden={!pluginAllowedRuntimes.includes('js_worker')}
+                      >
+                        <div>
+                          <Label htmlFor="js_worker_socket_path">
+                            {t.admin.pluginJsWorkerSocketPath}
+                          </Label>
+                          <Input
+                            id="js_worker_socket_path"
+                            name="js_worker_socket_path"
+                            defaultValue={
+                              settingsData?.plugin?.sandbox?.js_worker_socket_path ||
+                              '/tmp/auralogic-jsworker.sock'
+                            }
+                            className="mt-1.5 font-mono"
+                          />
+                        </div>
+
+                        <div>
+                          <Label htmlFor="js_worker_args">{t.admin.pluginJsWorkerArgs}</Label>
+                          <textarea
+                            id="js_worker_args"
+                            value={pluginWorkerArgsText}
+                            onChange={(e) => setPluginWorkerArgsText(e.target.value)}
+                            placeholder={t.admin.pluginJsWorkerArgsPlaceholder}
+                            rows={3}
+                            className="mt-1.5 w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-sm"
+                          />
+                        </div>
+
+                        <div className="space-y-3 rounded-lg border border-input/80 bg-background/60 p-3">
+                          <p className="text-sm font-medium">{t.admin.pluginJsFsQuotaTitle}</p>
+                          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                            <div className="md:col-span-2">
+                              <Label htmlFor="artifact_dir">{t.admin.pluginArtifactDir}</Label>
+                              <Input
+                                id="artifact_dir"
+                                name="artifact_dir"
+                                defaultValue={settingsData?.plugin?.artifact_dir || 'data/plugins'}
+                                className="mt-1.5 font-mono"
+                              />
+                              <p className="mt-1 text-xs text-muted-foreground">
+                                {t.admin.pluginArtifactDirHint}
+                              </p>
+                            </div>
+                            <div>
+                              <Label htmlFor="js_fs_max_files">{t.admin.pluginJsFsMaxFiles}</Label>
+                              <Input
+                                id="js_fs_max_files"
+                                name="js_fs_max_files"
+                                type="number"
+                                min="1"
+                                defaultValue={settingsData?.plugin?.js_fs_max_files ?? 2048}
+                                className="mt-1.5"
+                              />
+                            </div>
+                            <div>
+                              <Label htmlFor="js_fs_max_total_bytes">
+                                {t.admin.pluginJsFsMaxTotalBytes}
+                              </Label>
+                              <Input
+                                id="js_fs_max_total_bytes"
+                                name="js_fs_max_total_bytes"
+                                type="number"
+                                min="1024"
+                                step="1024"
+                                defaultValue={
+                                  settingsData?.plugin?.js_fs_max_total_bytes ?? 134217728
+                                }
+                                className="mt-1.5"
+                              />
+                            </div>
+                            <div>
+                              <Label htmlFor="js_fs_max_read_bytes">
+                                {t.admin.pluginJsFsMaxReadBytes}
+                              </Label>
+                              <Input
+                                id="js_fs_max_read_bytes"
+                                name="js_fs_max_read_bytes"
+                                type="number"
+                                min="1024"
+                                step="1024"
+                                defaultValue={settingsData?.plugin?.js_fs_max_read_bytes ?? 4194304}
+                                className="mt-1.5"
+                              />
+                            </div>
+                            <div className="border-t border-input/60 pt-2 md:col-span-2">
+                              <p className="text-sm font-medium">
+                                {t.admin.pluginJsStorageQuotaTitle}
+                              </p>
+                            </div>
+                            <div>
+                              <Label htmlFor="js_storage_max_keys">
+                                {t.admin.pluginJsStorageMaxKeys}
+                              </Label>
+                              <Input
+                                id="js_storage_max_keys"
+                                name="js_storage_max_keys"
+                                type="number"
+                                min="1"
+                                defaultValue={settingsData?.plugin?.js_storage_max_keys ?? 512}
+                                className="mt-1.5"
+                              />
+                            </div>
+                            <div>
+                              <Label htmlFor="js_storage_max_total_bytes">
+                                {t.admin.pluginJsStorageMaxTotalBytes}
+                              </Label>
+                              <Input
+                                id="js_storage_max_total_bytes"
+                                name="js_storage_max_total_bytes"
+                                type="number"
+                                min="1024"
+                                step="1024"
+                                defaultValue={
+                                  settingsData?.plugin?.js_storage_max_total_bytes ?? 4194304
+                                }
+                                className="mt-1.5"
+                              />
+                            </div>
+                            <div>
+                              <Label htmlFor="js_storage_max_value_bytes">
+                                {t.admin.pluginJsStorageMaxValueBytes}
+                              </Label>
+                              <Input
+                                id="js_storage_max_value_bytes"
+                                name="js_storage_max_value_bytes"
+                                type="number"
+                                min="1"
+                                step="1024"
+                                defaultValue={
+                                  settingsData?.plugin?.js_storage_max_value_bytes ?? 65536
+                                }
+                                className="mt-1.5"
+                              />
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                          <div className="flex items-center justify-between rounded-md border border-input px-3 py-2">
+                            <Label htmlFor="js_worker_auto_start">
+                              {t.admin.pluginJsWorkerAutoStart}
+                            </Label>
+                            <Switch
+                              id="js_worker_auto_start"
+                              name="js_worker_auto_start"
+                              defaultChecked={
+                                settingsData?.plugin?.sandbox?.js_worker_auto_start ?? false
+                              }
+                            />
+                          </div>
+                          <div className="flex items-center justify-between rounded-md border border-input px-3 py-2">
+                            <Label htmlFor="js_allow_network">{t.admin.pluginJsAllowNetwork}</Label>
+                            <Switch
+                              id="js_allow_network"
+                              name="js_allow_network"
+                              defaultChecked={
+                                settingsData?.plugin?.sandbox?.js_allow_network ?? false
+                              }
+                            />
+                          </div>
+                          <div className="flex items-center justify-between rounded-md border border-input px-3 py-2">
+                            <Label htmlFor="js_allow_file_system">
+                              {t.admin.pluginJsAllowFileSystem}
+                            </Label>
+                            <Switch
+                              id="js_allow_file_system"
+                              name="js_allow_file_system"
+                              defaultChecked={
+                                settingsData?.plugin?.sandbox?.js_allow_file_system ?? false
+                              }
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="space-y-4 rounded-xl border border-input/70 bg-muted/20 p-4">
+                      <div>
+                        <Label>{t.admin.pluginExecutionPolicy}</Label>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {t.admin.pluginExecutionPolicyDesc}
+                        </p>
+                      </div>
+                      <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+                        <div>
+                          <Label htmlFor="hook_max_inflight">{t.admin.pluginHookMaxInFlight}</Label>
+                          <Input
+                            id="hook_max_inflight"
+                            name="hook_max_inflight"
+                            type="number"
+                            min="1"
+                            defaultValue={settingsData?.plugin?.execution?.hook_max_inflight ?? 64}
+                            className="mt-1.5"
+                          />
+                        </div>
+                        <div>
+                          <Label htmlFor="hook_max_retries">{t.admin.pluginHookMaxRetries}</Label>
+                          <Input
+                            id="hook_max_retries"
+                            name="hook_max_retries"
+                            type="number"
+                            min="0"
+                            defaultValue={settingsData?.plugin?.execution?.hook_max_retries ?? 0}
+                            className="mt-1.5"
+                          />
+                        </div>
+                        <div>
+                          <Label htmlFor="hook_retry_backoff_ms">
+                            {t.admin.pluginHookRetryBackoffMs}
+                          </Label>
+                          <Input
+                            id="hook_retry_backoff_ms"
+                            name="hook_retry_backoff_ms"
+                            type="number"
+                            min="0"
+                            defaultValue={
+                              settingsData?.plugin?.execution?.hook_retry_backoff_ms ?? 100
+                            }
+                            className="mt-1.5"
+                          />
+                        </div>
+                        <div>
+                          <Label htmlFor="failure_threshold">
+                            {t.admin.pluginFailureThreshold}
+                          </Label>
+                          <Input
+                            id="failure_threshold"
+                            name="failure_threshold"
+                            type="number"
+                            min="1"
+                            defaultValue={settingsData?.plugin?.execution?.failure_threshold ?? 3}
+                            className="mt-1.5"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+                        <div>
+                          <Label htmlFor="hook_before_timeout_ms">
+                            {t.admin.pluginHookBeforeTimeoutMs}
+                          </Label>
+                          <Input
+                            id="hook_before_timeout_ms"
+                            name="hook_before_timeout_ms"
+                            type="number"
+                            min="100"
+                            defaultValue={
+                              settingsData?.plugin?.execution?.hook_before_timeout_ms ??
+                              settingsData?.plugin?.sandbox?.exec_timeout_ms ??
+                              30000
+                            }
+                            className="mt-1.5"
+                          />
+                        </div>
+                        <div>
+                          <Label htmlFor="hook_after_timeout_ms">
+                            {t.admin.pluginHookAfterTimeoutMs}
+                          </Label>
+                          <Input
+                            id="hook_after_timeout_ms"
+                            name="hook_after_timeout_ms"
+                            type="number"
+                            min="100"
+                            defaultValue={
+                              settingsData?.plugin?.execution?.hook_after_timeout_ms ??
+                              settingsData?.plugin?.sandbox?.exec_timeout_ms ??
+                              30000
+                            }
+                            className="mt-1.5"
+                          />
+                        </div>
+                        <div>
+                          <Label htmlFor="failure_cooldown_ms">
+                            {t.admin.pluginFailureCooldownMs}
+                          </Label>
+                          <Input
+                            id="failure_cooldown_ms"
+                            name="failure_cooldown_ms"
+                            type="number"
+                            min="0"
+                            defaultValue={
+                              settingsData?.plugin?.execution?.failure_cooldown_ms ?? 30000
+                            }
+                            className="mt-1.5"
+                          />
+                        </div>
+                        <div>
+                          <Label htmlFor="execution_log_retention_days">
+                            {t.admin.pluginExecutionLogRetentionDays}
+                          </Label>
+                          <Input
+                            id="execution_log_retention_days"
+                            name="execution_log_retention_days"
+                            type="number"
+                            min="-1"
+                            defaultValue={
+                              settingsData?.plugin?.execution?.execution_log_retention_days ?? 90
+                            }
+                            className="mt-1.5"
+                          />
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            {t.admin.pluginExecutionLogRetentionDaysDesc}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <Button type="submit" disabled={updateMutation.isPending}>
+                    <Save className="mr-2 h-4 w-4" />
+                    {updateMutation.isPending ? t.admin.saving : t.admin.saveSettings}
+                  </Button>
+                </form>
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
+
         {/* 工单设置 */}
         <TabsContent value="ticket">
           <div className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>{t.admin.ticketSettings}</CardTitle>
-              <CardDescription>{t.admin.ticketSettingsDesc}</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault()
-                  const formData = new FormData(e.currentTarget)
-                  const categories = (formData.get('categories') as string).split('\n').map(c => c.trim()).filter(Boolean)
-                  handleSubmit('ticket', {
-                    enabled: formData.get('enabled') === 'on',
-                    categories: categories,
-                    template: formData.get('template'),
-                    max_content_length: parseInt(formData.get('max_content_length') as string) || 0,
-                    auto_close_hours: parseInt(formData.get('auto_close_hours') as string) || 0,
-                  })
-                }}
-                className="space-y-4"
-              >
-                <div className="flex items-center justify-between">
-                  <div>
-                    <Label htmlFor="ticket_enabled">{t.admin.enableTicketSystem}</Label>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      {t.admin.enableTicketSystemHint}
-                    </p>
-                  </div>
-                  <Switch
-                    id="ticket_enabled"
-                    name="enabled"
-                    defaultChecked={settingsData?.ticket?.enabled}
-                  />
-                </div>
-
-                <div>
-                  <Label htmlFor="ticket_categories">{t.admin.ticketCategories}</Label>
-                  <textarea
-                    id="ticket_categories"
-                    name="categories"
-                    defaultValue={settingsData?.ticket?.categories?.join('\n') || '订单问题\n支付问题\n售后服务\n技术支持\n其他问题'}
-                    placeholder={"订单问题\n支付问题\n售后服务"}
-                    rows={5}
-                    className="mt-1.5 w-full rounded-md border border-input bg-background px-3 py-2"
-                  />
-                  <p className="text-xs text-muted-foreground mt-1">
-                    {t.admin.ticketCategoriesHint}
-                  </p>
-                </div>
-
-                <div>
-                  <Label htmlFor="ticket_template">{t.admin.ticketTemplate}</Label>
-                  <textarea
-                    id="ticket_template"
-                    name="template"
-                    defaultValue={settingsData?.ticket?.template || ''}
-                    placeholder={"请描述您的问题：\n\n相关订单号（如有）：\n\n期望的解决方案："}
-                    rows={8}
-                    className="mt-1.5 w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-sm"
-                  />
-                  <p className="text-xs text-muted-foreground mt-1">
-                    {t.admin.ticketTemplateHint}
-                  </p>
-                </div>
-
-                <div>
-                  <Label htmlFor="max_content_length">{t.admin.maxContentLength}</Label>
-                  <Input
-                    id="max_content_length"
-                    name="max_content_length"
-                    type="number"
-                    min="0"
-                    max="100000"
-                    defaultValue={settingsData?.ticket?.max_content_length || 0}
-                    className="mt-1.5"
-                  />
-                  <p className="text-xs text-muted-foreground mt-1">
-                    {t.admin.maxContentLengthHint}
-                  </p>
-                </div>
-
-                <div>
-                  <Label htmlFor="auto_close_hours">{t.admin.autoCloseHours}</Label>
-                  <Input
-                    id="auto_close_hours"
-                    name="auto_close_hours"
-                    type="number"
-                    min="0"
-                    max="8760"
-                    defaultValue={settingsData?.ticket?.auto_close_hours || 0}
-                    className="mt-1.5"
-                  />
-                  <p className="text-xs text-muted-foreground mt-1">
-                    {t.admin.autoCloseHoursHint}
-                  </p>
-                </div>
-
-                <Button type="submit" disabled={updateMutation.isPending}>
-                  <Save className="mr-2 h-4 w-4" />
-                  {t.admin.saveSettings}
-                </Button>
-              </form>
-            </CardContent>
-          </Card>
-
-          {/* 工单附件设置 */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <FileUp className="h-5 w-5" />
-                {t.admin.ticketAttachmentSettings}
-              </CardTitle>
-              <CardDescription>{t.admin.ticketAttachmentSettingsDesc}</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault()
-                  const formData = new FormData(e.currentTarget)
-                  const allowedImageTypes = (formData.get('allowed_image_types') as string).split(',').map(s => s.trim()).filter(Boolean)
-                  handleSubmit('ticket', {
-                    attachment: {
-                      enable_image: formData.get('enable_image') === 'on',
-                      enable_voice: formData.get('enable_voice') === 'on',
-                      max_image_size: parseInt(formData.get('max_image_size') as string) * 1024 * 1024,
-                      max_voice_size: parseInt(formData.get('max_voice_size') as string) * 1024 * 1024,
-                      max_voice_duration: parseInt(formData.get('max_voice_duration') as string),
-                      allowed_image_types: allowedImageTypes,
-                      retention_days: parseInt(formData.get('retention_days') as string) || 0,
-                    },
-                  })
-                }}
-                className="space-y-4"
-              >
-                <div className="flex items-center justify-between">
-                  <div>
-                    <Label htmlFor="enable_image">{t.admin.enableImageUpload}</Label>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      {t.admin.enableImageUploadHint}
-                    </p>
-                  </div>
-                  <Switch
-                    id="enable_image"
-                    name="enable_image"
-                    defaultChecked={settingsData?.ticket?.attachment?.enable_image ?? true}
-                  />
-                </div>
-
-                <div className="flex items-center justify-between">
-                  <div>
-                    <Label htmlFor="enable_voice">{t.admin.enableVoiceUpload}</Label>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      {t.admin.enableVoiceUploadHint}
-                    </p>
-                  </div>
-                  <Switch
-                    id="enable_voice"
-                    name="enable_voice"
-                    defaultChecked={settingsData?.ticket?.attachment?.enable_voice ?? true}
-                  />
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <Label htmlFor="max_image_size">{t.admin.maxImageSize}</Label>
-                    <Input
-                      id="max_image_size"
-                      name="max_image_size"
-                      type="number"
-                      min="1"
-                      max="50"
-                      defaultValue={(settingsData?.ticket?.attachment?.max_image_size || 5242880) / 1024 / 1024}
-                      className="mt-1.5"
+            <Card>
+              <CardHeader>
+                <CardTitle>{t.admin.ticketSettings}</CardTitle>
+                <CardDescription>{t.admin.ticketSettingsDesc}</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault()
+                    const formData = new FormData(e.currentTarget)
+                    const categories = (formData.get('categories') as string)
+                      .split('\n')
+                      .map((c) => c.trim())
+                      .filter(Boolean)
+                    handleSubmit('ticket', {
+                      enabled: formData.get('enabled') === 'on',
+                      categories: categories,
+                      template: formData.get('template'),
+                      max_content_length:
+                        parseInt(formData.get('max_content_length') as string) || 0,
+                      auto_close_hours: parseInt(formData.get('auto_close_hours') as string) || 0,
+                    })
+                  }}
+                  className="space-y-4"
+                >
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <Label htmlFor="ticket_enabled">{t.admin.enableTicketSystem}</Label>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {t.admin.enableTicketSystemHint}
+                      </p>
+                    </div>
+                    <Switch
+                      id="ticket_enabled"
+                      name="enabled"
+                      defaultChecked={settingsData?.ticket?.enabled}
                     />
                   </div>
+
                   <div>
-                    <Label htmlFor="max_voice_size">{t.admin.maxVoiceSize}</Label>
+                    <Label htmlFor="ticket_categories">{t.admin.ticketCategories}</Label>
+                    <textarea
+                      id="ticket_categories"
+                      name="categories"
+                      defaultValue={
+                        settingsData?.ticket?.categories?.join('\n') ||
+                        t.admin.ticketCategoriesDefault
+                      }
+                      placeholder={t.admin.ticketCategoriesPlaceholder}
+                      rows={5}
+                      className="mt-1.5 w-full rounded-md border border-input bg-background px-3 py-2"
+                    />
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {t.admin.ticketCategoriesHint}
+                    </p>
+                  </div>
+
+                  <div>
+                    <Label htmlFor="ticket_template">{t.admin.ticketTemplate}</Label>
+                    <textarea
+                      id="ticket_template"
+                      name="template"
+                      defaultValue={settingsData?.ticket?.template || ''}
+                      placeholder={t.admin.ticketTemplatePlaceholder}
+                      rows={8}
+                      className="mt-1.5 w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-sm"
+                    />
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {t.admin.ticketTemplateHint}
+                    </p>
+                  </div>
+
+                  <div>
+                    <Label htmlFor="max_content_length">{t.admin.maxContentLength}</Label>
                     <Input
-                      id="max_voice_size"
-                      name="max_voice_size"
+                      id="max_content_length"
+                      name="max_content_length"
                       type="number"
-                      min="1"
-                      max="50"
-                      defaultValue={(settingsData?.ticket?.attachment?.max_voice_size || 10485760) / 1024 / 1024}
+                      min="0"
+                      max="100000"
+                      defaultValue={settingsData?.ticket?.max_content_length || 0}
                       className="mt-1.5"
                     />
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {t.admin.maxContentLengthHint}
+                    </p>
                   </div>
-                </div>
 
-                <div>
-                  <Label htmlFor="max_voice_duration">{t.admin.maxVoiceDuration}</Label>
-                  <Input
-                    id="max_voice_duration"
-                    name="max_voice_duration"
-                    type="number"
-                    min="10"
-                    max="300"
-                    defaultValue={settingsData?.ticket?.attachment?.max_voice_duration || 60}
-                    className="mt-1.5"
-                  />
-                  <p className="text-xs text-muted-foreground mt-1">
-                    {t.admin.maxVoiceDurationHint}
-                  </p>
-                </div>
+                  <div>
+                    <Label htmlFor="auto_close_hours">{t.admin.autoCloseHours}</Label>
+                    <Input
+                      id="auto_close_hours"
+                      name="auto_close_hours"
+                      type="number"
+                      min="0"
+                      max="8760"
+                      defaultValue={settingsData?.ticket?.auto_close_hours || 0}
+                      className="mt-1.5"
+                    />
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {t.admin.autoCloseHoursHint}
+                    </p>
+                  </div>
 
-                <div>
-                  <Label htmlFor="allowed_image_types">{t.admin.allowedImageFormats}</Label>
-                  <Input
-                    id="allowed_image_types"
-                    name="allowed_image_types"
-                    defaultValue={settingsData?.ticket?.attachment?.allowed_image_types?.join(', ') || '.jpg, .jpeg, .png, .gif, .webp'}
-                    placeholder=".jpg, .jpeg, .png, .gif, .webp"
-                    className="mt-1.5"
-                  />
-                  <p className="text-xs text-muted-foreground mt-1">
-                    {t.admin.separateWithCommaFormats}
-                  </p>
-                </div>
+                  <Button type="submit" disabled={updateMutation.isPending}>
+                    <Save className="mr-2 h-4 w-4" />
+                    {t.admin.saveSettings}
+                  </Button>
+                </form>
+              </CardContent>
+            </Card>
 
-                <div>
-                  <Label htmlFor="retention_days">{t.admin.attachmentRetentionDays}</Label>
-                  <Input
-                    id="retention_days"
-                    name="retention_days"
-                    type="number"
-                    min="0"
-                    max="3650"
-                    defaultValue={settingsData?.ticket?.attachment?.retention_days || 0}
-                    className="mt-1.5"
-                  />
-                  <p className="text-xs text-muted-foreground mt-1">
-                    {t.admin.attachmentRetentionDaysHint}
-                  </p>
-                </div>
+            {/* 工单附件设置 */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <FileUp className="h-5 w-5" />
+                  {t.admin.ticketAttachmentSettings}
+                </CardTitle>
+                <CardDescription>{t.admin.ticketAttachmentSettingsDesc}</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault()
+                    const formData = new FormData(e.currentTarget)
+                    const allowedImageTypes = (formData.get('allowed_image_types') as string)
+                      .split(',')
+                      .map((s) => s.trim())
+                      .filter(Boolean)
+                    handleSubmit('ticket', {
+                      attachment: {
+                        enable_image: formData.get('enable_image') === 'on',
+                        enable_voice: formData.get('enable_voice') === 'on',
+                        max_image_size:
+                          parseInt(formData.get('max_image_size') as string) * 1024 * 1024,
+                        max_voice_size:
+                          parseInt(formData.get('max_voice_size') as string) * 1024 * 1024,
+                        max_voice_duration: parseInt(formData.get('max_voice_duration') as string),
+                        allowed_image_types: allowedImageTypes,
+                        retention_days: parseInt(formData.get('retention_days') as string) || 0,
+                      },
+                    })
+                  }}
+                  className="space-y-4"
+                >
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <Label htmlFor="enable_image">{t.admin.enableImageUpload}</Label>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {t.admin.enableImageUploadHint}
+                      </p>
+                    </div>
+                    <Switch
+                      id="enable_image"
+                      name="enable_image"
+                      defaultChecked={settingsData?.ticket?.attachment?.enable_image ?? true}
+                    />
+                  </div>
 
-                <Button type="submit" disabled={updateMutation.isPending}>
-                  <Save className="mr-2 h-4 w-4" />
-                  {t.admin.saveAttachmentSettings}
-                </Button>
-              </form>
-            </CardContent>
-          </Card>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <Label htmlFor="enable_voice">{t.admin.enableVoiceUpload}</Label>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {t.admin.enableVoiceUploadHint}
+                      </p>
+                    </div>
+                    <Switch
+                      id="enable_voice"
+                      name="enable_voice"
+                      defaultChecked={settingsData?.ticket?.attachment?.enable_voice ?? true}
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <Label htmlFor="max_image_size">{t.admin.maxImageSize}</Label>
+                      <Input
+                        id="max_image_size"
+                        name="max_image_size"
+                        type="number"
+                        min="1"
+                        max="50"
+                        defaultValue={
+                          (settingsData?.ticket?.attachment?.max_image_size || 5242880) /
+                          1024 /
+                          1024
+                        }
+                        className="mt-1.5"
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="max_voice_size">{t.admin.maxVoiceSize}</Label>
+                      <Input
+                        id="max_voice_size"
+                        name="max_voice_size"
+                        type="number"
+                        min="1"
+                        max="50"
+                        defaultValue={
+                          (settingsData?.ticket?.attachment?.max_voice_size || 10485760) /
+                          1024 /
+                          1024
+                        }
+                        className="mt-1.5"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <Label htmlFor="max_voice_duration">{t.admin.maxVoiceDuration}</Label>
+                    <Input
+                      id="max_voice_duration"
+                      name="max_voice_duration"
+                      type="number"
+                      min="10"
+                      max="300"
+                      defaultValue={settingsData?.ticket?.attachment?.max_voice_duration || 60}
+                      className="mt-1.5"
+                    />
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {t.admin.maxVoiceDurationHint}
+                    </p>
+                  </div>
+
+                  <div>
+                    <Label htmlFor="allowed_image_types">{t.admin.allowedImageFormats}</Label>
+                    <Input
+                      id="allowed_image_types"
+                      name="allowed_image_types"
+                      defaultValue={
+                        settingsData?.ticket?.attachment?.allowed_image_types?.join(', ') ||
+                        '.jpg, .jpeg, .png, .gif, .webp'
+                      }
+                      placeholder=".jpg, .jpeg, .png, .gif, .webp"
+                      className="mt-1.5"
+                    />
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {t.admin.separateWithCommaFormats}
+                    </p>
+                  </div>
+
+                  <div>
+                    <Label htmlFor="retention_days">{t.admin.attachmentRetentionDays}</Label>
+                    <Input
+                      id="retention_days"
+                      name="retention_days"
+                      type="number"
+                      min="0"
+                      max="3650"
+                      defaultValue={settingsData?.ticket?.attachment?.retention_days || 0}
+                      className="mt-1.5"
+                    />
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {t.admin.attachmentRetentionDaysHint}
+                    </p>
+                  </div>
+
+                  <Button type="submit" disabled={updateMutation.isPending}>
+                    <Save className="mr-2 h-4 w-4" />
+                    {t.admin.saveAttachmentSettings}
+                  </Button>
+                </form>
+              </CardContent>
+            </Card>
           </div>
         </TabsContent>
 
@@ -2695,7 +4046,7 @@ export default function SettingsPage() {
                 <div className="flex items-center justify-between">
                   <div>
                     <Label htmlFor="serial_enabled">{t.admin.enableSerialQuery}</Label>
-                    <p className="text-xs text-muted-foreground mt-1">
+                    <p className="mt-1 text-xs text-muted-foreground">
                       {t.admin.enableSerialQueryHint}
                     </p>
                   </div>
@@ -2740,7 +4091,7 @@ export default function SettingsPage() {
                 <div className="flex items-center justify-between">
                   <div>
                     <Label htmlFor="analytics_enabled">{t.admin.enableAnalytics}</Label>
-                    <p className="text-xs text-muted-foreground mt-1">
+                    <p className="mt-1 text-xs text-muted-foreground">
                       {t.admin.enableAnalyticsHint}
                     </p>
                   </div>
@@ -2775,18 +4126,34 @@ export default function SettingsPage() {
                   handleSubmit('order', {
                     no_prefix: formData.get('no_prefix'),
                     auto_cancel_hours: parseInt(formData.get('auto_cancel_hours') as string),
-                    max_pending_payment_orders_per_user: parseInt(formData.get('max_pending_payment_orders_per_user') as string) || 10,
-                    max_payment_polling_tasks_per_user: parseInt(formData.get('max_payment_polling_tasks_per_user') as string) || 20,
-                    max_payment_polling_tasks_global: parseInt(formData.get('max_payment_polling_tasks_global') as string) || 2000,
+                    max_pending_payment_orders_per_user:
+                      parseInt(formData.get('max_pending_payment_orders_per_user') as string) || 10,
+                    max_payment_polling_tasks_per_user:
+                      parseInt(formData.get('max_payment_polling_tasks_per_user') as string) || 20,
+                    max_payment_polling_tasks_global:
+                      parseInt(formData.get('max_payment_polling_tasks_global') as string) || 2000,
                     max_order_items: parseInt(formData.get('max_order_items') as string) || 100,
-                    max_item_quantity: parseInt(formData.get('max_item_quantity') as string) || 9999,
+                    max_item_quantity:
+                      parseInt(formData.get('max_item_quantity') as string) || 9999,
                     currency: formData.get('currency'),
                     virtual_delivery_order: formData.get('virtual_delivery_order'),
                     show_virtual_stock_remark: showVirtualStockRemark,
+                    high_concurrency_protection: {
+                      enabled: formData.get('high_concurrency_enabled') === 'on',
+                      mode: formData.get('high_concurrency_mode') || 'auto',
+                      max_inflight:
+                        parseInt(formData.get('high_concurrency_max_inflight') as string) || 8,
+                      wait_timeout_ms:
+                        parseInt(formData.get('high_concurrency_wait_timeout_ms') as string) || 5000,
+                      redis_lease_ms:
+                        parseInt(formData.get('high_concurrency_redis_lease_ms') as string) || 30000,
+                    },
                     stock_display: {
                       mode: formData.get('stock_display_mode'),
-                      low_stock_threshold: parseInt(formData.get('low_stock_threshold') as string) || 10,
-                      high_stock_threshold: parseInt(formData.get('high_stock_threshold') as string) || 50,
+                      low_stock_threshold:
+                        parseInt(formData.get('low_stock_threshold') as string) || 10,
+                      high_stock_threshold:
+                        parseInt(formData.get('high_stock_threshold') as string) || 50,
                     },
                     invoice: {
                       enabled: invoiceEnabled,
@@ -2813,17 +4180,14 @@ export default function SettingsPage() {
                     placeholder="ORD"
                     className="mt-1.5"
                   />
-                  <p className="text-xs text-muted-foreground mt-1">
+                  <p className="mt-1 text-xs text-muted-foreground">
                     {t.admin.orderNoPrefixExample}
                   </p>
                 </div>
 
                 <div>
                   <Label htmlFor="currency">{t.admin.currency}</Label>
-                  <Select
-                    name="currency"
-                    defaultValue={settingsData?.order?.currency || 'CNY'}
-                  >
+                  <Select name="currency" defaultValue={settingsData?.order?.currency || 'CNY'}>
                     <SelectTrigger id="currency" className="mt-1.5">
                       <SelectValue />
                     </SelectTrigger>
@@ -2841,9 +4205,7 @@ export default function SettingsPage() {
                       <SelectItem value="CAD">{t.admin.currencyCAD}</SelectItem>
                     </SelectContent>
                   </Select>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    {t.admin.currencyHint}
-                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">{t.admin.currencyHint}</p>
                 </div>
 
                 <div>
@@ -2855,14 +4217,16 @@ export default function SettingsPage() {
                     defaultValue={settingsData?.order?.auto_cancel_hours || 72}
                     className="mt-1.5"
                   />
-                  <p className="text-xs text-muted-foreground mt-1">
+                  <p className="mt-1 text-xs text-muted-foreground">
                     {t.admin.autoCancelHoursHint}
                   </p>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
                   <div>
-                    <Label htmlFor="max_pending_payment_orders_per_user">{t.admin.maxPendingPaymentOrdersPerUser}</Label>
+                    <Label htmlFor="max_pending_payment_orders_per_user">
+                      {t.admin.maxPendingPaymentOrdersPerUser}
+                    </Label>
                     <Input
                       id="max_pending_payment_orders_per_user"
                       name="max_pending_payment_orders_per_user"
@@ -2871,12 +4235,14 @@ export default function SettingsPage() {
                       defaultValue={settingsData?.order?.max_pending_payment_orders_per_user || 10}
                       className="mt-1.5"
                     />
-                    <p className="text-xs text-muted-foreground mt-1">
+                    <p className="mt-1 text-xs text-muted-foreground">
                       {t.admin.maxPendingPaymentOrdersPerUserHint}
                     </p>
                   </div>
                   <div>
-                    <Label htmlFor="max_payment_polling_tasks_per_user">{t.admin.maxPaymentPollingTasksPerUser}</Label>
+                    <Label htmlFor="max_payment_polling_tasks_per_user">
+                      {t.admin.maxPaymentPollingTasksPerUser}
+                    </Label>
                     <Input
                       id="max_payment_polling_tasks_per_user"
                       name="max_payment_polling_tasks_per_user"
@@ -2885,12 +4251,14 @@ export default function SettingsPage() {
                       defaultValue={settingsData?.order?.max_payment_polling_tasks_per_user || 20}
                       className="mt-1.5"
                     />
-                    <p className="text-xs text-muted-foreground mt-1">
+                    <p className="mt-1 text-xs text-muted-foreground">
                       {t.admin.maxPaymentPollingTasksPerUserHint}
                     </p>
                   </div>
                   <div>
-                    <Label htmlFor="max_payment_polling_tasks_global">{t.admin.maxPaymentPollingTasksGlobal}</Label>
+                    <Label htmlFor="max_payment_polling_tasks_global">
+                      {t.admin.maxPaymentPollingTasksGlobal}
+                    </Label>
                     <Input
                       id="max_payment_polling_tasks_global"
                       name="max_payment_polling_tasks_global"
@@ -2899,7 +4267,7 @@ export default function SettingsPage() {
                       defaultValue={settingsData?.order?.max_payment_polling_tasks_global || 2000}
                       className="mt-1.5"
                     />
-                    <p className="text-xs text-muted-foreground mt-1">
+                    <p className="mt-1 text-xs text-muted-foreground">
                       {t.admin.maxPaymentPollingTasksGlobalHint}
                     </p>
                   </div>
@@ -2916,7 +4284,7 @@ export default function SettingsPage() {
                       defaultValue={settingsData?.order?.max_order_items || 100}
                       className="mt-1.5"
                     />
-                    <p className="text-xs text-muted-foreground mt-1">
+                    <p className="mt-1 text-xs text-muted-foreground">
                       {t.admin.maxOrderItemsHint}
                     </p>
                   </div>
@@ -2930,14 +4298,124 @@ export default function SettingsPage() {
                       defaultValue={settingsData?.order?.max_item_quantity || 9999}
                       className="mt-1.5"
                     />
-                    <p className="text-xs text-muted-foreground mt-1">
+                    <p className="mt-1 text-xs text-muted-foreground">
                       {t.admin.maxItemQuantityHint}
                     </p>
                   </div>
                 </div>
 
-                <div className="border-t border-border pt-4 mt-4">
-                  <h4 className="font-medium mb-3">{t.admin.virtualDeliveryOrderTitle}</h4>
+                <div className="mt-4 border-t border-border pt-4">
+                  <h4 className="mb-3 font-medium">{t.admin.highConcurrencyProtectionTitle}</h4>
+                  <p className="mb-4 text-xs text-muted-foreground">
+                    {t.admin.highConcurrencyProtectionDesc}
+                  </p>
+                  <div className="flex items-center justify-between rounded-lg border border-border/70 bg-muted/20 px-4 py-3">
+                    <div>
+                      <Label htmlFor="high_concurrency_enabled">
+                        {t.admin.highConcurrencyProtectionEnabled}
+                      </Label>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {t.admin.highConcurrencyProtectionEnabledHint}
+                      </p>
+                    </div>
+                    <Switch
+                      id="high_concurrency_enabled"
+                      name="high_concurrency_enabled"
+                      defaultChecked={
+                        settingsData?.order?.high_concurrency_protection?.enabled || false
+                      }
+                    />
+                  </div>
+                  <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+                    <div>
+                      <Label htmlFor="high_concurrency_mode">
+                        {t.admin.highConcurrencyProtectionMode}
+                      </Label>
+                      <Select
+                        name="high_concurrency_mode"
+                        defaultValue={
+                          settingsData?.order?.high_concurrency_protection?.mode || 'auto'
+                        }
+                      >
+                        <SelectTrigger id="high_concurrency_mode" className="mt-1.5">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="auto">
+                            {t.admin.highConcurrencyProtectionModeAuto}
+                          </SelectItem>
+                          <SelectItem value="memory">
+                            {t.admin.highConcurrencyProtectionModeMemory}
+                          </SelectItem>
+                          <SelectItem value="redis">
+                            {t.admin.highConcurrencyProtectionModeRedis}
+                          </SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {t.admin.highConcurrencyProtectionModeHint}
+                      </p>
+                    </div>
+                    <div>
+                      <Label htmlFor="high_concurrency_max_inflight">
+                        {t.admin.highConcurrencyProtectionMaxInFlight}
+                      </Label>
+                      <Input
+                        id="high_concurrency_max_inflight"
+                        name="high_concurrency_max_inflight"
+                        type="number"
+                        min="1"
+                        defaultValue={
+                          settingsData?.order?.high_concurrency_protection?.max_inflight || 8
+                        }
+                        className="mt-1.5"
+                      />
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {t.admin.highConcurrencyProtectionMaxInFlightHint}
+                      </p>
+                    </div>
+                    <div>
+                      <Label htmlFor="high_concurrency_wait_timeout_ms">
+                        {t.admin.highConcurrencyProtectionWaitTimeout}
+                      </Label>
+                      <Input
+                        id="high_concurrency_wait_timeout_ms"
+                        name="high_concurrency_wait_timeout_ms"
+                        type="number"
+                        min="0"
+                        defaultValue={
+                          settingsData?.order?.high_concurrency_protection?.wait_timeout_ms || 5000
+                        }
+                        className="mt-1.5"
+                      />
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {t.admin.highConcurrencyProtectionWaitTimeoutHint}
+                      </p>
+                    </div>
+                    <div>
+                      <Label htmlFor="high_concurrency_redis_lease_ms">
+                        {t.admin.highConcurrencyProtectionRedisLease}
+                      </Label>
+                      <Input
+                        id="high_concurrency_redis_lease_ms"
+                        name="high_concurrency_redis_lease_ms"
+                        type="number"
+                        min="1000"
+                        defaultValue={
+                          settingsData?.order?.high_concurrency_protection?.redis_lease_ms ||
+                          30000
+                        }
+                        className="mt-1.5"
+                      />
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {t.admin.highConcurrencyProtectionRedisLeaseHint}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-4 border-t border-border pt-4">
+                  <h4 className="mb-3 font-medium">{t.admin.virtualDeliveryOrderTitle}</h4>
                   <div>
                     <Label htmlFor="virtual_delivery_order">{t.admin.virtualDeliveryOrder}</Label>
                     <Select
@@ -2953,14 +4431,16 @@ export default function SettingsPage() {
                         <SelectItem value="oldest">{t.admin.virtualDeliveryOldest}</SelectItem>
                       </SelectContent>
                     </Select>
-                    <p className="text-xs text-muted-foreground mt-1">
+                    <p className="mt-1 text-xs text-muted-foreground">
                       {t.admin.virtualDeliveryOrderHint}
                     </p>
                   </div>
-                  <div className="flex items-center justify-between mt-4">
+                  <div className="mt-4 flex items-center justify-between">
                     <div>
                       <Label>{t.admin.showVirtualStockRemark}</Label>
-                      <p className="text-xs text-muted-foreground">{t.admin.showVirtualStockRemarkHint}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {t.admin.showVirtualStockRemarkHint}
+                      </p>
                     </div>
                     <Switch
                       checked={showVirtualStockRemark}
@@ -2969,8 +4449,8 @@ export default function SettingsPage() {
                   </div>
                 </div>
 
-                <div className="border-t border-border pt-4 mt-4">
-                  <h4 className="font-medium mb-3">{t.admin.stockDisplayTitle}</h4>
+                <div className="mt-4 border-t border-border pt-4">
+                  <h4 className="mb-3 font-medium">{t.admin.stockDisplayTitle}</h4>
                   <div className="space-y-4">
                     <div>
                       <Label htmlFor="stock_display_mode">{t.admin.stockDisplayMode}</Label>
@@ -2987,7 +4467,7 @@ export default function SettingsPage() {
                           <SelectItem value="hidden">{t.admin.stockDisplayModeHidden}</SelectItem>
                         </SelectContent>
                       </Select>
-                      <p className="text-xs text-muted-foreground mt-1">
+                      <p className="mt-1 text-xs text-muted-foreground">
                         {settingsData?.order?.stock_display?.mode === 'level'
                           ? t.admin.stockDisplayModeLevelDesc
                           : settingsData?.order?.stock_display?.mode === 'hidden'
@@ -3004,10 +4484,12 @@ export default function SettingsPage() {
                           name="low_stock_threshold"
                           type="number"
                           min="0"
-                          defaultValue={settingsData?.order?.stock_display?.low_stock_threshold || 10}
+                          defaultValue={
+                            settingsData?.order?.stock_display?.low_stock_threshold || 10
+                          }
                           className="mt-1.5"
                         />
-                        <p className="text-xs text-muted-foreground mt-1">
+                        <p className="mt-1 text-xs text-muted-foreground">
                           {t.admin.stockLowThresholdHint}
                         </p>
                       </div>
@@ -3018,10 +4500,12 @@ export default function SettingsPage() {
                           name="high_stock_threshold"
                           type="number"
                           min="0"
-                          defaultValue={settingsData?.order?.stock_display?.high_stock_threshold || 50}
+                          defaultValue={
+                            settingsData?.order?.stock_display?.high_stock_threshold || 50
+                          }
                           className="mt-1.5"
                         />
-                        <p className="text-xs text-muted-foreground mt-1">
+                        <p className="mt-1 text-xs text-muted-foreground">
                           {t.admin.stockHighThresholdHint}
                         </p>
                       </div>
@@ -3029,90 +4513,183 @@ export default function SettingsPage() {
                   </div>
                 </div>
 
-                <div className="border-t border-border pt-4 mt-4">
-                  <div className="flex items-center justify-between mb-3">
+                <div className="mt-4 border-t border-border pt-4">
+                  <div className="mb-3 flex items-center justify-between">
                     <div>
                       <h4 className="font-medium">{t.admin.invoiceTitle}</h4>
                       <p className="text-xs text-muted-foreground">{t.admin.invoiceDesc}</p>
                     </div>
-                    <Switch
-                      checked={invoiceEnabled}
-                      onCheckedChange={setInvoiceEnabled}
-                    />
+                    <Switch checked={invoiceEnabled} onCheckedChange={setInvoiceEnabled} />
                   </div>
 
                   {invoiceEnabled && (
-                    <div className="space-y-4 mt-4">
+                    <div className="mt-4 space-y-4">
                       <div>
                         <Label>{t.admin.invoiceTemplateType}</Label>
-                        <div className="grid grid-cols-2 gap-3 mt-1.5">
+                        <div className="mt-1.5 grid grid-cols-2 gap-3">
                           <button
                             type="button"
                             onClick={() => setInvoiceTemplateType('builtin')}
-                            className={`p-3 rounded-lg border text-left text-sm transition-colors ${
+                            className={`rounded-lg border p-3 text-left text-sm transition-colors ${
                               invoiceTemplateType === 'builtin'
                                 ? 'border-primary bg-primary/5'
                                 : 'border-border hover:border-primary/50'
                             }`}
                           >
                             <div className="font-medium">{t.admin.invoiceBuiltin}</div>
-                            <div className="text-xs text-muted-foreground mt-1">{t.admin.invoiceBuiltinDesc}</div>
+                            <div className="mt-1 text-xs text-muted-foreground">
+                              {t.admin.invoiceBuiltinDesc}
+                            </div>
                           </button>
                           <button
                             type="button"
                             onClick={() => setInvoiceTemplateType('custom')}
-                            className={`p-3 rounded-lg border text-left text-sm transition-colors ${
+                            className={`rounded-lg border p-3 text-left text-sm transition-colors ${
                               invoiceTemplateType === 'custom'
                                 ? 'border-primary bg-primary/5'
                                 : 'border-border hover:border-primary/50'
                             }`}
                           >
                             <div className="font-medium">{t.admin.invoiceCustom}</div>
-                            <div className="text-xs text-muted-foreground mt-1">{t.admin.invoiceCustomDesc}</div>
+                            <div className="mt-1 text-xs text-muted-foreground">
+                              {t.admin.invoiceCustomDesc}
+                            </div>
                           </button>
                         </div>
                       </div>
 
+                      <div className="flex flex-wrap gap-2">
+                        {invoiceTemplateMarketHref ? (
+                          <Button variant="outline" size="sm" asChild>
+                            <Link href={invoiceTemplateMarketHref}>
+                              {t.admin.pluginImportFromMarket}
+                            </Link>
+                          </Button>
+                        ) : (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            disabled
+                            title={t.admin.pluginMarketUnavailableHint}
+                          >
+                            {t.admin.pluginImportFromMarket}
+                          </Button>
+                        )}
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => invoiceTemplatePackageInputRef.current?.click()}
+                          disabled={importTemplatePackageMutation.isPending}
+                        >
+                          <FileUp className="mr-2 h-4 w-4" />
+                          {importTemplatePackageMutation.isPending &&
+                          templatePackageImportKind === 'invoice_template'
+                            ? t.admin.templatePackageImporting
+                            : t.admin.templatePackageImport}
+                        </Button>
+                        <input
+                          ref={invoiceTemplatePackageInputRef}
+                          type="file"
+                          accept=".zip,application/zip"
+                          className="hidden"
+                          onChange={(event) => {
+                            const file = event.target.files?.[0]
+                            event.currentTarget.value = ''
+                            if (!file) {
+                              return
+                            }
+                            setTemplatePackageImportKind('invoice_template')
+                            importTemplatePackageMutation.mutate({
+                              file,
+                              expectedKind: 'invoice_template',
+                              targetKey: 'invoice',
+                            })
+                          }}
+                        />
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        {t.admin.templatePackageImportHint}
+                      </p>
+
                       {invoiceTemplateType === 'builtin' && (
-                        <div className="space-y-4 border rounded-lg p-4 bg-muted/30">
+                        <div className="space-y-4 rounded-lg border bg-muted/30 p-4">
                           <h5 className="text-sm font-medium">{t.admin.invoiceCompanyInfo}</h5>
                           <div className="grid grid-cols-2 gap-4">
                             <div>
-                              <Label htmlFor="invoice_company_name">{t.admin.invoiceCompanyName}</Label>
-                              <Input id="invoice_company_name" name="invoice_company_name"
-                                defaultValue={settingsData?.order?.invoice?.company_name || ''} className="mt-1.5" />
+                              <Label htmlFor="invoice_company_name">
+                                {t.admin.invoiceCompanyName}
+                              </Label>
+                              <Input
+                                id="invoice_company_name"
+                                name="invoice_company_name"
+                                defaultValue={settingsData?.order?.invoice?.company_name || ''}
+                                className="mt-1.5"
+                              />
                             </div>
                             <div>
-                              <Label htmlFor="invoice_company_email">{t.admin.invoiceCompanyEmail}</Label>
-                              <Input id="invoice_company_email" name="invoice_company_email"
-                                defaultValue={settingsData?.order?.invoice?.company_email || ''} className="mt-1.5" />
+                              <Label htmlFor="invoice_company_email">
+                                {t.admin.invoiceCompanyEmail}
+                              </Label>
+                              <Input
+                                id="invoice_company_email"
+                                name="invoice_company_email"
+                                defaultValue={settingsData?.order?.invoice?.company_email || ''}
+                                className="mt-1.5"
+                              />
                             </div>
                             <div>
-                              <Label htmlFor="invoice_company_phone">{t.admin.invoiceCompanyPhone}</Label>
-                              <Input id="invoice_company_phone" name="invoice_company_phone"
-                                defaultValue={settingsData?.order?.invoice?.company_phone || ''} className="mt-1.5" />
+                              <Label htmlFor="invoice_company_phone">
+                                {t.admin.invoiceCompanyPhone}
+                              </Label>
+                              <Input
+                                id="invoice_company_phone"
+                                name="invoice_company_phone"
+                                defaultValue={settingsData?.order?.invoice?.company_phone || ''}
+                                className="mt-1.5"
+                              />
                             </div>
                             <div>
                               <Label htmlFor="invoice_tax_id">{t.admin.invoiceTaxId}</Label>
-                              <Input id="invoice_tax_id" name="invoice_tax_id"
-                                defaultValue={settingsData?.order?.invoice?.tax_id || ''} className="mt-1.5" />
+                              <Input
+                                id="invoice_tax_id"
+                                name="invoice_tax_id"
+                                defaultValue={settingsData?.order?.invoice?.tax_id || ''}
+                                className="mt-1.5"
+                              />
                             </div>
                           </div>
                           <div>
-                            <Label htmlFor="invoice_company_address">{t.admin.invoiceCompanyAddress}</Label>
-                            <Input id="invoice_company_address" name="invoice_company_address"
-                              defaultValue={settingsData?.order?.invoice?.company_address || ''} className="mt-1.5" />
+                            <Label htmlFor="invoice_company_address">
+                              {t.admin.invoiceCompanyAddress}
+                            </Label>
+                            <Input
+                              id="invoice_company_address"
+                              name="invoice_company_address"
+                              defaultValue={settingsData?.order?.invoice?.company_address || ''}
+                              className="mt-1.5"
+                            />
                           </div>
                           <div>
-                            <Label htmlFor="invoice_company_logo">{t.admin.invoiceCompanyLogo}</Label>
-                            <Input id="invoice_company_logo" name="invoice_company_logo"
-                              defaultValue={settingsData?.order?.invoice?.company_logo || ''} className="mt-1.5" placeholder="https://" />
+                            <Label htmlFor="invoice_company_logo">
+                              {t.admin.invoiceCompanyLogo}
+                            </Label>
+                            <Input
+                              id="invoice_company_logo"
+                              name="invoice_company_logo"
+                              defaultValue={settingsData?.order?.invoice?.company_logo || ''}
+                              className="mt-1.5"
+                              placeholder="https://"
+                            />
                           </div>
                           <div>
                             <Label htmlFor="invoice_footer_text">{t.admin.invoiceFooterText}</Label>
-                            <Input id="invoice_footer_text" name="invoice_footer_text"
+                            <Input
+                              id="invoice_footer_text"
+                              name="invoice_footer_text"
                               defaultValue={settingsData?.order?.invoice?.footer_text || ''}
-                              placeholder={t.admin.invoiceFooterPlaceholder} className="mt-1.5" />
+                              placeholder={t.admin.invoiceFooterPlaceholder}
+                              className="mt-1.5"
+                            />
                           </div>
                         </div>
                       )}
@@ -3122,23 +4699,51 @@ export default function SettingsPage() {
                           <Label>{t.admin.invoiceCustomTemplate}</Label>
                           <CodeMirror
                             value={invoiceCustomTemplate}
-                            extensions={[javascript()]}
+                            extensions={[html()]}
                             onChange={setInvoiceCustomTemplate}
                             height="300px"
                             theme={resolvedTheme === 'dark' ? 'dark' : 'light'}
-                            className="rounded-md border overflow-hidden text-sm"
+                            className="overflow-hidden rounded-md border text-sm"
                           />
                           <p className="text-xs text-muted-foreground">
                             {t.admin.invoiceCustomTemplateTip}
                           </p>
                           {/* Hidden inputs for company info that custom templates also need */}
-                          <input type="hidden" name="invoice_company_name" value={settingsData?.order?.invoice?.company_name || ''} />
-                          <input type="hidden" name="invoice_company_address" value={settingsData?.order?.invoice?.company_address || ''} />
-                          <input type="hidden" name="invoice_company_phone" value={settingsData?.order?.invoice?.company_phone || ''} />
-                          <input type="hidden" name="invoice_company_email" value={settingsData?.order?.invoice?.company_email || ''} />
-                          <input type="hidden" name="invoice_company_logo" value={settingsData?.order?.invoice?.company_logo || ''} />
-                          <input type="hidden" name="invoice_tax_id" value={settingsData?.order?.invoice?.tax_id || ''} />
-                          <input type="hidden" name="invoice_footer_text" value={settingsData?.order?.invoice?.footer_text || ''} />
+                          <input
+                            type="hidden"
+                            name="invoice_company_name"
+                            value={settingsData?.order?.invoice?.company_name || ''}
+                          />
+                          <input
+                            type="hidden"
+                            name="invoice_company_address"
+                            value={settingsData?.order?.invoice?.company_address || ''}
+                          />
+                          <input
+                            type="hidden"
+                            name="invoice_company_phone"
+                            value={settingsData?.order?.invoice?.company_phone || ''}
+                          />
+                          <input
+                            type="hidden"
+                            name="invoice_company_email"
+                            value={settingsData?.order?.invoice?.company_email || ''}
+                          />
+                          <input
+                            type="hidden"
+                            name="invoice_company_logo"
+                            value={settingsData?.order?.invoice?.company_logo || ''}
+                          />
+                          <input
+                            type="hidden"
+                            name="invoice_tax_id"
+                            value={settingsData?.order?.invoice?.tax_id || ''}
+                          />
+                          <input
+                            type="hidden"
+                            name="invoice_footer_text"
+                            value={settingsData?.order?.invoice?.footer_text || ''}
+                          />
                         </div>
                       )}
                     </div>
@@ -3256,45 +4861,61 @@ export default function SettingsPage() {
                       <SelectContent>
                         <SelectItem value="217.2 91% 60%">
                           <div className="flex items-center gap-2">
-                            <div className="w-4 h-4 rounded-full" style={{ background: 'hsl(217.2, 91%, 60%)' }} />
+                            <div
+                              className="h-4 w-4 rounded-full"
+                              style={{ background: 'hsl(217.2, 91%, 60%)' }}
+                            />
                             {t.admin.blueDefault}
                           </div>
                         </SelectItem>
                         <SelectItem value="142.1 76.2% 36.3%">
                           <div className="flex items-center gap-2">
-                            <div className="w-4 h-4 rounded-full" style={{ background: 'hsl(142.1, 76.2%, 36.3%)' }} />
+                            <div
+                              className="h-4 w-4 rounded-full"
+                              style={{ background: 'hsl(142.1, 76.2%, 36.3%)' }}
+                            />
                             {t.admin.green}
                           </div>
                         </SelectItem>
                         <SelectItem value="346.8 77.2% 49.8%">
                           <div className="flex items-center gap-2">
-                            <div className="w-4 h-4 rounded-full" style={{ background: 'hsl(346.8, 77.2%, 49.8%)' }} />
+                            <div
+                              className="h-4 w-4 rounded-full"
+                              style={{ background: 'hsl(346.8, 77.2%, 49.8%)' }}
+                            />
                             {t.admin.rose}
                           </div>
                         </SelectItem>
                         <SelectItem value="262.1 83.3% 57.8%">
                           <div className="flex items-center gap-2">
-                            <div className="w-4 h-4 rounded-full" style={{ background: 'hsl(262.1, 83.3%, 57.8%)' }} />
+                            <div
+                              className="h-4 w-4 rounded-full"
+                              style={{ background: 'hsl(262.1, 83.3%, 57.8%)' }}
+                            />
                             {t.admin.purple}
                           </div>
                         </SelectItem>
                         <SelectItem value="24.6 95% 53.1%">
                           <div className="flex items-center gap-2">
-                            <div className="w-4 h-4 rounded-full" style={{ background: 'hsl(24.6, 95%, 53.1%)' }} />
+                            <div
+                              className="h-4 w-4 rounded-full"
+                              style={{ background: 'hsl(24.6, 95%, 53.1%)' }}
+                            />
                             {t.admin.orange}
                           </div>
                         </SelectItem>
                         <SelectItem value="0 72.2% 50.6%">
                           <div className="flex items-center gap-2">
-                            <div className="w-4 h-4 rounded-full" style={{ background: 'hsl(0, 72.2%, 50.6%)' }} />
+                            <div
+                              className="h-4 w-4 rounded-full"
+                              style={{ background: 'hsl(0, 72.2%, 50.6%)' }}
+                            />
                             {t.admin.red}
                           </div>
                         </SelectItem>
                       </SelectContent>
                     </Select>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      {t.admin.primaryColorHint}
-                    </p>
+                    <p className="mt-1 text-xs text-muted-foreground">{t.admin.primaryColorHint}</p>
                   </div>
 
                   <div>
@@ -3306,9 +4927,7 @@ export default function SettingsPage() {
                       placeholder="https://example.com/logo.png"
                       className="mt-1.5"
                     />
-                    <p className="text-xs text-muted-foreground mt-1">
-                      {t.admin.logoUrlHint}
-                    </p>
+                    <p className="mt-1 text-xs text-muted-foreground">{t.admin.logoUrlHint}</p>
                   </div>
 
                   <div>
@@ -3320,9 +4939,7 @@ export default function SettingsPage() {
                       placeholder="https://example.com/favicon.ico"
                       className="mt-1.5"
                     />
-                    <p className="text-xs text-muted-foreground mt-1">
-                      {t.admin.faviconUrlHint}
-                    </p>
+                    <p className="mt-1 text-xs text-muted-foreground">{t.admin.faviconUrlHint}</p>
                   </div>
 
                   <Button type="submit" disabled={updateMutation.isPending}>
@@ -3335,7 +4952,16 @@ export default function SettingsPage() {
 
             {/* 认证页品牌面板 */}
             <AuthBrandingCard
-              initial={settingsData?.customization?.auth_branding || { mode: 'default', title: '', title_en: '', subtitle: '', subtitle_en: '', custom_html: '' }}
+              initial={
+                settingsData?.customization?.auth_branding || {
+                  mode: 'default',
+                  title: '',
+                  title_en: '',
+                  subtitle: '',
+                  subtitle_en: '',
+                  custom_html: '',
+                }
+              }
               onSave={(data) => {
                 handleSubmit('customization', {
                   _submitted: true,
@@ -3350,6 +4976,55 @@ export default function SettingsPage() {
               t={t}
               primaryColor={primaryColor}
               cmTheme={resolvedTheme === 'dark' ? 'dark' : 'light'}
+              actions={
+                <>
+                  {authBrandingMarketHref ? (
+                    <Button variant="outline" size="sm" asChild>
+                      <Link href={authBrandingMarketHref}>{t.admin.pluginImportFromMarket}</Link>
+                    </Button>
+                  ) : (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled
+                      title={t.admin.pluginMarketUnavailableHint}
+                    >
+                      {t.admin.pluginImportFromMarket}
+                    </Button>
+                  )}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => authBrandingTemplatePackageInputRef.current?.click()}
+                    disabled={importTemplatePackageMutation.isPending}
+                  >
+                    <FileUp className="mr-2 h-4 w-4" />
+                    {importTemplatePackageMutation.isPending &&
+                    templatePackageImportKind === 'auth_branding_template'
+                      ? t.admin.templatePackageImporting
+                      : t.admin.templatePackageImport}
+                  </Button>
+                  <input
+                    ref={authBrandingTemplatePackageInputRef}
+                    type="file"
+                    accept=".zip,application/zip"
+                    className="hidden"
+                    onChange={(event) => {
+                      const file = event.target.files?.[0]
+                      event.currentTarget.value = ''
+                      if (!file) {
+                        return
+                      }
+                      setTemplatePackageImportKind('auth_branding_template')
+                      importTemplatePackageMutation.mutate({
+                        file,
+                        expectedKind: 'auth_branding_template',
+                        targetKey: 'auth_branding',
+                      })
+                    }}
+                  />
+                </>
+              }
             />
 
             {/* 落地页编辑 */}
@@ -3359,25 +5034,91 @@ export default function SettingsPage() {
                 <CardDescription>{t.admin.landingPageDesc}</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="rounded-md border bg-muted/30 p-3 text-sm space-y-1">
+                <div className="space-y-1 rounded-md border bg-muted/30 p-3 text-sm">
                   <p className="font-medium">{t.admin.landingPageVariables}</p>
-                  <p className="text-muted-foreground text-xs">{t.admin.landingPageVariablesDesc}</p>
-                  <div className="flex flex-wrap gap-2 mt-2">
-                    {['{{.AppName}}', '{{.AppURL}}', '{{.Currency}}', '{{.LogoURL}}', '{{.PrimaryColor}}', '{{.Year}}'].map(v => (
-                      <Badge key={v} variant="secondary" className="font-mono text-xs">{v}</Badge>
+                  <p className="text-xs text-muted-foreground">
+                    {t.admin.landingPageVariablesDesc}
+                  </p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {[
+                      '{{.AppName}}',
+                      '{{.AppURL}}',
+                      '{{.Currency}}',
+                      '{{.LogoURL}}',
+                      '{{.PrimaryColor}}',
+                      '{{.Year}}',
+                    ].map((v) => (
+                      <Badge key={v} variant="secondary" className="font-mono text-xs">
+                        {v}
+                      </Badge>
                     ))}
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
-                  <Button variant={landingPreview ? 'outline' : 'default'} size="sm" onClick={() => setLandingPreview(false)}>
-                    <FileCode className="mr-1.5 h-4 w-4" />{t.admin.code}
+                  <Button
+                    variant={landingPreview ? 'outline' : 'default'}
+                    size="sm"
+                    onClick={() => setLandingPreview(false)}
+                  >
+                    <FileCode className="mr-1.5 h-4 w-4" />
+                    {t.admin.code}
                   </Button>
-                  <Button variant={landingPreview ? 'default' : 'outline'} size="sm" onClick={() => setLandingPreview(true)}>
-                    <Globe className="mr-1.5 h-4 w-4" />{t.admin.preview}
+                  <Button
+                    variant={landingPreview ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => setLandingPreview(true)}
+                  >
+                    <Globe className="mr-1.5 h-4 w-4" />
+                    {t.admin.preview}
                   </Button>
+                  {landingPageMarketHref ? (
+                    <Button variant="outline" size="sm" asChild>
+                      <Link href={landingPageMarketHref}>{t.admin.pluginImportFromMarket}</Link>
+                    </Button>
+                  ) : (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled
+                      title={t.admin.pluginMarketUnavailableHint}
+                    >
+                      {t.admin.pluginImportFromMarket}
+                    </Button>
+                  )}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => landingTemplatePackageInputRef.current?.click()}
+                    disabled={importTemplatePackageMutation.isPending}
+                  >
+                    <FileUp className="mr-2 h-4 w-4" />
+                    {importTemplatePackageMutation.isPending &&
+                    templatePackageImportKind === 'landing_page_template'
+                      ? t.admin.templatePackageImporting
+                      : t.admin.templatePackageImport}
+                  </Button>
+                  <input
+                    ref={landingTemplatePackageInputRef}
+                    type="file"
+                    accept=".zip,application/zip"
+                    className="hidden"
+                    onChange={(event) => {
+                      const file = event.target.files?.[0]
+                      event.currentTarget.value = ''
+                      if (!file) {
+                        return
+                      }
+                      setTemplatePackageImportKind('landing_page_template')
+                      importTemplatePackageMutation.mutate({
+                        file,
+                        expectedKind: 'landing_page_template',
+                      })
+                    }}
+                  />
                 </div>
+                <p className="text-xs text-muted-foreground">{t.admin.templatePackageImportHint}</p>
                 {landingPreview ? (
-                  <div className="border rounded-md overflow-hidden bg-white">
+                  <div className="overflow-hidden rounded-md border bg-background">
                     <iframe
                       srcDoc={landingHtml}
                       className="w-full border-0"
@@ -3395,7 +5136,7 @@ export default function SettingsPage() {
                       onChange={(v) => setLandingHtml(v)}
                       height="500px"
                       theme={resolvedTheme === 'dark' ? 'dark' : 'light'}
-                      className="mt-1 rounded-md border overflow-hidden"
+                      className="mt-1 overflow-hidden rounded-md border"
                     />
                   </div>
                 )}
@@ -3409,17 +5150,32 @@ export default function SettingsPage() {
                   </Button>
                   <Button
                     variant="destructive"
-                    onClick={() => {
-                      if (confirm(t.admin.landingPageResetConfirm)) {
-                        resetLandingPageMutation.mutate()
-                      }
-                    }}
+                    onClick={() => setLandingResetDialogOpen(true)}
                     disabled={resetLandingPageMutation.isPending}
                   >
                     <RotateCcw className="mr-2 h-4 w-4" />
                     {resetLandingPageMutation.isPending ? t.admin.saving : t.admin.landingPageReset}
                   </Button>
                 </div>
+                <AlertDialog open={landingResetDialogOpen} onOpenChange={setLandingResetDialogOpen}>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>{t.admin.landingPageReset}</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        {t.admin.landingPageResetConfirm}
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>{t.common.cancel}</AlertDialogCancel>
+                      <AlertDialogAction
+                        onClick={() => resetLandingPageMutation.mutate()}
+                        className="bg-red-600 hover:bg-red-700"
+                      >
+                        {t.admin.landingPageReset}
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
               </CardContent>
             </Card>
 
@@ -3433,20 +5189,113 @@ export default function SettingsPage() {
                 <CardDescription>{t.admin.pageRulesDesc}</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
+                <div className="flex flex-wrap gap-2">
+                  {pageRulesMarketHref ? (
+                    <Button variant="outline" size="sm" asChild>
+                      <Link href={pageRulesMarketHref}>{t.admin.pluginImportFromMarket}</Link>
+                    </Button>
+                  ) : (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled
+                      title={t.admin.pluginMarketUnavailableHint}
+                    >
+                      {t.admin.pluginImportFromMarket}
+                    </Button>
+                  )}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => pageRulesTemplatePackageInputRef.current?.click()}
+                    disabled={importTemplatePackageMutation.isPending}
+                  >
+                    <FileUp className="mr-2 h-4 w-4" />
+                    {importTemplatePackageMutation.isPending &&
+                    templatePackageImportKind === 'page_rule_pack'
+                      ? t.admin.templatePackageImporting
+                      : t.admin.templatePackageImport}
+                  </Button>
+                  <input
+                    ref={pageRulesTemplatePackageInputRef}
+                    type="file"
+                    accept=".zip,application/zip"
+                    className="hidden"
+                    onChange={(event) => {
+                      const file = event.target.files?.[0]
+                      event.currentTarget.value = ''
+                      if (!file) {
+                        return
+                      }
+                      setTemplatePackageImportKind('page_rule_pack')
+                      importTemplatePackageMutation.mutate({
+                        file,
+                        expectedKind: 'page_rule_pack',
+                        targetKey: 'page_rules',
+                      })
+                    }}
+                  />
+                </div>
+                <p className="text-xs text-muted-foreground">{t.admin.templatePackageImportHint}</p>
                 {/* 内置规则快捷添加 */}
                 <div>
                   <Label>{t.admin.quickAddBuiltinRules}</Label>
-                  <div className="flex flex-wrap gap-2 mt-1.5">
+                  <div className="mt-1.5 flex flex-wrap gap-2">
                     {[
-                      { label: t.admin.presetGlobal, name: t.admin.presetGlobalName, pattern: '.*', match_type: 'regex' },
-                      { label: t.admin.presetHome, name: t.admin.presetHomeName, pattern: '/', match_type: 'exact' },
-                      { label: t.admin.presetProducts, name: t.admin.presetProductsName, pattern: '/products', match_type: 'exact' },
-                      { label: t.admin.presetProductDetail, name: t.admin.presetProductDetailName, pattern: '^/products/[^/]+$', match_type: 'regex' },
-                      { label: t.admin.presetCart, name: t.admin.presetCartName, pattern: '/cart', match_type: 'exact' },
-                      { label: t.admin.presetOrders, name: t.admin.presetOrdersName, pattern: '^/orders', match_type: 'regex' },
-                      { label: t.admin.presetLogin, name: t.admin.presetLoginName, pattern: '/login', match_type: 'exact' },
-                      { label: t.admin.presetTickets, name: t.admin.presetTicketsName, pattern: '^/tickets', match_type: 'regex' },
-                      { label: t.admin.presetAdmin, name: t.admin.presetAdminName, pattern: '^/admin', match_type: 'regex' },
+                      {
+                        label: t.admin.presetGlobal,
+                        name: t.admin.presetGlobalName,
+                        pattern: '.*',
+                        match_type: 'regex',
+                      },
+                      {
+                        label: t.admin.presetHome,
+                        name: t.admin.presetHomeName,
+                        pattern: '/',
+                        match_type: 'exact',
+                      },
+                      {
+                        label: t.admin.presetProducts,
+                        name: t.admin.presetProductsName,
+                        pattern: '/products',
+                        match_type: 'exact',
+                      },
+                      {
+                        label: t.admin.presetProductDetail,
+                        name: t.admin.presetProductDetailName,
+                        pattern: '^/products/[^/]+$',
+                        match_type: 'regex',
+                      },
+                      {
+                        label: t.admin.presetCart,
+                        name: t.admin.presetCartName,
+                        pattern: '/cart',
+                        match_type: 'exact',
+                      },
+                      {
+                        label: t.admin.presetOrders,
+                        name: t.admin.presetOrdersName,
+                        pattern: '^/orders',
+                        match_type: 'regex',
+                      },
+                      {
+                        label: t.admin.presetLogin,
+                        name: t.admin.presetLoginName,
+                        pattern: '/login',
+                        match_type: 'exact',
+                      },
+                      {
+                        label: t.admin.presetTickets,
+                        name: t.admin.presetTicketsName,
+                        pattern: '^/tickets',
+                        match_type: 'regex',
+                      },
+                      {
+                        label: t.admin.presetAdmin,
+                        name: t.admin.presetAdminName,
+                        pattern: '^/admin',
+                        match_type: 'regex',
+                      },
                     ].map((preset) => (
                       <Button
                         key={preset.pattern}
@@ -3454,14 +5303,17 @@ export default function SettingsPage() {
                         variant="outline"
                         size="sm"
                         onClick={() => {
-                          setPageRules(prev => [...prev, {
-                            name: preset.name,
-                            pattern: preset.pattern,
-                            match_type: preset.match_type,
-                            css: '',
-                            js: '',
-                            enabled: true,
-                          }])
+                          setPageRules((prev) => [
+                            ...prev,
+                            {
+                              name: preset.name,
+                              pattern: preset.pattern,
+                              match_type: preset.match_type,
+                              css: '',
+                              js: '',
+                              enabled: true,
+                            },
+                          ])
                         }}
                       >
                         <Plus className="mr-1 h-3 w-3" />
@@ -3476,14 +5328,17 @@ export default function SettingsPage() {
                   type="button"
                   variant="outline"
                   onClick={() => {
-                    setPageRules(prev => [...prev, {
-                      name: '',
-                      pattern: '',
-                      match_type: 'exact',
-                      css: '',
-                      js: '',
-                      enabled: true,
-                    }])
+                    setPageRules((prev) => [
+                      ...prev,
+                      {
+                        name: '',
+                        pattern: '',
+                        match_type: 'exact',
+                        css: '',
+                        js: '',
+                        enabled: true,
+                      },
+                    ])
                   }}
                 >
                   <Plus className="mr-2 h-4 w-4" />
@@ -3504,7 +5359,7 @@ export default function SettingsPage() {
                 ))}
 
                 {pageRules.length === 0 && (
-                  <p className="text-sm text-muted-foreground text-center py-4">
+                  <p className="py-4 text-center text-sm text-muted-foreground">
                     {t.admin.noPageRules}
                   </p>
                 )}
@@ -3532,15 +5387,18 @@ export default function SettingsPage() {
       </Tabs>
 
       {/* 重要提示 */}
-      <Card className="border-yellow-500/30 bg-yellow-500/10">
+      <Card className="border-yellow-500/30 bg-yellow-500/10 dark:border-yellow-500/40 dark:bg-yellow-950/20">
         <CardHeader>
           <CardTitle className="text-base">{t.admin.importantNotice}</CardTitle>
         </CardHeader>
-        <CardContent className="text-sm space-y-2">
+        <CardContent className="space-y-2 text-sm">
           <p>• {t.admin.noticeRestart}</p>
           <p>• {t.admin.noticeManualEdit}</p>
           <p>• {t.admin.noticeCaution}</p>
-          <p>• {t.admin.noticeBackup}<code className="text-xs bg-muted px-2 py-1 rounded">backend/config/config.json</code></p>
+          <p>
+            • {t.admin.noticeBackup}
+            <code className="rounded bg-muted px-2 py-1 text-xs">backend/config/config.json</code>
+          </p>
         </CardContent>
       </Card>
     </div>

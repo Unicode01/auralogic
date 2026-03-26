@@ -13,7 +13,7 @@ import {
   deleteVirtualInventory,
   updateVirtualInventory,
   importVirtualInventoryStock,
-  createVirtualInventoryStockManually
+  createVirtualInventoryStockManually,
 } from '@/lib/api'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -36,12 +36,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import {
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
-} from '@/components/ui/tabs'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   Dialog,
   DialogContent,
@@ -50,7 +45,18 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { Package, AlertTriangle, Plus, Edit, Trash2, RefreshCw, Database, FileText, Upload, Code2 } from 'lucide-react'
+import {
+  Package,
+  AlertTriangle,
+  Plus,
+  Edit,
+  Trash2,
+  RefreshCw,
+  Database,
+  FileText,
+  Upload,
+  Code2,
+} from 'lucide-react'
 import Link from 'next/link'
 import { useToast } from '@/hooks/use-toast'
 import {
@@ -67,14 +73,18 @@ import {
 import { useLocale } from '@/hooks/use-locale'
 import { getTranslations } from '@/lib/i18n'
 import { usePageTitle } from '@/hooks/use-page-title'
+import { resolveApiErrorMessage } from '@/lib/api-error'
+import { PluginSlot } from '@/components/plugins/plugin-slot'
 
 export default function InventoriesPage() {
   return (
-    <Suspense fallback={
-      <div className="flex items-center justify-center py-12">
-        <div className="animate-spin h-8 w-8 border-4 border-primary border-t-transparent rounded-full" />
-      </div>
-    }>
+    <Suspense
+      fallback={
+        <div className="flex items-center justify-center py-12">
+          <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+        </div>
+      }
+    >
       <InventoriesContent />
     </Suspense>
   )
@@ -88,6 +98,8 @@ function InventoriesContent() {
   const { locale } = useLocale()
   const t = getTranslations(locale)
   usePageTitle(t.pageTitle.adminInventories)
+  const getErrorMessage = (error: unknown, fallback: string) =>
+    resolveApiErrorMessage(error, t, fallback)
 
   const [page, setPage] = useState(1)
   const [virtualPage, setVirtualPage] = useState(1)
@@ -109,7 +121,7 @@ function InventoriesContent() {
     description: '',
     total_limit: 0,
     is_active: true,
-    notes: ''
+    notes: '',
   })
 
   // 导入库存对话框状态
@@ -153,7 +165,11 @@ function InventoriesContent() {
   })
 
   // 获取虚拟库存列表
-  const { data: virtualData, isLoading: virtualLoading, refetch: refetchVirtual } = useQuery({
+  const {
+    data: virtualData,
+    isLoading: virtualLoading,
+    refetch: refetchVirtual,
+  } = useQuery({
     queryKey: ['virtualInventories', virtualPage, limit, virtualSearch],
     queryFn: () => getVirtualInventories({ page: virtualPage, limit, search: virtualSearch }),
   })
@@ -164,18 +180,32 @@ function InventoriesContent() {
     onSuccess: () => {
       toast.success(t.admin.virtualCreated)
       setCreateDialogOpen(false)
-      setNewVirtualInventory({ name: '', sku: '', type: 'static', script: '', script_config: '', description: '', total_limit: 0, is_active: true, notes: '' })
+      setNewVirtualInventory({
+        name: '',
+        sku: '',
+        type: 'static',
+        script: '',
+        script_config: '',
+        description: '',
+        total_limit: 0,
+        is_active: true,
+        notes: '',
+      })
       refetchVirtual()
     },
-    onError: (error: Error) => {
-      toast.error(`${t.admin.createFailed}: ${error.message}`)
+    onError: (error: unknown) => {
+      toast.error(getErrorMessage(error, t.admin.createFailed))
     },
   })
 
   // 导入虚拟库存项
   const importMutation = useMutation({
-    mutationFn: (data: { virtualInventoryId: number; import_type: 'file' | 'text'; file?: File; content?: string }) =>
-      importVirtualInventoryStock(data.virtualInventoryId, data),
+    mutationFn: (data: {
+      virtualInventoryId: number
+      import_type: 'file' | 'text'
+      file?: File
+      content?: string
+    }) => importVirtualInventoryStock(data.virtualInventoryId, data),
     onSuccess: (response: any) => {
       toast.success(t.admin.importSuccess.replace('{count}', String(response?.data?.count || 0)))
       setImportDialogOpen(false)
@@ -184,8 +214,8 @@ function InventoriesContent() {
       setSelectedVirtualInventoryId(null)
       refetchVirtual()
     },
-    onError: (error: Error) => {
-      toast.error(`${t.admin.createFailed}: ${error.message}`)
+    onError: (error: unknown) => {
+      toast.error(getErrorMessage(error, t.admin.createFailed))
     },
   })
 
@@ -201,8 +231,8 @@ function InventoriesContent() {
       setSelectedVirtualInventoryId(null)
       refetchVirtual()
     },
-    onError: (error: Error) => {
-      toast.error(`${t.admin.createFailed}: ${error.message}`)
+    onError: (error: unknown) => {
+      toast.error(getErrorMessage(error, t.admin.createFailed))
     },
   })
 
@@ -213,8 +243,8 @@ function InventoriesContent() {
       toast.success(t.admin.deleteSuccess)
       queryClient.invalidateQueries({ queryKey: ['inventories'] })
     },
-    onError: (error: Error) => {
-      toast.error(error.message || t.admin.deleteFailed)
+    onError: (error: unknown) => {
+      toast.error(getErrorMessage(error, t.admin.deleteFailed))
     },
   })
 
@@ -225,8 +255,8 @@ function InventoriesContent() {
       toast.success(t.admin.virtualDeleted)
       refetchVirtual()
     },
-    onError: (error: Error) => {
-      toast.error(error.message || t.admin.deleteFailed)
+    onError: (error: unknown) => {
+      toast.error(getErrorMessage(error, t.admin.deleteFailed))
     },
   })
 
@@ -243,38 +273,68 @@ function InventoriesContent() {
       toast.success(t.admin.updateSuccess)
       refetch()
     },
-    onError: (error: Error) => {
-      toast.error(`${t.admin.operationFailed}: ${error.message}`)
+    onError: (error: unknown) => {
+      toast.error(getErrorMessage(error, t.admin.operationFailed))
     },
   })
 
   // 切换虚拟库存启用状态
   const toggleVirtualMutation = useMutation({
-    mutationFn: (vi: any) =>
-      updateVirtualInventory(vi.id, { is_active: !vi.is_active }),
+    mutationFn: (vi: any) => updateVirtualInventory(vi.id, { is_active: !vi.is_active }),
     onSuccess: () => {
       toast.success(t.admin.updateSuccess)
       refetchVirtual()
     },
-    onError: (error: Error) => {
-      toast.error(`${t.admin.operationFailed}: ${error.message}`)
+    onError: (error: unknown) => {
+      toast.error(getErrorMessage(error, t.admin.operationFailed))
     },
   })
 
   // 数据处理
-  const inventories = showLowStock ? (data?.data || []) : (data?.data?.items || [])
+  const inventories = showLowStock ? data?.data || [] : data?.data?.items || []
   const pagination = showLowStock ? null : data?.data?.pagination
   const virtualInventories = virtualData?.data?.items || []
   const virtualPagination = virtualData?.data?.pagination
+  const physicalTotal =
+    Number(showLowStock ? inventories.length : pagination?.total || inventories.length) || 0
+  const virtualTotal = Number(virtualPagination?.total || virtualInventories.length || 0)
 
-  // 计算剩余库存
-  const getRemainingStock = (inventory: any) => {
+  function getRemainingStock(inventory: any) {
     return inventory.stock - inventory.sold_quantity - inventory.reserved_quantity
   }
 
-  // 是否低库存
-  const isLowStock = (inventory: any) => {
+  function isLowStock(inventory: any) {
     return getRemainingStock(inventory) <= inventory.safety_stock
+  }
+
+  const adminInventoriesPluginContext = {
+    view: 'admin_inventories',
+    active_tab: activeTab,
+    filters: {
+      physical: {
+        page,
+        limit,
+        product_id: productId ? Number(productId) : undefined,
+        is_active: isActiveFilter === 'all' ? undefined : isActiveFilter === 'true',
+        low_stock_only: showLowStock,
+      },
+      virtual: {
+        page: virtualPage,
+        limit,
+        search: virtualSearch || undefined,
+      },
+    },
+    summary: {
+      physical_total: physicalTotal,
+      physical_current_page_count: inventories.length,
+      physical_low_stock_count: inventories.filter((inventory: any) => isLowStock(inventory))
+        .length,
+      virtual_total: virtualTotal,
+      virtual_current_page_count: virtualInventories.length,
+      create_dialog_open: createDialogOpen,
+      import_dialog_open: importDialogOpen,
+      manual_create_dialog_open: manualCreateDialogOpen,
+    },
   }
 
   // 处理文件选择
@@ -306,7 +366,7 @@ function InventoriesContent() {
       importMutation.mutate({
         virtualInventoryId: selectedVirtualInventoryId,
         import_type: 'text',
-        content: textContent
+        content: textContent,
       })
     } else {
       if (!selectedFile) {
@@ -316,7 +376,7 @@ function InventoriesContent() {
       importMutation.mutate({
         virtualInventoryId: selectedVirtualInventoryId,
         import_type: 'file',
-        file: selectedFile
+        file: selectedFile,
       })
     }
   }
@@ -334,7 +394,7 @@ function InventoriesContent() {
     manualCreateMutation.mutate({
       virtualInventoryId: selectedVirtualInventoryId,
       content: manualStockContent,
-      remark: manualStockRemark
+      remark: manualStockRemark,
     })
   }
 
@@ -361,13 +421,12 @@ function InventoriesContent() {
 
   return (
     <div className="space-y-6">
+      <PluginSlot slot="admin.inventories.top" context={adminInventoriesPluginContext} />
       {/* 页面标题 */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold">{t.admin.inventoryManagement}</h1>
-          <p className="text-muted-foreground mt-1">
-            {t.admin.inventoryDesc}
-          </p>
+          <p className="mt-1 text-muted-foreground">{t.admin.inventoryDesc}</p>
         </div>
         <div className="flex gap-2">
           {activeTab === 'physical' && (
@@ -393,16 +452,14 @@ function InventoriesContent() {
           <TabsTrigger value="physical" className="flex items-center gap-2">
             <Package className="h-4 w-4" />
             {t.admin.physicalInventory}
-            {inventories.length > 0 && (
-              <Badge variant="secondary" className="ml-1">{pagination?.total || inventories.length}</Badge>
-            )}
+            {inventories.length > 0 ? ` (${pagination?.total || inventories.length})` : null}
           </TabsTrigger>
           <TabsTrigger value="virtual" className="flex items-center gap-2">
             <FileText className="h-4 w-4" />
             {t.admin.virtualInventory}
-            {virtualInventories.length > 0 && (
-              <Badge variant="secondary" className="ml-1">{virtualPagination?.total || virtualInventories.length}</Badge>
-            )}
+            {virtualInventories.length > 0
+              ? ` (${virtualPagination?.total || virtualInventories.length})`
+              : null}
           </TabsTrigger>
         </TabsList>
 
@@ -411,9 +468,9 @@ function InventoriesContent() {
           {/* 过滤器 */}
           <Card>
             <CardContent className="pt-6">
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
                 <div>
-                  <label className="text-sm font-medium mb-2 block">{t.admin.productId}</label>
+                  <label className="mb-2 block text-sm font-medium">{t.admin.productId}</label>
                   <Input
                     placeholder={t.admin.productIdPlaceholder}
                     value={productId}
@@ -421,7 +478,7 @@ function InventoriesContent() {
                   />
                 </div>
                 <div>
-                  <label className="text-sm font-medium mb-2 block">{t.admin.status}</label>
+                  <label className="mb-2 block text-sm font-medium">{t.admin.status}</label>
                   <Select value={isActiveFilter} onValueChange={setIsActiveFilter}>
                     <SelectTrigger>
                       <SelectValue />
@@ -434,7 +491,7 @@ function InventoriesContent() {
                   </Select>
                 </div>
                 <div>
-                  <label className="text-sm font-medium mb-2 block">{t.admin.filter}</label>
+                  <label className="mb-2 block text-sm font-medium">{t.admin.filter}</label>
                   <Select
                     value={showLowStock ? 'low' : 'all'}
                     onValueChange={(v) => setShowLowStock(v === 'low')}
@@ -466,20 +523,18 @@ function InventoriesContent() {
                 {t.admin.physicalInventoryList}
                 {showLowStock && (
                   <Badge variant="destructive" className="ml-2">
-                    <AlertTriangle className="h-3 w-3 mr-1" />
+                    <AlertTriangle className="mr-1 h-3 w-3" />
                     {t.admin.lowStock}
                   </Badge>
                 )}
               </CardTitle>
-              <CardDescription>
-                {t.admin.physicalInventoryDesc}
-              </CardDescription>
+              <CardDescription>{t.admin.physicalInventoryDesc}</CardDescription>
             </CardHeader>
             <CardContent>
               {isLoading ? (
-                <div className="text-center py-8">{t.common.loading}</div>
+                <div className="py-8 text-center">{t.common.loading}</div>
               ) : inventories.length === 0 ? (
-                <div className="text-center py-8 text-muted-foreground">
+                <div className="py-8 text-center text-muted-foreground">
                   {t.admin.noInventoryConfig}
                 </div>
               ) : (
@@ -506,9 +561,7 @@ function InventoriesContent() {
                         <TableRow key={inventory.id}>
                           <TableCell className="font-mono">{inventory.id}</TableCell>
                           <TableCell>
-                            <div className="font-medium">
-                              {inventory.name || 'N/A'}
-                            </div>
+                            <div className="font-medium">{inventory.name || 'N/A'}</div>
                           </TableCell>
                           <TableCell>
                             <div className="text-sm text-muted-foreground">
@@ -535,17 +588,19 @@ function InventoriesContent() {
                             )}
                           </TableCell>
                           <TableCell>
-                            <span className={isLowStock(inventory) ? 'text-red-600 font-semibold' : ''}>
+                            <span
+                              className={isLowStock(inventory) ? 'font-semibold text-red-600' : ''}
+                            >
                               {getRemainingStock(inventory)}
                             </span>
                           </TableCell>
                           <TableCell>{inventory.safety_stock}</TableCell>
                           <TableCell>
-                            <div className="flex items-center gap-1.5 flex-nowrap">
+                            <div className="flex flex-nowrap items-center gap-1.5">
                               {inventory.is_active ? (
                                 <Badge
                                   variant="default"
-                                  className="cursor-pointer hover:opacity-80 transition-opacity"
+                                  className="cursor-pointer transition-opacity hover:opacity-80"
                                   onClick={() => toggleInventoryMutation.mutate(inventory)}
                                   title={t.admin.toggleDisabled}
                                 >
@@ -554,7 +609,7 @@ function InventoriesContent() {
                               ) : (
                                 <Badge
                                   variant="secondary"
-                                  className="cursor-pointer hover:opacity-80 transition-opacity"
+                                  className="cursor-pointer transition-opacity hover:opacity-80"
                                   onClick={() => toggleInventoryMutation.mutate(inventory)}
                                   title={t.admin.toggleEnabled}
                                 >
@@ -562,7 +617,7 @@ function InventoriesContent() {
                                 </Badge>
                               )}
                               {isLowStock(inventory) && (
-                                <Badge variant="destructive" className="h-5 w-5 p-0 justify-center">
+                                <Badge variant="destructive" className="h-5 w-5 justify-center p-0">
                                   <AlertTriangle className="h-3.5 w-3.5" />
                                 </Badge>
                               )}
@@ -570,11 +625,7 @@ function InventoriesContent() {
                           </TableCell>
                           <TableCell>
                             <div className="flex items-center gap-2">
-                              <Button
-                                asChild
-                                size="sm"
-                                variant="outline"
-                              >
+                              <Button asChild size="sm" variant="outline">
                                 <Link href={`/admin/inventories/${inventory.id}`}>
                                   <Edit className="h-3 w-3" />
                                 </Link>
@@ -612,15 +663,20 @@ function InventoriesContent() {
 
                   {/* 分页 */}
                   {pagination && (
-                    <div className="flex items-center justify-between mt-4">
+                    <div className="mt-4 flex items-center justify-between">
                       <div className="text-sm text-muted-foreground">
-                        {t.admin.totalRecords.replace('{count}', String(pagination.total)) + ',' + t.admin.totalPages.replace('{count}', String(pagination.total_pages || Math.ceil(pagination.total / limit)))}
+                        {t.admin.totalRecords.replace('{count}', String(pagination.total)) +
+                          ',' +
+                          t.admin.totalPages.replace(
+                            '{count}',
+                            String(pagination.total_pages || Math.ceil(pagination.total / limit))
+                          )}
                       </div>
                       <div className="flex items-center gap-2">
                         <Button
                           variant="outline"
                           size="sm"
-                          onClick={() => setPage(p => Math.max(1, p - 1))}
+                          onClick={() => setPage((p) => Math.max(1, p - 1))}
                           disabled={!pagination.has_prev}
                         >
                           {t.admin.prevPage}
@@ -633,7 +689,8 @@ function InventoriesContent() {
                           key={`phys-${page}`}
                           onBlur={(e) => {
                             const p = parseInt(e.target.value)
-                            const total = pagination.total_pages || Math.ceil(pagination.total / limit)
+                            const total =
+                              pagination.total_pages || Math.ceil(pagination.total / limit)
                             if (p >= 1 && p <= total && p !== page) {
                               setPage(p)
                             }
@@ -641,19 +698,20 @@ function InventoriesContent() {
                           onKeyDown={(e) => {
                             if (e.key === 'Enter') {
                               const p = parseInt((e.target as HTMLInputElement).value)
-                              const total = pagination.total_pages || Math.ceil(pagination.total / limit)
+                              const total =
+                                pagination.total_pages || Math.ceil(pagination.total / limit)
                               if (p >= 1 && p <= total && p !== page) {
                                 setPage(p)
                               }
                               ;(e.target as HTMLInputElement).blur()
                             }
                           }}
-                          className="w-12 h-8 text-center text-sm border rounded-md bg-background focus:outline-none focus:ring-2 focus:ring-ring [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                          className="h-8 w-12 rounded-md border bg-background text-center text-sm [appearance:textfield] focus:outline-none focus:ring-2 focus:ring-ring [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                         />
                         <Button
                           variant="outline"
                           size="sm"
-                          onClick={() => setPage(p => p + 1)}
+                          onClick={() => setPage((p) => p + 1)}
                           disabled={!pagination.has_next}
                         >
                           {t.admin.nextPage}
@@ -694,18 +752,16 @@ function InventoriesContent() {
                 <Database className="h-5 w-5" />
                 {t.admin.virtualInventoryList}
               </CardTitle>
-              <CardDescription>
-                {t.admin.virtualInventoryDesc}
-              </CardDescription>
+              <CardDescription>{t.admin.virtualInventoryDesc}</CardDescription>
             </CardHeader>
             <CardContent>
               {virtualLoading ? (
-                <div className="text-center py-8">{t.common.loading}</div>
+                <div className="py-8 text-center">{t.common.loading}</div>
               ) : virtualInventories.length === 0 ? (
-                <div className="text-center py-8 text-muted-foreground">
-                  <FileText className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                <div className="py-8 text-center text-muted-foreground">
+                  <FileText className="mx-auto mb-4 h-12 w-12 opacity-50" />
                   <p>{t.admin.noVirtualInventory}</p>
-                  <p className="text-sm mt-2">{t.admin.noVirtualInventoryHint}</p>
+                  <p className="mt-2 text-sm">{t.admin.noVirtualInventoryHint}</p>
                   <Button
                     variant="outline"
                     className="mt-4"
@@ -744,13 +800,16 @@ function InventoriesContent() {
                           </TableCell>
                           <TableCell>
                             {vi.type === 'script' ? (
-                              <Badge variant="outline" className="text-purple-600 dark:text-purple-400 border-purple-300 dark:border-purple-700">
-                                <Code2 className="h-3 w-3 mr-1" />
+                              <Badge
+                                variant="outline"
+                                className="border-purple-300 text-purple-600 dark:border-purple-700 dark:text-purple-400"
+                              >
+                                <Code2 className="mr-1 h-3 w-3" />
                                 {t.admin.scriptTypeTag}
                               </Badge>
                             ) : (
                               <Badge variant="outline">
-                                <Database className="h-3 w-3 mr-1" />
+                                <Database className="mr-1 h-3 w-3" />
                                 {t.admin.staticTypeTag}
                               </Badge>
                             )}
@@ -760,22 +819,33 @@ function InventoriesContent() {
                               <div className="flex items-center gap-3 text-sm">
                                 {vi.total_limit > 0 ? (
                                   <>
-                                    <span>{t.admin.statusSold}: <span className="font-medium">{vi.sold || 0}</span></span>
+                                    <span>
+                                      {t.admin.statusSold}:{' '}
+                                      <span className="font-medium">{vi.sold || 0}</span>
+                                    </span>
                                     <span className="text-muted-foreground">/</span>
                                     <span>{vi.total_limit}</span>
                                   </>
                                 ) : (
                                   <>
-                                    <span className="text-muted-foreground">{t.admin.scriptDynamicShort}</span>
+                                    <span className="text-muted-foreground">
+                                      {t.admin.scriptDynamicShort}
+                                    </span>
                                     {vi.sold > 0 && (
-                                      <span>{t.admin.deliveredCount}: <span className="font-medium">{vi.sold}</span></span>
+                                      <span>
+                                        {t.admin.deliveredCount}:{' '}
+                                        <span className="font-medium">{vi.sold}</span>
+                                      </span>
                                     )}
                                   </>
                                 )}
                               </div>
                             ) : (
                               <div className="flex items-center gap-2 text-sm tabular-nums">
-                                <Badge variant={vi.available > 0 ? 'default' : 'destructive'} className="min-w-[2rem] justify-center">
+                                <Badge
+                                  variant={vi.available > 0 ? 'default' : 'destructive'}
+                                  className="min-w-[2rem] justify-center"
+                                >
                                   {vi.available}
                                 </Badge>
                                 <span className="text-muted-foreground">/</span>
@@ -786,7 +856,9 @@ function InventoriesContent() {
                                   </Badge>
                                 )}
                                 {vi.sold > 0 && (
-                                  <span className="text-muted-foreground text-xs">({t.admin.soldOut} {vi.sold})</span>
+                                  <span className="text-xs text-muted-foreground">
+                                    ({t.admin.soldOut} {vi.sold})
+                                  </span>
                                 )}
                               </div>
                             )}
@@ -795,7 +867,7 @@ function InventoriesContent() {
                             {vi.is_active ? (
                               <Badge
                                 variant="default"
-                                className="cursor-pointer hover:opacity-80 transition-opacity"
+                                className="cursor-pointer transition-opacity hover:opacity-80"
                                 onClick={() => toggleVirtualMutation.mutate(vi)}
                                 title={t.admin.toggleDisabled}
                               >
@@ -804,7 +876,7 @@ function InventoriesContent() {
                             ) : (
                               <Badge
                                 variant="secondary"
-                                className="cursor-pointer hover:opacity-80 transition-opacity"
+                                className="cursor-pointer transition-opacity hover:opacity-80"
                                 onClick={() => toggleVirtualMutation.mutate(vi)}
                                 title={t.admin.toggleEnabled}
                               >
@@ -877,7 +949,7 @@ function InventoriesContent() {
 
                   {/* 分页 */}
                   {virtualPagination && virtualPagination.total > limit && (
-                    <div className="flex items-center justify-between mt-4">
+                    <div className="mt-4 flex items-center justify-between">
                       <div className="text-sm text-muted-foreground">
                         {t.admin.totalRecords.replace('{count}', String(virtualPagination.total))}
                       </div>
@@ -885,7 +957,7 @@ function InventoriesContent() {
                         <Button
                           variant="outline"
                           size="sm"
-                          onClick={() => setVirtualPage(p => Math.max(1, p - 1))}
+                          onClick={() => setVirtualPage((p) => Math.max(1, p - 1))}
                           disabled={virtualPage <= 1}
                         >
                           {t.admin.prevPage}
@@ -910,12 +982,12 @@ function InventoriesContent() {
                               ;(e.target as HTMLInputElement).blur()
                             }
                           }}
-                          className="w-12 h-8 text-center text-sm border rounded-md bg-background focus:outline-none focus:ring-2 focus:ring-ring [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                          className="h-8 w-12 rounded-md border bg-background text-center text-sm [appearance:textfield] focus:outline-none focus:ring-2 focus:ring-ring [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                         />
                         <Button
                           variant="outline"
                           size="sm"
-                          onClick={() => setVirtualPage(p => p + 1)}
+                          onClick={() => setVirtualPage((p) => p + 1)}
                           disabled={virtualInventories.length < limit}
                         >
                           {t.admin.nextPage}
@@ -931,18 +1003,29 @@ function InventoriesContent() {
       </Tabs>
 
       {/* 创建虚拟库存对话框 */}
-      <Dialog open={createDialogOpen} onOpenChange={(open) => {
-        setCreateDialogOpen(open)
-        if (!open) {
-          setNewVirtualInventory({ name: '', sku: '', type: 'static', script: '', script_config: '', description: '', total_limit: 0, is_active: true, notes: '' })
-        }
-      }}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+      <Dialog
+        open={createDialogOpen}
+        onOpenChange={(open) => {
+          setCreateDialogOpen(open)
+          if (!open) {
+            setNewVirtualInventory({
+              name: '',
+              sku: '',
+              type: 'static',
+              script: '',
+              script_config: '',
+              description: '',
+              total_limit: 0,
+              is_active: true,
+              notes: '',
+            })
+          }
+        }}
+      >
+        <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{t.admin.createVirtualTitle}</DialogTitle>
-            <DialogDescription>
-              {t.admin.createVirtualDesc}
-            </DialogDescription>
+            <DialogDescription>{t.admin.createVirtualDesc}</DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4">
@@ -952,7 +1035,9 @@ function InventoriesContent() {
                 id="name"
                 placeholder={t.admin.inventoryNamePlaceholder}
                 value={newVirtualInventory.name}
-                onChange={(e) => setNewVirtualInventory({ ...newVirtualInventory, name: e.target.value })}
+                onChange={(e) =>
+                  setNewVirtualInventory({ ...newVirtualInventory, name: e.target.value })
+                }
               />
             </div>
 
@@ -962,7 +1047,9 @@ function InventoriesContent() {
                 id="sku"
                 placeholder={t.admin.skuPlaceholder}
                 value={newVirtualInventory.sku}
-                onChange={(e) => setNewVirtualInventory({ ...newVirtualInventory, sku: e.target.value })}
+                onChange={(e) =>
+                  setNewVirtualInventory({ ...newVirtualInventory, sku: e.target.value })
+                }
               />
             </div>
 
@@ -972,34 +1059,34 @@ function InventoriesContent() {
                 <button
                   type="button"
                   onClick={() => setNewVirtualInventory({ ...newVirtualInventory, type: 'static' })}
-                  className={`p-3 rounded-lg border-2 text-left transition-all ${
+                  className={`rounded-lg border-2 p-3 text-left transition-all ${
                     newVirtualInventory.type === 'static'
                       ? 'border-primary bg-primary/5'
                       : 'border-border hover:border-muted-foreground'
                   }`}
                 >
-                  <div className="font-medium text-sm flex items-center gap-2">
+                  <div className="flex items-center gap-2 text-sm font-medium">
                     <Database className="h-4 w-4" />
                     {t.admin.inventoryTypeStatic}
                   </div>
-                  <div className="text-xs text-muted-foreground mt-1">
+                  <div className="mt-1 text-xs text-muted-foreground">
                     {t.admin.inventoryTypeStaticDesc}
                   </div>
                 </button>
                 <button
                   type="button"
                   onClick={() => setNewVirtualInventory({ ...newVirtualInventory, type: 'script' })}
-                  className={`p-3 rounded-lg border-2 text-left transition-all ${
+                  className={`rounded-lg border-2 p-3 text-left transition-all ${
                     newVirtualInventory.type === 'script'
                       ? 'border-purple-500 bg-purple-500/5'
                       : 'border-border hover:border-muted-foreground'
                   }`}
                 >
-                  <div className="font-medium text-sm flex items-center gap-2">
+                  <div className="flex items-center gap-2 text-sm font-medium">
                     <Code2 className="h-4 w-4 text-purple-500" />
                     {t.admin.inventoryTypeScript}
                   </div>
-                  <div className="text-xs text-muted-foreground mt-1">
+                  <div className="mt-1 text-xs text-muted-foreground">
                     {t.admin.inventoryTypeScriptDesc}
                   </div>
                 </button>
@@ -1012,7 +1099,9 @@ function InventoriesContent() {
                 id="description"
                 placeholder={t.admin.descriptionPlaceholder}
                 value={newVirtualInventory.description}
-                onChange={(e) => setNewVirtualInventory({ ...newVirtualInventory, description: e.target.value })}
+                onChange={(e) =>
+                  setNewVirtualInventory({ ...newVirtualInventory, description: e.target.value })
+                }
                 rows={3}
               />
             </div>
@@ -1026,7 +1115,12 @@ function InventoriesContent() {
                   type="number"
                   min={0}
                   value={newVirtualInventory.total_limit}
-                  onChange={(e) => setNewVirtualInventory({ ...newVirtualInventory, total_limit: Math.max(0, parseInt(e.target.value) || 0) })}
+                  onChange={(e) =>
+                    setNewVirtualInventory({
+                      ...newVirtualInventory,
+                      total_limit: Math.max(0, parseInt(e.target.value) || 0),
+                    })
+                  }
                   className="w-40"
                 />
               </div>
@@ -1038,7 +1132,9 @@ function InventoriesContent() {
                 id="notes"
                 placeholder={t.admin.notesPlaceholder}
                 value={newVirtualInventory.notes}
-                onChange={(e) => setNewVirtualInventory({ ...newVirtualInventory, notes: e.target.value })}
+                onChange={(e) =>
+                  setNewVirtualInventory({ ...newVirtualInventory, notes: e.target.value })
+                }
                 rows={2}
               />
             </div>
@@ -1063,9 +1159,7 @@ function InventoriesContent() {
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>{t.admin.importVirtualTitle}</DialogTitle>
-            <DialogDescription>
-              {t.admin.importVirtualDesc}
-            </DialogDescription>
+            <DialogDescription>{t.admin.importVirtualDesc}</DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4">
@@ -1073,11 +1167,11 @@ function InventoriesContent() {
             <Tabs value={importType} onValueChange={(v) => setImportType(v as 'file' | 'text')}>
               <TabsList className="grid w-full grid-cols-2">
                 <TabsTrigger value="text">
-                  <FileText className="w-4 h-4 mr-2" />
+                  <FileText className="mr-2 h-4 w-4" />
                   {t.admin.textInput}
                 </TabsTrigger>
                 <TabsTrigger value="file">
-                  <Upload className="w-4 h-4 mr-2" />
+                  <Upload className="mr-2 h-4 w-4" />
                   {t.admin.fileUpload}
                 </TabsTrigger>
               </TabsList>
@@ -1090,9 +1184,11 @@ function InventoriesContent() {
                     onChange={(e) => setTextContent(e.target.value)}
                     rows={10}
                   />
-                  <p className="text-sm text-muted-foreground mt-2">
-                    {t.admin.textInputExample}<br />
-                    ABCD-1234-EFGH<br />
+                  <p className="mt-2 text-sm text-muted-foreground">
+                    {t.admin.textInputExample}
+                    <br />
+                    ABCD-1234-EFGH
+                    <br />
                     WXYZ-5678-IJKL,VIP
                   </p>
                 </div>
@@ -1100,7 +1196,7 @@ function InventoriesContent() {
 
               <TabsContent value="file" className="space-y-4">
                 <div
-                  className="border-2 border-dashed rounded-lg p-8 text-center cursor-pointer hover:border-primary"
+                  className="cursor-pointer rounded-lg border-2 border-dashed p-8 text-center hover:border-primary"
                   onClick={() => fileInputRef.current?.click()}
                 >
                   <input
@@ -1112,20 +1208,18 @@ function InventoriesContent() {
                   />
                   {selectedFile ? (
                     <div className="flex items-center justify-center gap-2">
-                      <FileText className="w-6 h-6 text-primary" />
+                      <FileText className="h-6 w-6 text-primary" />
                       <span>{selectedFile.name}</span>
                     </div>
                   ) : (
                     <>
-                      <Upload className="w-8 h-8 mx-auto mb-2 text-muted-foreground" />
+                      <Upload className="mx-auto mb-2 h-8 w-8 text-muted-foreground" />
                       <p className="text-muted-foreground">{t.admin.clickToSelectFile}</p>
                       <p className="text-sm text-muted-foreground">{t.admin.supportedFormats}</p>
                     </>
                   )}
                 </div>
-                <p className="text-sm text-muted-foreground">
-                  {t.admin.fileFormatHint}
-                </p>
+                <p className="text-sm text-muted-foreground">{t.admin.fileFormatHint}</p>
               </TabsContent>
             </Tabs>
           </div>
@@ -1134,13 +1228,10 @@ function InventoriesContent() {
             <Button variant="outline" onClick={() => setImportDialogOpen(false)}>
               {t.common.cancel}
             </Button>
-            <Button
-              onClick={handleImport}
-              disabled={importMutation.isPending}
-            >
+            <Button onClick={handleImport} disabled={importMutation.isPending}>
               {importMutation.isPending ? (
                 <>
-                  <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                  <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
                   {t.admin.importing}
                 </>
               ) : (
@@ -1156,9 +1247,7 @@ function InventoriesContent() {
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>{t.admin.addCardKeyTitle}</DialogTitle>
-            <DialogDescription>
-              {t.admin.addCardKeyDesc}
-            </DialogDescription>
+            <DialogDescription>{t.admin.addCardKeyDesc}</DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4">
@@ -1187,10 +1276,7 @@ function InventoriesContent() {
             <Button variant="outline" onClick={() => setManualCreateDialogOpen(false)}>
               {t.common.cancel}
             </Button>
-            <Button
-              onClick={handleManualCreate}
-              disabled={manualCreateMutation.isPending}
-            >
+            <Button onClick={handleManualCreate} disabled={manualCreateMutation.isPending}>
               {manualCreateMutation.isPending ? t.admin.adding : t.admin.add}
             </Button>
           </DialogFooter>

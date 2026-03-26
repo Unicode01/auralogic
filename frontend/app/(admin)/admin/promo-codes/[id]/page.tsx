@@ -26,6 +26,8 @@ import { useLocale } from '@/hooks/use-locale'
 import { getTranslations } from '@/lib/i18n'
 import { usePageTitle } from '@/hooks/use-page-title'
 import { parseMajorToMinor } from '@/lib/utils'
+import { resolveApiErrorMessage } from '@/lib/api-error'
+import { PluginSlot } from '@/components/plugins/plugin-slot'
 
 interface PromoCodeForm {
   code: string
@@ -40,6 +42,29 @@ interface PromoCodeForm {
   expires_at: string
   product_scope: 'all' | 'specific' | 'exclude'
   product_ids: number[]
+}
+
+function buildAdminPromoCodeDetailSummary(promoDetail: any) {
+  if (!promoDetail) {
+    return undefined
+  }
+  return {
+    id: promoDetail.id,
+    code: promoDetail.code,
+    name: promoDetail.name,
+    description: promoDetail.description,
+    discount_type: promoDetail.discount_type,
+    discount_value_minor: promoDetail.discount_value_minor,
+    max_discount_minor: promoDetail.max_discount_minor,
+    min_order_amount_minor: promoDetail.min_order_amount_minor,
+    total_quantity: promoDetail.total_quantity,
+    used_quantity: promoDetail.used_quantity,
+    reserved_quantity: promoDetail.reserved_quantity,
+    status: promoDetail.status,
+    expires_at: promoDetail.expires_at,
+    product_scope: promoDetail.product_scope,
+    product_ids: Array.isArray(promoDetail.product_ids) ? promoDetail.product_ids : [],
+  }
 }
 
 export default function EditPromoCodePage() {
@@ -98,6 +123,25 @@ export default function EditPromoCodePage() {
   })
 
   const products = productsData?.data?.items || []
+  const adminPromoCodeDetailPluginContext = {
+    view: 'admin_promo_code_detail',
+    promo_code: buildAdminPromoCodeDetailSummary(promoDetail),
+    form: {
+      name: form.name || undefined,
+      discount_type: form.discount_type,
+      status: form.status,
+      total_quantity: form.total_quantity,
+      expires_at: form.expires_at || undefined,
+      product_scope: form.product_scope,
+      selected_product_ids: form.product_ids.slice(0, 20),
+      selected_product_count: form.product_ids.length,
+    },
+    related_orders: {
+      page: ordersPage,
+      total: Number(relatedOrdersData?.data?.pagination?.total || 0),
+      total_pages: Number(relatedOrdersData?.data?.pagination?.total_pages || 1),
+    },
+  }
 
   // Populate form data
   useEffect(() => {
@@ -190,8 +234,8 @@ export default function EditPromoCodePage() {
       toast.success(t.promoCode.promoCodeUpdated)
       router.push('/admin/promo-codes')
     },
-    onError: (error: Error) => {
-      toast.error(`${t.promoCode.updateFailed}: ${error.message}`)
+    onError: (error: unknown) => {
+      toast.error(resolveApiErrorMessage(error, t, t.promoCode.updateFailed))
     },
   })
 
@@ -245,6 +289,7 @@ export default function EditPromoCodePage() {
 
   return (
     <div className="space-y-6">
+      <PluginSlot slot="admin.promo_code_detail.top" context={adminPromoCodeDetailPluginContext} />
       <div className="flex items-center gap-4">
         <Button variant="outline" size="sm" asChild>
           <Link href="/admin/promo-codes">

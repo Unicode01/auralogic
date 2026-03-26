@@ -3,9 +3,11 @@ package service
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
+	"net/http"
+	"strings"
 	"time"
 
+	"auralogic/internal/config"
 	"auralogic/internal/models"
 	"auralogic/internal/pkg/logger"
 	"gorm.io/gorm"
@@ -14,52 +16,106 @@ import (
 // PaymentMethodService 付款方式服务
 type PaymentMethodService struct {
 	db        *gorm.DB
+	cfg       *config.Config
 	jsRuntime *JSRuntimeService
 }
 
+type LegacyPaymentMethodUpsertInput struct {
+	Name         *string
+	Description  *string
+	Icon         *string
+	Script       *string
+	Config       *string
+	PollInterval *int
+	Enabled      *bool
+}
+
 // NewPaymentMethodService 创建付款方式服务
-func NewPaymentMethodService(db *gorm.DB) *PaymentMethodService {
+func NewPaymentMethodService(db *gorm.DB, cfg *config.Config) *PaymentMethodService {
 	return &PaymentMethodService{
 		db:        db,
-		jsRuntime: NewJSRuntimeService(db),
+		cfg:       cfg,
+		jsRuntime: NewJSRuntimeService(db, cfg),
 	}
 }
 
 // InitBuiltinPaymentMethods 初始化内置付款方式
 func (s *PaymentMethodService) InitBuiltinPaymentMethods() error {
-	for _, pm := range models.BuiltinPaymentMethods {
-		var existing models.PaymentMethod
-		// 按名称查找，不限定类型（因为现在内置的也用JS脚本）
-		if err := s.db.Where("name = ?", pm.Name).First(&existing).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				// 创建新的付款方式
-				if err := s.db.Create(&pm).Error; err != nil {
-					return fmt.Errorf("failed to create builtin payment method %s: %w", pm.Name, err)
-				}
-				logger.LogSystemOperation(s.db, "payment_method_init", "payment_method", nil, map[string]interface{}{
-					"name":   pm.Name,
-					"type":   pm.Type,
-					"action": "created",
-				})
-			} else {
-				return err
-			}
-		} else {
-			// 更新脚本（如果脚本为空则更新）
-			if existing.Script == "" && pm.Script != "" {
-				if err := s.db.Model(&existing).Updates(map[string]interface{}{
-					"script": pm.Script,
-					"type":   pm.Type,
-				}).Error; err == nil {
-					logger.LogSystemOperation(s.db, "payment_method_init", "payment_method", &existing.ID, map[string]interface{}{
-						"name":   pm.Name,
-						"action": "updated_script",
-					})
-				}
+	runtime := NewPluginHostRuntime(s.db, s.cfg, nil)
+	return initBuiltinPaymentMethodPackages(runtime)
+}
+
+func (s *PaymentMethodService) CreateLegacyPaymentMethod(input LegacyPaymentMethodUpsertInput) (*models.PaymentMethod, error) {
+	runtime := NewPluginHostRuntime(s.db, s.cfg, nil)
+	result, err := ImportLegacyPaymentMethodPackage(runtime, legacyPaymentMethodImportInput{
+		Name:         legacyPaymentMethodResolvedString(input.Name, ""),
+		Description:  legacyPaymentMethodResolvedString(input.Description, ""),
+		Icon:         legacyPaymentMethodResolvedString(input.Icon, ""),
+		Script:       legacyPaymentMethodResolvedString(input.Script, ""),
+		Config:       legacyPaymentMethodResolvedString(input.Config, ""),
+		PollInterval: legacyPaymentMethodResolvedInt(input.PollInterval, 30),
+	})
+	if err != nil {
+		return nil, err
+	}
+	method, _ := result["item"].(*models.PaymentMethod)
+	if method == nil || method.ID == 0 {
+		return nil, &PluginHostActionError{Status: http.StatusInternalServerError, Message: "load payment method failed"}
+	}
+	return method, nil
+}
+
+func (s *PaymentMethodService) UpdateLegacyPaymentMethod(id uint, input LegacyPaymentMethodUpsertInput) (*models.PaymentMethod, error) {
+	existing, err := s.Get(id)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, &PluginHostActionError{Status: http.StatusNotFound, Message: "payment method not found"}
+		}
+		return nil, err
+	}
+
+	if !legacyPaymentMethodNeedsPackageImport(input) {
+		updates := map[string]interface{}{}
+		if input.Enabled != nil {
+			updates["enabled"] = *input.Enabled
+		}
+		if len(updates) > 0 {
+			if err := s.Update(id, updates); err != nil {
+				return nil, err
 			}
 		}
+		return s.Get(id)
 	}
-	return nil
+
+	runtime := NewPluginHostRuntime(s.db, s.cfg, nil)
+	result, err := ImportLegacyPaymentMethodPackage(runtime, legacyPaymentMethodImportInput{
+		TargetMethodID: id,
+		Name:           legacyPaymentMethodResolvedString(input.Name, existing.Name),
+		Description:    legacyPaymentMethodResolvedString(input.Description, existing.Description),
+		Icon:           legacyPaymentMethodResolvedString(input.Icon, existing.Icon),
+		Version:        strings.TrimSpace(existing.Version),
+		Script:         legacyPaymentMethodResolvedString(input.Script, existing.Script),
+		Config:         legacyPaymentMethodResolvedString(input.Config, existing.Config),
+		PollInterval:   legacyPaymentMethodResolvedInt(input.PollInterval, existing.PollInterval),
+		PackageName:    strings.TrimSpace(existing.PackageName),
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	method, _ := result["item"].(*models.PaymentMethod)
+	if method == nil || method.ID == 0 {
+		return nil, &PluginHostActionError{Status: http.StatusInternalServerError, Message: "load payment method failed"}
+	}
+
+	if input.Enabled != nil && method.Enabled != *input.Enabled {
+		if err := s.Update(id, map[string]interface{}{"enabled": *input.Enabled}); err != nil {
+			return nil, err
+		}
+		method.Enabled = *input.Enabled
+	}
+
+	return method, nil
 }
 
 // List 获取所有付款方式
@@ -290,4 +346,44 @@ func (s *PaymentMethodService) TestScript(script string, config map[string]inter
 	}
 
 	return s.jsRuntime.ExecutePaymentCard(pm, testOrder)
+}
+
+func (s *PaymentMethodService) ExecuteWebhook(paymentMethodID uint, req *PaymentWebhookRequest) (*PaymentWebhookResult, error) {
+	pm, err := s.Get(paymentMethodID)
+	if err != nil {
+		return nil, err
+	}
+	if !pm.Enabled {
+		return nil, errors.New("payment method is disabled")
+	}
+	return s.jsRuntime.ExecuteWebhook(pm, req)
+}
+
+func legacyPaymentMethodNeedsPackageImport(input LegacyPaymentMethodUpsertInput) bool {
+	return input.Name != nil ||
+		input.Description != nil ||
+		input.Icon != nil ||
+		input.Script != nil ||
+		input.Config != nil ||
+		input.PollInterval != nil
+}
+
+func legacyPaymentMethodResolvedString(value *string, fallback string) string {
+	if value == nil {
+		return fallback
+	}
+	return *value
+}
+
+func legacyPaymentMethodResolvedInt(value *int, fallback int) int {
+	if value == nil {
+		if fallback <= 0 {
+			return 30
+		}
+		return fallback
+	}
+	if *value <= 0 {
+		return 30
+	}
+	return *value
 }

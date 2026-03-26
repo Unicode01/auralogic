@@ -1,21 +1,26 @@
 package admin
 
 import (
+	"encoding/json"
+	"log"
 	"strconv"
+	"strings"
 
 	"auralogic/internal/middleware"
 	"auralogic/internal/models"
 	"auralogic/internal/pkg/response"
+	"auralogic/internal/service"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
 
 type PermissionHandler struct {
-	db *gorm.DB
+	db            *gorm.DB
+	pluginManager *service.PluginManagerService
 }
 
-func NewPermissionHandler(db *gorm.DB) *PermissionHandler {
-	return &PermissionHandler{db: db}
+func NewPermissionHandler(db *gorm.DB, pluginManager *service.PluginManagerService) *PermissionHandler {
+	return &PermissionHandler{db: db, pluginManager: pluginManager}
 }
 
 // GetUserPermissions getUserPermission
@@ -59,7 +64,48 @@ func (h *PermissionHandler) UpdateUserPermissions(c *gin.Context) {
 		return
 	}
 
-	currentUserID := middleware.MustGetUserID(c)
+	currentUserID, _ := middleware.GetUserID(c)
+	if h.pluginManager != nil {
+		hookExecCtx := buildAdminHookExecutionContext(c, &currentUserID, map[string]string{
+			"resource_type": "admin_permission",
+			"resource_id":   strconv.FormatUint(userID, 10),
+		})
+		hookResult, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+			Hook: "user.permissions.update.before",
+			Payload: map[string]interface{}{
+				"source":      "admin_api",
+				"user_id":     uint(userID),
+				"permissions": append([]string(nil), req.Permissions...),
+			},
+		}, hookExecCtx)
+		if hookErr != nil {
+			log.Printf("user.permissions.update.before hook execution failed: user_id=%d err=%v", userID, hookErr)
+		} else if hookResult != nil {
+			if hookResult.Blocked {
+				reason := strings.TrimSpace(hookResult.BlockReason)
+				if reason == "" {
+					reason = "Permission update rejected by plugin"
+				}
+				response.BadRequest(c, reason)
+				return
+			}
+			if hookResult.Payload != nil {
+				if value, exists := hookResult.Payload["permissions"]; exists {
+					decoded, marshalErr := json.Marshal(value)
+					if marshalErr != nil {
+						log.Printf("user.permissions.update.before permissions encode failed: %v", marshalErr)
+					} else {
+						var patched []string
+						if unmarshalErr := json.Unmarshal(decoded, &patched); unmarshalErr != nil {
+							log.Printf("user.permissions.update.before permissions decode failed: %v", unmarshalErr)
+						} else {
+							req.Permissions = patched
+						}
+					}
+				}
+			}
+		}
+	}
 
 	// 检查User是否存在
 	var user models.User
@@ -97,65 +143,31 @@ func (h *PermissionHandler) UpdateUserPermissions(c *gin.Context) {
 	// 清除权限缓存
 	middleware.InvalidatePermissionCache(uint(userID))
 
+	if h.pluginManager != nil {
+		afterPayload := map[string]interface{}{
+			"source":      "admin_api",
+			"user_id":     perm.UserID,
+			"permissions": append([]string(nil), perm.Permissions...),
+			"updated_by":  currentUserID,
+		}
+		go func(execCtx *service.ExecutionContext, payload map[string]interface{}, targetID uint) {
+			_, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+				Hook:    "user.permissions.update.after",
+				Payload: payload,
+			}, execCtx)
+			if hookErr != nil {
+				log.Printf("user.permissions.update.after hook execution failed: user_id=%d err=%v", targetID, hookErr)
+			}
+		}(cloneAdminHookExecutionContext(buildAdminHookExecutionContext(c, &currentUserID, map[string]string{
+			"resource_type": "admin_permission",
+			"resource_id":   strconv.FormatUint(userID, 10),
+		})), afterPayload, uint(userID))
+	}
+
 	response.Success(c, perm)
 }
 
 // ListAllPermissions get所有可用Permission
 func (h *PermissionHandler) ListAllPermissions(c *gin.Context) {
-	permissions := map[string][]string{
-		"OrderPermission": {
-			"order.view",
-			"order.view_privacy",
-			"order.edit",
-			"order.delete",
-			"order.status_update",
-			"order.refund",
-			"order.assign_tracking",
-			"order.request_resubmit",
-		},
-		"ProductPermission": {
-			"product.view",
-			"product.edit",
-			"product.delete",
-		},
-		"SerialPermission": {
-			"serial.view",
-			"serial.manage",
-		},
-		"UserPermission": {
-			"user.view",
-			"user.edit",
-			"user.permission",
-		},
-		"AdminPermission": {
-			"admin.create",
-			"admin.edit",
-			"admin.delete",
-			"admin.permission",
-		},
-		"SystemPermission": {
-			"system.config",
-			"system.logs",
-			"api.manage",
-		},
-		"KnowledgePermission": {
-			"knowledge.view",
-			"knowledge.edit",
-		},
-		"AnnouncementPermission": {
-			"announcement.view",
-			"announcement.edit",
-		},
-		"MarketingPermission": {
-			"marketing.view",
-			"marketing.send",
-		},
-		"TicketPermission": {
-			"ticket.view",
-			"ticket.reply",
-			"ticket.status_update",
-		},
-	}
-
-	response.Success(c, permissions)
+	response.Success(c, middleware.RegisteredAdminPermissionsMap())
 }
