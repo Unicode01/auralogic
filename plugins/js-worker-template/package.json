@@ -1,0 +1,25 @@
+{
+  "name": "@auralogic/js-worker-template",
+  "version": "0.2.2",
+  "private": true,
+  "description": "Template project for AuraLogic js_worker plugins.",
+  "scripts": {
+    "sdk:ensure": "node ../sdk/scripts/ensure-dist.mjs",
+    "sync:manifest": "node ../sdk/scripts/sync-plugin-manifest.mjs . --profile=template",
+    "clean": "node ./scripts/clean.mjs",
+    "build": "npm run sdk:ensure && npm run clean && node ./scripts/build.mjs --minify",
+    "typecheck": "npm run sdk:ensure && tsc --noEmit -p tsconfig.json",
+    "validate:manifest": "node ../sdk/scripts/validate-plugin-manifest.mjs .",
+    "dev": "npm run sdk:ensure && node ./scripts/build.mjs --watch",
+    "package": "npm run validate:manifest && npm run build && node ./scripts/package.mjs"
+  },
+  "dependencies": {
+    "@auralogic/plugin-sdk": "file:../sdk"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.19",
+    "esbuild": "^0.25.10",
+    "typescript": "^5.8.2",
+    "yazl": "^3.3.1"
+  }
+}

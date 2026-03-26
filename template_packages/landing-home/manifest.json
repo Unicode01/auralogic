@@ -1,0 +1,19 @@
+{
+  "kind": "landing_page_template",
+  "name": "landing-home",
+  "title": "Storefront Home",
+  "summary": "Simple hero-based storefront landing page sample.",
+  "description": "Official AuraLogic landing page sample targeting the home slug, designed for host-managed market imports.",
+  "version": "1.0.0",
+  "slug": "home",
+  "engine": "go_template",
+  "content_file": "landing.html",
+  "labels": [
+    "official",
+    "sample",
+    "landing"
+  ],
+  "docs": {
+    "docs_url": "https://docs.auralogic.org/market/templates/landing-home"
+  }
+}

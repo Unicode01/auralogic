@@ -1,0 +1,106 @@
+{
+  "kind": "payment_package",
+  "name": "payment-js-template",
+  "display_name": {
+    "en": "Payment JS Template",
+    "zh-CN": "Payment JS 模板"
+  },
+  "description": {
+    "en": "Starter payment_js package with secure webhook declaration, polling callback, refund callback, and package-governed config schema.",
+    "zh-CN": "包含安全 webhook 声明、轮询回调、退款回调和配置 schema 的 payment_js 起步包。"
+  },
+  "icon": "CreditCard",
+  "runtime": "payment_js",
+  "entry": "index.js",
+  "version": "1.0.0",
+  "poll_interval": 30,
+  "manifest_version": "1.0.0",
+  "protocol_version": "1.0.0",
+  "min_host_protocol_version": "1.0.0",
+  "max_host_protocol_version": "1.0.0",
+  "config": {
+    "checkout_title": "Manual Review Checkout",
+    "provider_label": "Demo Gateway",
+    "payment_instructions": "After your upstream payment succeeds, the provider should call the declared webhook endpoint.",
+    "callback_mode": "mark_paid",
+    "success_status": "paid",
+    "simulate_paid": false,
+    "webhook_token": "change-me-demo-token"
+  },
+  "config_schema": {
+    "title": "Payment JS Template Config",
+    "description": "Package-governed defaults for the demo payment_js checkout.",
+    "fields": [
+      {
+        "key": "checkout_title",
+        "label": "Checkout Title",
+        "type": "string",
+        "default": "Manual Review Checkout",
+        "required": true
+      },
+      {
+        "key": "provider_label",
+        "label": "Provider Label",
+        "type": "string",
+        "default": "Demo Gateway",
+        "required": true
+      },
+      {
+        "key": "payment_instructions",
+        "label": "Payment Instructions",
+        "type": "textarea",
+        "default": "After your upstream payment succeeds, the provider should call the declared webhook endpoint.",
+        "required": true
+      },
+      {
+        "key": "callback_mode",
+        "label": "Callback Mode",
+        "type": "select",
+        "default": "mark_paid",
+        "required": true,
+        "options": [
+          {
+            "label": "Mark paid immediately",
+            "value": "mark_paid"
+          },
+          {
+            "label": "Record callback and queue polling",
+            "value": "queue_polling"
+          }
+        ]
+      },
+      {
+        "key": "success_status",
+        "label": "Success Status",
+        "type": "string",
+        "default": "paid"
+      },
+      {
+        "key": "simulate_paid",
+        "label": "Simulate Paid",
+        "type": "boolean",
+        "default": false
+      },
+      {
+        "key": "webhook_token",
+        "label": "Webhook Token",
+        "type": "secret",
+        "default": "change-me-demo-token",
+        "required": true
+      }
+    ]
+  },
+  "webhooks": [
+    {
+      "key": "payment.notify",
+      "description": {
+        "en": "Async provider callback used to confirm or queue payment status.",
+        "zh-CN": "用于确认支付或触发轮询的异步支付回调。"
+      },
+      "method": "POST",
+      "auth_mode": "header",
+      "secret_key": "webhook_token",
+      "header": "X-Payment-Webhook-Token"
+    }
+  ]
+}

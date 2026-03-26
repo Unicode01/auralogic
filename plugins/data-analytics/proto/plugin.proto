@@ -1,0 +1,51 @@
+syntax = "proto3";
+
+package plugin;
+
+option go_package = "auralogic-plugin-data-analytics/pb";
+
+// PluginService 插件服务接口
+service PluginService {
+  // 健康检查
+  rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
+
+  // 同步执行
+  rpc Execute(ExecuteRequest) returns (ExecuteResponse);
+
+  // 流式执行（用于长时间任务，如 AI 对话）
+  rpc ExecuteStream(ExecuteRequest) returns (stream ExecuteResponse);
+}
+
+// 健康检查请求
+message HealthCheckRequest {}
+
+// 健康检查响应
+message HealthCheckResponse {
+  bool healthy = 1;
+  string version = 2;
+  map<string, string> metadata = 3;
+}
+
+// 执行请求
+message ExecuteRequest {
+  string action = 1;                    // 动作名称，如 "analyze_orders", "chat"
+  map<string, string> params = 2;       // 参数（JSON 字符串）
+  ExecutionContext context = 3;         // 执行上下文
+}
+
+// 执行上下文
+message ExecutionContext {
+  uint64 user_id = 1;
+  uint64 order_id = 2;
+  string session_id = 3;
+  map<string, string> metadata = 4;
+}
+
+// 执行响应
+message ExecuteResponse {
+  bool success = 1;
+  string data = 2;                      // 返回数据（JSON 字符串）
+  string error = 3;
+  bool is_final = 4;                    // 流式响应中标记是否为最后一条
+  map<string, string> metadata = 5;
+}

@@ -1,0 +1,18 @@
+{
+  "kind": "invoice_template",
+  "name": "invoice-default",
+  "title": "Invoice Default",
+  "summary": "Clean invoice layout for order invoice rendering.",
+  "description": "Official AuraLogic invoice template sample for host-managed market imports.",
+  "version": "1.0.0",
+  "key": "invoice",
+  "content_file": "invoice.html",
+  "labels": [
+    "official",
+    "sample",
+    "invoice"
+  ],
+  "docs": {
+    "docs_url": "https://docs.auralogic.org/market/templates/invoice-default"
+  }
+}

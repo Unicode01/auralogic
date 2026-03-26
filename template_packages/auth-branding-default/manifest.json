@@ -1,0 +1,18 @@
+{
+  "kind": "auth_branding_template",
+  "name": "auth-branding-default",
+  "title": "Auth Branding Default",
+  "summary": "Branded auth splash panel for host login and signup pages.",
+  "description": "Official AuraLogic auth branding template sample for host-managed market imports.",
+  "version": "1.0.0",
+  "key": "auth_branding",
+  "content_file": "branding.html",
+  "labels": [
+    "official",
+    "sample",
+    "branding"
+  ],
+  "docs": {
+    "docs_url": "https://docs.auralogic.org/market/templates/auth-branding-default"
+  }
+}

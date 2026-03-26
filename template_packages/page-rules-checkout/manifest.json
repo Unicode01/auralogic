@@ -1,0 +1,18 @@
+{
+  "kind": "page_rule_pack",
+  "name": "page-rules-checkout",
+  "title": "Checkout Page Rules",
+  "summary": "Checkout-focused page rule pack with small UX enhancements.",
+  "description": "Official AuraLogic page rule pack sample for host-managed market imports.",
+  "version": "1.0.0",
+  "key": "page_rules",
+  "rules_file": "page-rules.json",
+  "labels": [
+    "official",
+    "sample",
+    "page-rules"
+  ],
+  "docs": {
+    "docs_url": "https://docs.auralogic.org/market/templates/page-rules-checkout"
+  }
+}

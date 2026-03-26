@@ -1,0 +1,17 @@
+<section style="font-family:Arial,sans-serif;color:#0f172a;padding:32px;">
+  <header style="display:flex;justify-content:space-between;gap:24px;align-items:flex-start;margin-bottom:28px;">
+    <div>
+      <h1 style="margin:0 0 8px;">Invoice</h1>
+      <p style="margin:0;color:#475569;">Order {{.OrderNo}}</p>
+    </div>
+    <div style="text-align:right;">
+      <strong style="display:block;">{{.AppName}}</strong>
+      <span style="display:block;color:#475569;">Issued at {{.CreatedAt}}</span>
+    </div>
+  </header>
+  <div style="padding:18px;border:1px solid #dbe2ea;border-radius:16px;background:#f8fafc;">
+    <p style="margin:0 0 8px;"><strong>Customer:</strong> {{.UserName}}</p>
+    <p style="margin:0 0 8px;"><strong>Status:</strong> {{.Status}}</p>
+    <p style="margin:0;"><strong>Total:</strong> {{.TotalAmount}}</p>
+  </div>
+</section>
