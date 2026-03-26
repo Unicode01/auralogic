@@ -31,4 +31,4 @@ jobs:
 
       - name: Run plugin regression baseline
         working-directory: backend
-        run: sh scripts/test_plugin_regression.sh
+        run: bash scripts/test_plugin_regression.sh
