@@ -10,6 +10,7 @@ import (
 
 	"auralogic/internal/config"
 	"auralogic/internal/models"
+	"auralogic/internal/pkg/authbiz"
 	"auralogic/internal/pkg/cache"
 	"auralogic/internal/pkg/jwt"
 	"auralogic/internal/pkg/password"
@@ -24,10 +25,6 @@ type AuthService struct {
 }
 
 var (
-	// Public, user-facing errors (safe to show to clients).
-	ErrEmailAlreadyInUse = errors.New("Email already in use")
-	ErrPhoneAlreadyInUse = errors.New("Phone number already in use")
-
 	// Internal marker for handlers to avoid leaking DB errors.
 	ErrRegisterInternal = errors.New("REGISTER_INTERNAL")
 )
@@ -46,29 +43,29 @@ func (s *AuthService) Login(email, pwd string) (string, *models.User, error) {
 	user, err := s.userRepo.FindByEmail(email)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return "", nil, errors.New("Invalid email or password")
+			return "", nil, authbiz.InvalidEmailOrPassword()
 		}
 		return "", nil, err
 	}
 
 	// 检查密码登录是否禁用
 	if !s.cfg.Security.Login.AllowPasswordLogin && !user.IsSuperAdmin() {
-		return "", nil, errors.New("Password login is disabled, please use quick login or OAuth login")
+		return "", nil, authbiz.PasswordLoginDisabled()
 	}
 
 	// 验证密码
 	if !password.CheckPassword(pwd, user.PasswordHash) {
-		return "", nil, errors.New("Invalid email or password")
+		return "", nil, authbiz.InvalidEmailOrPassword()
 	}
 
 	// 检查用户状态
 	if !user.IsActive {
-		return "", nil, errors.New("User account has been disabled")
+		return "", nil, authbiz.AccountDisabled()
 	}
 
 	// 检查邮箱是否已验证（管理员跳过）
 	if !user.EmailVerified && !user.IsAdmin() && s.cfg.Security.Login.RequireEmailVerification {
-		return "", nil, errors.New("EMAIL_NOT_VERIFIED")
+		return "", nil, authbiz.EmailNotVerified()
 	}
 
 	// 生成JWT Token
@@ -93,7 +90,7 @@ func (s *AuthService) Register(email, phone, name, pwd string) (*models.User, er
 	// 检查邮箱是否已存在
 	if email != "" {
 		if _, err := s.userRepo.FindByEmail(email); err == nil {
-			return nil, ErrEmailAlreadyInUse
+			return nil, authbiz.EmailAlreadyInUse()
 		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, fmt.Errorf("%w: failed to check email uniqueness: %v", ErrRegisterInternal, err)
 		}
@@ -102,7 +99,7 @@ func (s *AuthService) Register(email, phone, name, pwd string) (*models.User, er
 	// 检查手机号是否已存在
 	if phone != "" {
 		if _, err := s.userRepo.FindByPhone(phone); err == nil {
-			return nil, ErrPhoneAlreadyInUse
+			return nil, authbiz.PhoneAlreadyInUse()
 		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, fmt.Errorf("%w: failed to check phone uniqueness: %v", ErrRegisterInternal, err)
 		}
@@ -154,12 +151,12 @@ func (s *AuthService) Register(email, phone, name, pwd string) (*models.User, er
 			msg := strings.ToLower(err.Error())
 			switch {
 			case strings.Contains(msg, "email"):
-				return nil, ErrEmailAlreadyInUse
+				return nil, authbiz.EmailAlreadyInUse()
 			case strings.Contains(msg, "phone"):
-				return nil, ErrPhoneAlreadyInUse
+				return nil, authbiz.PhoneAlreadyInUse()
 			default:
 				// Fall back to a generic conflict to avoid leaking DB internals.
-				return nil, ErrEmailAlreadyInUse
+				return nil, authbiz.EmailAlreadyInUse()
 			}
 		}
 		return nil, fmt.Errorf("%w: failed to create user: %v", ErrRegisterInternal, err)
@@ -184,21 +181,35 @@ func normalizeEmail(email string) string {
 	return strings.ToLower(strings.TrimSpace(email))
 }
 
+func normalizeAuthLookupError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return authbiz.UserNotFound()
+	}
+	return err
+}
+
 // GetUserByID 根据ID获取用户
 func (s *AuthService) GetUserByID(id uint) (*models.User, error) {
-	return s.userRepo.FindByID(id)
+	user, err := s.userRepo.FindByID(id)
+	if err != nil {
+		return nil, normalizeAuthLookupError(err)
+	}
+	return user, nil
 }
 
 // ChangePassword 修改密码
 func (s *AuthService) ChangePassword(userID uint, oldPassword, newPassword string) error {
 	user, err := s.userRepo.FindByID(userID)
 	if err != nil {
-		return err
+		return normalizeAuthLookupError(err)
 	}
 
 	// 验证旧密码
 	if !password.CheckPassword(oldPassword, user.PasswordHash) {
-		return errors.New("Incorrect old password")
+		return authbiz.IncorrectOldPassword()
 	}
 
 	// 验证新密码策略
@@ -231,7 +242,7 @@ func (s *AuthService) UpdatePreferences(
 ) error {
 	user, err := s.userRepo.FindByID(userID)
 	if err != nil {
-		return err
+		return normalizeAuthLookupError(err)
 	}
 
 	if locale != "" {
@@ -270,7 +281,7 @@ func (s *AuthService) GenerateMagicToken(userID uint, expiresIn int) (string, ti
 func (s *AuthService) GenerateToken(user *models.User) (string, error) {
 	// 检查用户状态
 	if !user.IsActive {
-		return "", errors.New("User account has been disabled")
+		return "", authbiz.AccountDisabled()
 	}
 
 	// 生成JWT Token
@@ -292,10 +303,10 @@ func (s *AuthService) SendLoginCode(email string) (string, error) {
 	email = normalizeEmail(email)
 	user, err := s.userRepo.FindByEmail(email)
 	if err != nil {
-		return "", errors.New("User not found")
+		return "", authbiz.UserNotFound()
 	}
 	if !user.IsActive {
-		return "", errors.New("User account has been disabled")
+		return "", authbiz.AccountDisabled()
 	}
 
 	n, err := crand.Int(crand.Reader, big.NewInt(1000000))
@@ -315,10 +326,10 @@ func (s *AuthService) GeneratePasswordResetToken(email string) (string, error) {
 	email = normalizeEmail(email)
 	user, err := s.userRepo.FindByEmail(email)
 	if err != nil {
-		return "", err
+		return "", normalizeAuthLookupError(err)
 	}
 	if !user.IsActive {
-		return "", errors.New("User account has been disabled")
+		return "", authbiz.AccountDisabled()
 	}
 
 	b := make([]byte, 32)
@@ -338,12 +349,12 @@ func (s *AuthService) ResetPassword(token, newPassword string) error {
 	key := "password_reset:" + token
 	email, err := cache.Get(key)
 	if err != nil {
-		return errors.New("Reset token expired or invalid")
+		return authbiz.ResetTokenExpired()
 	}
 
 	user, err := s.userRepo.FindByEmail(email)
 	if err != nil {
-		return errors.New("User not found")
+		return authbiz.UserNotFound()
 	}
 
 	policy := s.cfg.Security.PasswordPolicy
@@ -373,19 +384,19 @@ func (s *AuthService) LoginWithCode(email, code string) (string, *models.User, e
 
 	storedCode, err := cache.Get(key)
 	if err != nil {
-		return "", nil, errors.New("Verification code expired or invalid")
+		return "", nil, authbiz.CodeExpired()
 	}
 	if storedCode != code {
-		return "", nil, errors.New("Invalid verification code")
+		return "", nil, authbiz.InvalidCode()
 	}
 	_ = cache.Del(key)
 
 	user, err := s.userRepo.FindByEmail(email)
 	if err != nil {
-		return "", nil, errors.New("User not found")
+		return "", nil, authbiz.UserNotFound()
 	}
 	if !user.IsActive {
-		return "", nil, errors.New("User account has been disabled")
+		return "", nil, authbiz.AccountDisabled()
 	}
 
 	token, err := jwt.GenerateToken(user.ID, user.Email, user.Role, s.cfg.JWT.ExpireHours)
@@ -404,10 +415,10 @@ func (s *AuthService) LoginWithCode(email, code string) (string, *models.User, e
 func (s *AuthService) SendPhoneLoginCode(phone string) (string, error) {
 	user, err := s.userRepo.FindByPhone(phone)
 	if err != nil {
-		return "", errors.New("User not found")
+		return "", authbiz.UserNotFound()
 	}
 	if !user.IsActive {
-		return "", errors.New("User account has been disabled")
+		return "", authbiz.AccountDisabled()
 	}
 	n, err := crand.Int(crand.Reader, big.NewInt(1000000))
 	if err != nil {
@@ -425,18 +436,18 @@ func (s *AuthService) LoginWithPhoneCode(phone, code string) (string, *models.Us
 	key := "phone_login_code:" + phone
 	storedCode, err := cache.Get(key)
 	if err != nil {
-		return "", nil, errors.New("Verification code expired or invalid")
+		return "", nil, authbiz.CodeExpired()
 	}
 	if storedCode != code {
-		return "", nil, errors.New("Invalid verification code")
+		return "", nil, authbiz.InvalidCode()
 	}
 	_ = cache.Del(key)
 	user, err := s.userRepo.FindByPhone(phone)
 	if err != nil {
-		return "", nil, errors.New("User not found")
+		return "", nil, authbiz.UserNotFound()
 	}
 	if !user.IsActive {
-		return "", nil, errors.New("User account has been disabled")
+		return "", nil, authbiz.AccountDisabled()
 	}
 	token, err := jwt.GenerateToken(user.ID, user.Email, user.Role, s.cfg.JWT.ExpireHours)
 	if err != nil {
@@ -452,10 +463,10 @@ func (s *AuthService) LoginWithPhoneCode(phone, code string) (string, *models.Us
 func (s *AuthService) GeneratePhoneResetCode(phone string) (string, error) {
 	user, err := s.userRepo.FindByPhone(phone)
 	if err != nil {
-		return "", err
+		return "", normalizeAuthLookupError(err)
 	}
 	if !user.IsActive {
-		return "", errors.New("User account has been disabled")
+		return "", authbiz.AccountDisabled()
 	}
 	n, err := crand.Int(crand.Reader, big.NewInt(1000000))
 	if err != nil {
@@ -473,15 +484,15 @@ func (s *AuthService) ResetPasswordByPhone(phone, code, newPassword string) erro
 	key := "phone_reset_code:" + phone
 	storedCode, err := cache.Get(key)
 	if err != nil {
-		return errors.New("Verification code expired or invalid")
+		return authbiz.CodeExpired()
 	}
 	if storedCode != code {
-		return errors.New("Invalid verification code")
+		return authbiz.InvalidCode()
 	}
 	_ = cache.Del(key)
 	user, err := s.userRepo.FindByPhone(phone)
 	if err != nil {
-		return errors.New("User not found")
+		return authbiz.UserNotFound()
 	}
 	policy := s.cfg.Security.PasswordPolicy
 	if err := password.ValidatePasswordPolicy(newPassword, policy.MinLength, policy.RequireUppercase,
@@ -502,7 +513,7 @@ func (s *AuthService) ResetPasswordByPhone(phone, code, newPassword string) erro
 // SendPhoneRegisterCode 生成手机注册验证码并存入Redis
 func (s *AuthService) SendPhoneRegisterCode(phone string) (string, error) {
 	if _, err := s.userRepo.FindByPhone(phone); err == nil {
-		return "", ErrPhoneAlreadyInUse
+		return "", authbiz.PhoneAlreadyInUse()
 	}
 	n, err := crand.Int(crand.Reader, big.NewInt(1000000))
 	if err != nil {
@@ -519,7 +530,7 @@ func (s *AuthService) SendPhoneRegisterCode(phone string) (string, error) {
 func (s *AuthService) SendBindEmailCode(userID uint, email string) (string, error) {
 	email = normalizeEmail(email)
 	if _, err := s.userRepo.FindByEmail(email); err == nil {
-		return "", ErrEmailAlreadyInUse
+		return "", authbiz.EmailAlreadyInUse()
 	}
 	n, err := crand.Int(crand.Reader, big.NewInt(1000000))
 	if err != nil {
@@ -539,15 +550,15 @@ func (s *AuthService) BindEmail(userID uint, email string, code string) error {
 	key := fmt.Sprintf("bind_email_code:%d:%s", userID, email)
 	stored, err := cache.Get(key)
 	if err != nil || stored != code {
-		return errors.New("Invalid or expired verification code")
+		return authbiz.CodeExpired()
 	}
 	_ = cache.Del(key)
 	if _, err := s.userRepo.FindByEmail(email); err == nil {
-		return ErrEmailAlreadyInUse
+		return authbiz.EmailAlreadyInUse()
 	}
 	user, err := s.userRepo.FindByID(userID)
 	if err != nil {
-		return err
+		return normalizeAuthLookupError(err)
 	}
 	user.Email = email
 	user.EmailVerified = true
@@ -557,7 +568,7 @@ func (s *AuthService) BindEmail(userID uint, email string, code string) error {
 // SendBindPhoneCode generates a code for binding phone to an existing account
 func (s *AuthService) SendBindPhoneCode(userID uint, phone string) (string, error) {
 	if _, err := s.userRepo.FindByPhone(phone); err == nil {
-		return "", ErrPhoneAlreadyInUse
+		return "", authbiz.PhoneAlreadyInUse()
 	}
 	n, err := crand.Int(crand.Reader, big.NewInt(1000000))
 	if err != nil {
@@ -576,15 +587,15 @@ func (s *AuthService) BindPhone(userID uint, phone string, code string) error {
 	key := fmt.Sprintf("bind_phone_code:%d:%s", userID, phone)
 	stored, err := cache.Get(key)
 	if err != nil || stored != code {
-		return errors.New("Invalid or expired verification code")
+		return authbiz.CodeExpired()
 	}
 	_ = cache.Del(key)
 	if _, err := s.userRepo.FindByPhone(phone); err == nil {
-		return ErrPhoneAlreadyInUse
+		return authbiz.PhoneAlreadyInUse()
 	}
 	user, err := s.userRepo.FindByID(userID)
 	if err != nil {
-		return err
+		return normalizeAuthLookupError(err)
 	}
 	user.Phone = &phone
 	return s.userRepo.Update(user)
@@ -595,10 +606,10 @@ func (s *AuthService) VerifyPhoneRegisterCode(phone, code string) error {
 	key := "phone_register_code:" + phone
 	storedCode, err := cache.Get(key)
 	if err != nil {
-		return errors.New("Verification code expired or invalid")
+		return authbiz.CodeExpired()
 	}
 	if storedCode != code {
-		return errors.New("Invalid verification code")
+		return authbiz.InvalidCode()
 	}
 	_ = cache.Del(key)
 	return nil

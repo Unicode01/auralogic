@@ -6,50 +6,47 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"auralogic/internal/config"
 	"auralogic/internal/database"
 	"auralogic/internal/models"
 	"auralogic/internal/pkg/jwt"
 	"auralogic/internal/pkg/response"
+	"github.com/gin-gonic/gin"
 )
+
+const websocketBearerTokenProtocolPrefix = "auralogic.auth.bearer."
 
 // AuthMiddleware 双认证中间件：优先JWT，回退API Key
 func AuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// 优先尝试 JWT Bearer Token
-		authHeader := c.GetHeader("Authorization")
-		if authHeader != "" {
-			parts := strings.SplitN(authHeader, " ", 2)
-			if len(parts) == 2 && parts[0] == "Bearer" {
-				tokenString := parts[1]
-				claims, err := jwt.ParseToken(tokenString)
-				if err != nil {
-					response.Error(c, 401, response.CodeTokenInvalid, "Invalid authentication token")
-					c.Abort()
-					return
-				}
-
-				db := database.GetDB()
-				var user models.User
-				if err := db.Select("id", "email", "role", "is_active").First(&user, claims.UserID).Error; err != nil {
-					response.Unauthorized(c, "Invalid authentication token")
-					c.Abort()
-					return
-				}
-				if !user.IsActive {
-					response.Unauthorized(c, "User account has been disabled")
-					c.Abort()
-					return
-				}
-
-				c.Set("auth_type", "jwt")
-				c.Set("user_id", user.ID)
-				c.Set("user_email", user.Email)
-				c.Set("user_role", user.Role)
-				c.Next()
+		if tokenString := extractBearerToken(c); tokenString != "" {
+			claims, err := jwt.ParseToken(tokenString)
+			if err != nil {
+				response.Error(c, 401, response.CodeTokenInvalid, "Invalid authentication token")
+				c.Abort()
 				return
 			}
+
+			db := database.GetDB()
+			var user models.User
+			if err := db.Select("id", "email", "role", "is_active").First(&user, claims.UserID).Error; err != nil {
+				response.Unauthorized(c, "Invalid authentication token")
+				c.Abort()
+				return
+			}
+			if !user.IsActive {
+				response.Unauthorized(c, "User account has been disabled")
+				c.Abort()
+				return
+			}
+
+			c.Set("auth_type", "jwt")
+			c.Set("user_id", user.ID)
+			c.Set("user_email", user.Email)
+			c.Set("user_role", user.Role)
+			c.Next()
+			return
 		}
 
 		// 回退到 API Key 认证
@@ -109,21 +106,57 @@ func IsAPIKeyAuth(c *gin.Context) bool {
 // OptionalAuthMiddleware 可选的认证中间件
 func OptionalAuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		authHeader := c.GetHeader("Authorization")
-		if authHeader != "" {
-			parts := strings.SplitN(authHeader, " ", 2)
-			if len(parts) == 2 && parts[0] == "Bearer" {
-				tokenString := parts[1]
-				claims, err := jwt.ParseToken(tokenString)
-				if err == nil {
-					c.Set("user_id", claims.UserID)
-					c.Set("user_email", claims.Email)
-					c.Set("user_role", claims.Role)
+		if tokenString := extractBearerToken(c); tokenString != "" {
+			claims, err := jwt.ParseToken(tokenString)
+			if err == nil {
+				db := database.GetDB()
+				if db != nil {
+					var user models.User
+					if db.Select("id", "email", "role", "is_active").First(&user, claims.UserID).Error == nil && user.IsActive {
+						c.Set("user_id", user.ID)
+						c.Set("user_email", user.Email)
+						c.Set("user_role", user.Role)
+					}
 				}
 			}
 		}
 		c.Next()
 	}
+}
+
+func extractBearerToken(c *gin.Context) string {
+	if c == nil {
+		return ""
+	}
+	authHeader := strings.TrimSpace(c.GetHeader("Authorization"))
+	if authHeader != "" {
+		parts := strings.SplitN(authHeader, " ", 2)
+		if len(parts) == 2 && strings.EqualFold(strings.TrimSpace(parts[0]), "Bearer") {
+			return strings.TrimSpace(parts[1])
+		}
+	}
+	if !isWebSocketUpgradeRequest(c) {
+		return ""
+	}
+	for _, protocol := range strings.Split(c.GetHeader("Sec-WebSocket-Protocol"), ",") {
+		trimmed := strings.TrimSpace(protocol)
+		if !strings.HasPrefix(trimmed, websocketBearerTokenProtocolPrefix) {
+			continue
+		}
+		if token := strings.TrimSpace(strings.TrimPrefix(trimmed, websocketBearerTokenProtocolPrefix)); token != "" {
+			return token
+		}
+	}
+	return ""
+}
+
+func isWebSocketUpgradeRequest(c *gin.Context) bool {
+	if c == nil || c.Request == nil {
+		return false
+	}
+	connection := strings.ToLower(strings.TrimSpace(c.GetHeader("Connection")))
+	upgrade := strings.ToLower(strings.TrimSpace(c.GetHeader("Upgrade")))
+	return strings.Contains(connection, "upgrade") && upgrade == "websocket"
 }
 
 // ProductBrowseAuthMiddleware 动态控制商品浏览是否需要登录。

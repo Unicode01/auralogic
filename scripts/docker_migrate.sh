@@ -197,7 +197,10 @@ do_pack() {
 
   if [ -d "$config_dir" ]; then
     cp -r "$config_dir"/* "$TMPDIR/config/" 2>/dev/null || true
+    rm -f "$TMPDIR/config/admin.json"
+    rm -f "$TMPDIR/config/bootstrap/admin.json"
     ok "docker-build/ 配置已导出"
+    info "已排除管理员初始化文件，避免迁移包携带敏感凭据"
   else
     warn "未找到 docker-build/ 目录"
   fi
@@ -336,7 +339,11 @@ do_unpack() {
   if [ -d "$TMPDIR/config" ] && [ "$(ls -A "$TMPDIR/config" 2>/dev/null)" ]; then
     mkdir -p "$DEPLOY_DIR/docker-build"
     cp -r "$TMPDIR/config"/* "$DEPLOY_DIR/docker-build/"
+    rm -f "$DEPLOY_DIR/docker-build/admin.json"
+    rm -f "$DEPLOY_DIR/docker-build/bootstrap/admin.json"
+    mkdir -p "$DEPLOY_DIR/docker-build/bootstrap"
     ok "配置文件已恢复到 $DEPLOY_DIR/docker-build/"
+    info "已清理迁移目录中的管理员初始化文件，避免旧凭据被再次复用"
   fi
 
   # 恢复 .build_last_config
@@ -362,6 +369,7 @@ services:
       - "80:80"
     volumes:
       - ./docker-build/config.json:/app/backend/config/config.json
+      - ./docker-build/bootstrap:/app/backend/bootstrap
       - ./docker-build/templates:/app/backend/templates
       - auralogic_data:/app/backend/data
       - auralogic_logs:/app/backend/logs

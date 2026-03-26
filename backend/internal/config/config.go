@@ -8,8 +8,11 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
+
+	"auralogic/internal/pkg/pluginutil"
 )
 
 // Config 主配置结构
@@ -35,6 +38,7 @@ type Config struct {
 	Customization      CustomizationConfig      `json:"customization"`
 	EmailNotifications EmailNotificationsConfig `json:"email_notifications"`
 	Analytics          AnalyticsConfig          `json:"analytics"`
+	Plugin             PluginPlatformConfig     `json:"plugin"`
 }
 
 // AppConfig 应用配置
@@ -210,8 +214,19 @@ type LogConfig struct {
 
 // InitLogger 根据 LogConfig 初始化日志系统。
 // 使用 log/slog 作为结构化日志后端，同时桥接标准 log 包的输出。
-// 返回日志文件句柄（如果 output=file），调用方应 defer Close。
+// 返回当前活动日志文件句柄（如果 output=file），调用方可在进程退出时调用 CloseLogger。
 func InitLogger(cfg *LogConfig) (*os.File, error) {
+	loggerMu.Lock()
+	defer loggerMu.Unlock()
+	return initLoggerLocked(cfg, true)
+}
+
+func initLoggerLocked(cfg *LogConfig, closeExisting bool) (*os.File, error) {
+	var previousLogFile *os.File
+	if closeExisting {
+		previousLogFile = currentLogFile
+	}
+
 	// 解析日志级别
 	var level slog.Level
 	switch strings.ToLower(cfg.Level) {
@@ -255,24 +270,60 @@ func InitLogger(cfg *LogConfig) (*os.File, error) {
 	// 设置为默认 logger（同时桥接标准 log 包）
 	slog.SetDefault(slog.New(handler))
 	log.SetOutput(writer)
+	currentLogFile = logFile
+	if closeExisting && previousLogFile != nil && previousLogFile != logFile {
+		_ = previousLogFile.Close()
+	}
 
 	return logFile, nil
 }
 
+// ReloadLogger 根据当前配置重建日志输出目标和日志级别。
+func ReloadLogger() error {
+	cfg := GetConfig()
+	if cfg == nil {
+		return fmt.Errorf("config is not loaded")
+	}
+
+	loggerMu.Lock()
+	defer loggerMu.Unlock()
+	_, err := initLoggerLocked(&cfg.Log, true)
+	return err
+}
+
+// CloseLogger 关闭当前活动日志文件句柄。
+func CloseLogger() {
+	loggerMu.Lock()
+	defer loggerMu.Unlock()
+	if currentLogFile != nil {
+		_ = currentLogFile.Close()
+		currentLogFile = nil
+	}
+}
+
 // OrderConfig Order配置
+type OrderHighConcurrencyProtectionConfig struct {
+	Enabled       bool   `json:"enabled"`
+	Mode          string `json:"mode"`            // auto, memory, redis
+	MaxInFlight   int    `json:"max_inflight"`    // 每条热点链路允许的最大并发写入数
+	WaitTimeoutMs int    `json:"wait_timeout_ms"` // 等待获取并发槽位的超时时间
+	RedisLeaseMs  int    `json:"redis_lease_ms"`  // Redis 分布式槽位租约时长
+}
+
 type OrderConfig struct {
-	NoPrefix                       string             `json:"no_prefix"`
-	AutoCancelHours                int                `json:"auto_cancel_hours"`
-	MaxPendingPaymentOrdersPerUser int                `json:"max_pending_payment_orders_per_user"`
-	MaxPaymentPollingTasksPerUser  int                `json:"max_payment_polling_tasks_per_user"`
-	MaxPaymentPollingTasksGlobal   int                `json:"max_payment_polling_tasks_global"`
-	Currency                       string             `json:"currency"`                  // 货币单位: CNY, USD, EUR, JPY, etc.
-	MaxOrderItems                  int                `json:"max_order_items"`           // 单个订单最大商品项数，0表示使用默认值100
-	MaxItemQuantity                int                `json:"max_item_quantity"`         // 单个商品项最大数量，0表示使用默认值9999
-	ShowVirtualStockRemark         bool               `json:"show_virtual_stock_remark"` // 是否在用户侧显示虚拟产品备注
-	StockDisplay                   StockDisplayConfig `json:"stock_display"`
-	VirtualDeliveryOrder           string             `json:"virtual_delivery_order"` // 虚拟库存发货顺序: random(随机), newest(先发新库存), oldest(先发老库存)
-	Invoice                        InvoiceConfig      `json:"invoice"`
+	NoPrefix                       string                               `json:"no_prefix"`
+	AutoCancelHours                int                                  `json:"auto_cancel_hours"`
+	MaxPendingPaymentOrdersPerUser int                                  `json:"max_pending_payment_orders_per_user"`
+	MaxPaymentPollingTasksPerUser  int                                  `json:"max_payment_polling_tasks_per_user"`
+	MaxPaymentPollingTasksGlobal   int                                  `json:"max_payment_polling_tasks_global"`
+	Currency                       string                               `json:"currency"`                  // 货币单位: CNY, USD, EUR, JPY, etc.
+	MaxOrderItems                  int                                  `json:"max_order_items"`           // 单个订单最大商品项数，0表示使用默认值100
+	MaxItemQuantity                int                                  `json:"max_item_quantity"`         // 单个商品项最大数量，0表示使用默认值9999
+	ShowVirtualStockRemark         bool                                 `json:"show_virtual_stock_remark"` // 是否在用户侧显示虚拟产品备注
+	StockDisplay                   StockDisplayConfig                   `json:"stock_display"`
+	VirtualDeliveryOrder           string                               `json:"virtual_delivery_order"` // 虚拟库存发货顺序: random(随机), newest(先发新库存), oldest(先发老库存)
+	Invoice                        InvoiceConfig                        `json:"invoice"`
+	HighConcurrencyProtection      OrderHighConcurrencyProtectionConfig `json:"high_concurrency_protection"`
 }
 
 // InvoiceConfig 账单/发票配置
@@ -389,6 +440,74 @@ type AnalyticsConfig struct {
 	Enabled bool `json:"enabled"` // 是否启用数据分析功能
 }
 
+// PluginSandboxConfig 插件沙箱配置
+type PluginSandboxConfig struct {
+	Level              string   `json:"level"`                 // strict | balanced | permissive
+	ExecTimeoutMs      int      `json:"exec_timeout_ms"`       // 单次执行超时
+	MaxMemoryMB        int      `json:"max_memory_mb"`         // 软限制，仅用于策略与监控提示
+	MaxConcurrency     int      `json:"max_concurrency"`       // JS Worker 并发执行上限
+	JSWorkerSocketPath string   `json:"js_worker_socket_path"` // Unix socket 路径
+	JSWorkerAutoStart  bool     `json:"js_worker_auto_start"`  // 是否由主进程托管启动 JS Worker
+	JSWorkerBinary     string   `json:"js_worker_binary"`      // Worker 可执行文件路径
+	JSWorkerArgs       []string `json:"js_worker_args"`        // 额外参数
+	JSAllowNetwork     bool     `json:"js_allow_network"`      // JS 插件是否允许网络访问（策略位）
+	JSAllowFileSystem  bool     `json:"js_allow_file_system"`  // JS 插件是否允许文件系统访问（策略位）
+}
+
+// PluginExecutionPolicyConfig 插件执行策略（稳定性/灵活性）
+type PluginExecutionPolicyConfig struct {
+	HookMaxInFlight           int `json:"hook_max_inflight"`            // Hook 并发闸门
+	HookMaxRetries            int `json:"hook_max_retries"`             // Hook 执行失败重试次数
+	HookRetryBackoffMs        int `json:"hook_retry_backoff_ms"`        // Hook 重试退避间隔
+	HookBeforeTimeoutMs       int `json:"hook_before_timeout_ms"`       // before Hook 超时预算
+	HookAfterTimeoutMs        int `json:"hook_after_timeout_ms"`        // after/event Hook 超时预算
+	FailureThreshold          int `json:"failure_threshold"`            // 连续失败达到阈值后触发断路器
+	FailureCooldownMs         int `json:"failure_cooldown_ms"`          // 故障后冷却窗口，避免坏插件持续进入热路径
+	ExecutionLogRetentionDays int `json:"execution_log_retention_days"` // 执行日志保留天数，0=默认值，<0=禁用清理
+}
+
+// PluginFrontendPolicyConfig 插件前端渲染策略
+type PluginFrontendPolicyConfig struct {
+	ForceSanitizeHTML     bool  `json:"force_sanitize_html"`               // 全局强制 sanitize（trusted kill switch）
+	SlotAnimationsEnabled *bool `json:"slot_animations_enabled,omitempty"` // 插槽动画全局默认开关，nil=默认启用
+}
+
+func (c PluginFrontendPolicyConfig) SlotAnimationsEnabledValue() bool {
+	if c.SlotAnimationsEnabled == nil {
+		return true
+	}
+	return *c.SlotAnimationsEnabled
+}
+
+// PluginGRPCTransportConfig gRPC 传输安全配置
+type PluginGRPCTransportConfig struct {
+	Mode               string `json:"mode"`                 // insecure | insecure_local | tls
+	CAFile             string `json:"ca_file"`              // CA 证书路径（TLS）
+	CertFile           string `json:"cert_file"`            // 客户端证书路径（mTLS，可选）
+	KeyFile            string `json:"key_file"`             // 客户端私钥路径（mTLS，可选）
+	ServerName         string `json:"server_name"`          // TLS ServerName（可选）
+	InsecureSkipVerify bool   `json:"insecure_skip_verify"` // 是否跳过服务端证书校验（仅调试）
+}
+
+// PluginPlatformConfig 插件平台配置
+type PluginPlatformConfig struct {
+	Enabled                bool                        `json:"enabled"`                    // 是否启用插件平台
+	AllowedRuntimes        []string                    `json:"allowed_runtimes"`           // 允许 runtime: grpc, js_worker
+	AllowedTypes           []string                    `json:"allowed_types"`              // 允许的业务插件类型（空=不限制）
+	DefaultRuntime         string                      `json:"default_runtime"`            // 默认 runtime
+	ArtifactDir            string                      `json:"artifact_dir"`               // 插件包/解压产物目录（不应暴露到公网静态目录）
+	JSFSMaxFiles           int                         `json:"js_fs_max_files"`            // JS 插件可见目录最大文件数（配额）
+	JSFSMaxTotalBytes      int64                       `json:"js_fs_max_total_bytes"`      // JS 插件可见目录最大总大小（字节）
+	JSFSMaxReadBytes       int64                       `json:"js_fs_max_read_bytes"`       // JS 单次读取文件大小上限（字节）
+	JSStorageMaxKeys       int                         `json:"js_storage_max_keys"`        // JS 插件 KV 最大键数量（按插件）
+	JSStorageMaxTotalBytes int64                       `json:"js_storage_max_total_bytes"` // JS 插件 KV 最大总容量（字节，key+value）
+	JSStorageMaxValueBytes int64                       `json:"js_storage_max_value_bytes"` // JS 插件 KV 单值最大容量（字节）
+	Frontend               PluginFrontendPolicyConfig  `json:"frontend"`
+	GRPC                   PluginGRPCTransportConfig   `json:"grpc"`
+	Sandbox                PluginSandboxConfig         `json:"sandbox"`
+	Execution              PluginExecutionPolicyConfig `json:"execution"`
+}
+
 // AdminConfig Admin配置
 type AdminConfig struct {
 	SuperAdmin struct {
@@ -399,9 +518,11 @@ type AdminConfig struct {
 }
 
 var (
-	instance *Config
-	once     sync.Once
-	mu       sync.RWMutex // 用于热更新配置的读写锁
+	instance       *Config
+	once           sync.Once
+	mu             sync.RWMutex // 用于热更新配置的读写锁
+	loggerMu       sync.Mutex
+	currentLogFile *os.File
 )
 
 // LoadConfig 加载配置文件
@@ -494,6 +615,7 @@ func ReloadConfig() error {
 	instance.Customization = cfg.Customization
 	instance.EmailNotifications = cfg.EmailNotifications
 	instance.Analytics = cfg.Analytics
+	instance.Plugin = cfg.Plugin
 	// 注意：Database、Redis、JWT 通常需要重启才能生效，这里不更新
 
 	return nil
@@ -566,6 +688,23 @@ func (c *Config) Validate() error {
 	if c.Order.MaxPaymentPollingTasksGlobal == 0 {
 		c.Order.MaxPaymentPollingTasksGlobal = 2000
 	}
+	if c.Order.HighConcurrencyProtection.Mode == "" {
+		c.Order.HighConcurrencyProtection.Mode = "auto"
+	}
+	switch c.Order.HighConcurrencyProtection.Mode {
+	case "auto", "memory", "redis":
+	default:
+		return fmt.Errorf("order.high_concurrency_protection.mode must be one of auto/memory/redis")
+	}
+	if c.Order.HighConcurrencyProtection.MaxInFlight <= 0 {
+		c.Order.HighConcurrencyProtection.MaxInFlight = 8
+	}
+	if c.Order.HighConcurrencyProtection.WaitTimeoutMs <= 0 {
+		c.Order.HighConcurrencyProtection.WaitTimeoutMs = 5000
+	}
+	if c.Order.HighConcurrencyProtection.RedisLeaseMs <= 0 {
+		c.Order.HighConcurrencyProtection.RedisLeaseMs = 30000
+	}
 	if c.RateLimit.OrderCreate == 0 {
 		c.RateLimit.OrderCreate = 30
 	}
@@ -617,7 +756,273 @@ func (c *Config) Validate() error {
 	// 如果配置文件中没有analytics字段，则默认为false（关闭）
 	// 管理员需要在设置页面手动开启
 
+	// 插件平台默认配置
+	pluginCfgUnset := !c.Plugin.Enabled &&
+		c.Plugin.DefaultRuntime == "" &&
+		len(c.Plugin.AllowedRuntimes) == 0 &&
+		len(c.Plugin.AllowedTypes) == 0 &&
+		c.Plugin.ArtifactDir == "" &&
+		c.Plugin.JSFSMaxFiles == 0 &&
+		c.Plugin.JSFSMaxTotalBytes == 0 &&
+		c.Plugin.JSFSMaxReadBytes == 0 &&
+		c.Plugin.JSStorageMaxKeys == 0 &&
+		c.Plugin.JSStorageMaxTotalBytes == 0 &&
+		c.Plugin.JSStorageMaxValueBytes == 0 &&
+		!c.Plugin.Frontend.ForceSanitizeHTML &&
+		c.Plugin.GRPC.Mode == "" &&
+		c.Plugin.GRPC.CAFile == "" &&
+		c.Plugin.GRPC.CertFile == "" &&
+		c.Plugin.GRPC.KeyFile == "" &&
+		c.Plugin.GRPC.ServerName == "" &&
+		!c.Plugin.GRPC.InsecureSkipVerify &&
+		c.Plugin.Sandbox.Level == "" &&
+		c.Plugin.Sandbox.ExecTimeoutMs == 0 &&
+		c.Plugin.Sandbox.MaxMemoryMB == 0 &&
+		c.Plugin.Sandbox.MaxConcurrency == 0 &&
+		c.Plugin.Sandbox.JSWorkerSocketPath == "" &&
+		c.Plugin.Sandbox.JSWorkerBinary == "" &&
+		len(c.Plugin.Sandbox.JSWorkerArgs) == 0 &&
+		!c.Plugin.Sandbox.JSWorkerAutoStart &&
+		!c.Plugin.Sandbox.JSAllowNetwork &&
+		!c.Plugin.Sandbox.JSAllowFileSystem &&
+		c.Plugin.Execution.HookMaxInFlight == 0 &&
+		c.Plugin.Execution.HookMaxRetries == 0 &&
+		c.Plugin.Execution.HookRetryBackoffMs == 0 &&
+		c.Plugin.Execution.HookBeforeTimeoutMs == 0 &&
+		c.Plugin.Execution.HookAfterTimeoutMs == 0 &&
+		c.Plugin.Execution.FailureThreshold == 0 &&
+		c.Plugin.Execution.FailureCooldownMs == 0 &&
+		c.Plugin.Execution.ExecutionLogRetentionDays == 0
+	if pluginCfgUnset {
+		c.Plugin.Enabled = true
+	}
+
+	c.Plugin.AllowedRuntimes = normalizeLowerStringList(c.Plugin.AllowedRuntimes)
+	if len(c.Plugin.AllowedRuntimes) == 0 {
+		c.Plugin.AllowedRuntimes = []string{"grpc"}
+	}
+	for _, runtime := range c.Plugin.AllowedRuntimes {
+		switch runtime {
+		case "grpc", "js_worker":
+		default:
+			return fmt.Errorf("plugin.allowed_runtimes contains unsupported runtime %q", runtime)
+		}
+	}
+
+	c.Plugin.AllowedTypes = normalizeLowerStringList(c.Plugin.AllowedTypes)
+	c.Plugin.DefaultRuntime = strings.ToLower(strings.TrimSpace(c.Plugin.DefaultRuntime))
+	if c.Plugin.DefaultRuntime == "" {
+		c.Plugin.DefaultRuntime = c.Plugin.AllowedRuntimes[0]
+	}
+	c.Plugin.ArtifactDir = filepath.Clean(filepath.FromSlash(strings.TrimSpace(c.Plugin.ArtifactDir)))
+	if c.Plugin.ArtifactDir == "" || c.Plugin.ArtifactDir == "." {
+		c.Plugin.ArtifactDir = filepath.Join("data", "plugins")
+	}
+	uploadDir := filepath.Clean(filepath.FromSlash(strings.TrimSpace(c.Upload.Dir)))
+	if uploadDir == "" || uploadDir == "." {
+		uploadDir = "uploads"
+	}
+	if isPathEqualOrWithin(uploadDir, c.Plugin.ArtifactDir) {
+		return fmt.Errorf("plugin.artifact_dir must not be inside upload.dir")
+	}
+	if c.Plugin.JSFSMaxFiles <= 0 {
+		c.Plugin.JSFSMaxFiles = 2048
+	}
+	if c.Plugin.JSFSMaxTotalBytes <= 0 {
+		c.Plugin.JSFSMaxTotalBytes = 128 * 1024 * 1024
+	}
+	if c.Plugin.JSFSMaxReadBytes <= 0 {
+		c.Plugin.JSFSMaxReadBytes = 4 * 1024 * 1024
+	}
+	if c.Plugin.JSFSMaxReadBytes > c.Plugin.JSFSMaxTotalBytes {
+		c.Plugin.JSFSMaxReadBytes = c.Plugin.JSFSMaxTotalBytes
+	}
+	if c.Plugin.JSStorageMaxKeys <= 0 {
+		c.Plugin.JSStorageMaxKeys = 512
+	}
+	if c.Plugin.JSStorageMaxTotalBytes <= 0 {
+		c.Plugin.JSStorageMaxTotalBytes = 4 * 1024 * 1024
+	}
+	if c.Plugin.JSStorageMaxValueBytes <= 0 {
+		c.Plugin.JSStorageMaxValueBytes = 64 * 1024
+	}
+	if c.Plugin.JSStorageMaxValueBytes > c.Plugin.JSStorageMaxTotalBytes {
+		c.Plugin.JSStorageMaxValueBytes = c.Plugin.JSStorageMaxTotalBytes
+	}
+	if c.Plugin.Frontend.SlotAnimationsEnabled == nil {
+		c.Plugin.Frontend.SlotAnimationsEnabled = boolPtr(true)
+	}
+	c.Plugin.GRPC.Mode = strings.ToLower(strings.TrimSpace(c.Plugin.GRPC.Mode))
+	if c.Plugin.GRPC.Mode == "" {
+		c.Plugin.GRPC.Mode = "insecure_local"
+	}
+	switch c.Plugin.GRPC.Mode {
+	case "insecure", "insecure_local", "tls":
+	default:
+		return fmt.Errorf("plugin.grpc.mode must be one of insecure/insecure_local/tls")
+	}
+	c.Plugin.GRPC.CAFile = filepath.Clean(filepath.FromSlash(strings.TrimSpace(c.Plugin.GRPC.CAFile)))
+	if c.Plugin.GRPC.CAFile == "." {
+		c.Plugin.GRPC.CAFile = ""
+	}
+	c.Plugin.GRPC.CertFile = filepath.Clean(filepath.FromSlash(strings.TrimSpace(c.Plugin.GRPC.CertFile)))
+	if c.Plugin.GRPC.CertFile == "." {
+		c.Plugin.GRPC.CertFile = ""
+	}
+	c.Plugin.GRPC.KeyFile = filepath.Clean(filepath.FromSlash(strings.TrimSpace(c.Plugin.GRPC.KeyFile)))
+	if c.Plugin.GRPC.KeyFile == "." {
+		c.Plugin.GRPC.KeyFile = ""
+	}
+	c.Plugin.GRPC.ServerName = strings.TrimSpace(c.Plugin.GRPC.ServerName)
+	if (c.Plugin.GRPC.CertFile == "") != (c.Plugin.GRPC.KeyFile == "") {
+		return fmt.Errorf("plugin.grpc.cert_file and plugin.grpc.key_file must be provided together")
+	}
+	if !containsString(c.Plugin.AllowedRuntimes, c.Plugin.DefaultRuntime) {
+		return fmt.Errorf("plugin.default_runtime %q is not in plugin.allowed_runtimes", c.Plugin.DefaultRuntime)
+	}
+
+	c.Plugin.Sandbox.Level = strings.ToLower(strings.TrimSpace(c.Plugin.Sandbox.Level))
+	if c.Plugin.Sandbox.Level == "" {
+		c.Plugin.Sandbox.Level = "balanced"
+	}
+	switch c.Plugin.Sandbox.Level {
+	case "strict", "balanced", "permissive":
+	default:
+		return fmt.Errorf("plugin.sandbox.level must be one of strict/balanced/permissive")
+	}
+	if c.Plugin.Sandbox.ExecTimeoutMs <= 0 {
+		c.Plugin.Sandbox.ExecTimeoutMs = 30000
+	}
+	if c.Plugin.Sandbox.MaxMemoryMB <= 0 {
+		c.Plugin.Sandbox.MaxMemoryMB = 128
+	}
+	if c.Plugin.Sandbox.MaxConcurrency <= 0 {
+		c.Plugin.Sandbox.MaxConcurrency = 4
+	}
+	c.Plugin.Sandbox.JSWorkerSocketPath = strings.TrimSpace(c.Plugin.Sandbox.JSWorkerSocketPath)
+	if c.Plugin.Sandbox.JSWorkerSocketPath == "" {
+		c.Plugin.Sandbox.JSWorkerSocketPath = defaultPluginJSWorkerSocketPath()
+	}
+	if _, _, err := pluginutil.ResolveJSWorkerSocketEndpoint(c.Plugin.Sandbox.JSWorkerSocketPath); err != nil {
+		return fmt.Errorf("plugin.sandbox.js_worker_socket_path is invalid: %w", err)
+	}
+	c.Plugin.Sandbox.JSWorkerBinary = strings.TrimSpace(c.Plugin.Sandbox.JSWorkerBinary)
+	c.Plugin.Sandbox.JSWorkerArgs = normalizeTrimmedStringList(c.Plugin.Sandbox.JSWorkerArgs)
+
+	// 插件执行策略默认值
+	if c.Plugin.Execution.HookMaxInFlight <= 0 {
+		c.Plugin.Execution.HookMaxInFlight = 64
+	}
+	if c.Plugin.Execution.HookMaxRetries < 0 {
+		c.Plugin.Execution.HookMaxRetries = 0
+	}
+	if c.Plugin.Execution.HookRetryBackoffMs <= 0 {
+		c.Plugin.Execution.HookRetryBackoffMs = 100
+	}
+	if c.Plugin.Execution.HookBeforeTimeoutMs <= 0 {
+		c.Plugin.Execution.HookBeforeTimeoutMs = c.Plugin.Sandbox.ExecTimeoutMs
+	}
+	if c.Plugin.Execution.HookAfterTimeoutMs <= 0 {
+		c.Plugin.Execution.HookAfterTimeoutMs = c.Plugin.Sandbox.ExecTimeoutMs
+	}
+	if c.Plugin.Execution.FailureThreshold <= 0 {
+		c.Plugin.Execution.FailureThreshold = 3
+	}
+	if c.Plugin.Execution.FailureCooldownMs < 0 {
+		c.Plugin.Execution.FailureCooldownMs = 0
+	}
+	if c.Plugin.Execution.FailureCooldownMs == 0 {
+		c.Plugin.Execution.FailureCooldownMs = 30000
+	}
+	if c.Plugin.Execution.ExecutionLogRetentionDays == 0 {
+		c.Plugin.Execution.ExecutionLogRetentionDays = 90
+	}
+
 	return nil
+}
+
+func normalizeLowerStringList(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		trimmed := strings.ToLower(strings.TrimSpace(value))
+		if trimmed == "" {
+			continue
+		}
+		if _, exists := seen[trimmed]; exists {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		out = append(out, trimmed)
+	}
+	return out
+}
+
+func defaultPluginJSWorkerSocketPath() string {
+	if runtime.GOOS == "windows" {
+		return "tcp://127.0.0.1:17345"
+	}
+	return "/tmp/auralogic-jsworker.sock"
+}
+
+func normalizeTrimmedStringList(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			continue
+		}
+		if _, exists := seen[trimmed]; exists {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		out = append(out, trimmed)
+	}
+	return out
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}
+
+func boolPtr(value bool) *bool {
+	return &value
+}
+
+func isPathEqualOrWithin(basePath string, targetPath string) bool {
+	baseTrimmed := strings.TrimSpace(basePath)
+	targetTrimmed := strings.TrimSpace(targetPath)
+	if baseTrimmed == "" || targetTrimmed == "" {
+		return false
+	}
+
+	baseAbs, err := filepath.Abs(filepath.Clean(filepath.FromSlash(baseTrimmed)))
+	if err != nil {
+		return false
+	}
+	targetAbs, err := filepath.Abs(filepath.Clean(filepath.FromSlash(targetTrimmed)))
+	if err != nil {
+		return false
+	}
+
+	rel, err := filepath.Rel(baseAbs, targetAbs)
+	if err != nil {
+		return false
+	}
+	if rel == "." {
+		return true
+	}
+	if rel == ".." {
+		return false
+	}
+	parentPrefix := ".." + string(os.PathSeparator)
+	return !strings.HasPrefix(rel, parentPrefix)
 }
 
 // LoadAdminConfig 加载Admin配置

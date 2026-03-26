@@ -1,9 +1,25 @@
 'use client'
+/* eslint-disable @next/next/no-img-element */
 
 import { useState, useEffect } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { getAdminProduct, createProduct, updateProduct, uploadImage, batchCreateProductBindings, deleteProductBinding, updateProductInventoryMode, getInventories, replaceProductBindings, getVirtualInventories, getProductVirtualInventoryBindings, createProductVirtualInventoryBinding, deleteProductVirtualInventoryBinding, saveProductVirtualVariantBindings } from '@/lib/api'
+import {
+  getAdminProduct,
+  createProduct,
+  updateProduct,
+  uploadImage,
+  batchCreateProductBindings,
+  deleteProductBinding,
+  updateProductInventoryMode,
+  getInventories,
+  replaceProductBindings,
+  getVirtualInventories,
+  getProductVirtualInventoryBindings,
+  createProductVirtualInventoryBinding,
+  deleteProductVirtualInventoryBinding,
+  saveProductVirtualVariantBindings,
+} from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -19,10 +35,29 @@ import {
 } from '@/components/ui/select'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Switch } from '@/components/ui/switch'
-import { ProductVariantInventory, VariantInventoryBinding } from '@/components/admin/product-variant-inventory'
-import { ProductVirtualVariantInventory, VirtualVariantInventoryBinding } from '@/components/admin/product-virtual-variant-inventory'
+import {
+  ProductVariantInventory,
+  VariantInventoryBinding,
+} from '@/components/admin/product-variant-inventory'
+import {
+  ProductVirtualVariantInventory,
+  VirtualVariantInventoryBinding,
+} from '@/components/admin/product-virtual-variant-inventory'
 import toast from 'react-hot-toast'
-import { ArrowLeft, Save, Plus, Trash2, Upload, Loader2, Image as ImageIcon, Database, FileText, RefreshCw, Eye, Pencil } from 'lucide-react'
+import {
+  ArrowLeft,
+  Save,
+  Plus,
+  Trash2,
+  Upload,
+  Loader2,
+  Image as ImageIcon,
+  Database,
+  FileText,
+  RefreshCw,
+  Eye,
+  Pencil,
+} from 'lucide-react'
 import Link from 'next/link'
 import { minorToMajor, parseMajorToMinor } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
@@ -54,12 +89,20 @@ import {
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
 import { useLocale } from '@/hooks/use-locale'
-import { getTranslations } from '@/lib/i18n'
+import { getTranslations, translateBizError } from '@/lib/i18n'
 import { usePageTitle } from '@/hooks/use-page-title'
 import { MarkdownMessage } from '@/components/ui/markdown-message'
+import { resolveApiErrorMessage } from '@/lib/api-error'
+import { PluginSlot } from '@/components/plugins/plugin-slot'
 
 // 虚拟库存绑定卡片组件
-function VirtualInventoryBindingCard({ productId, isNew }: { productId: number | null; isNew: boolean }) {
+function VirtualInventoryBindingCard({
+  productId,
+  isNew,
+}: {
+  productId: number | null
+  isNew: boolean
+}) {
   const queryClient = useQueryClient()
   const { locale } = useLocale()
   const t = getTranslations(locale)
@@ -67,7 +110,11 @@ function VirtualInventoryBindingCard({ productId, isNew }: { productId: number |
   const [selectedVirtualInventoryId, setSelectedVirtualInventoryId] = useState<string>('')
 
   // 获取商品的虚拟库存绑定
-  const { data: bindingsData, isLoading: bindingsLoading, refetch: refetchBindings } = useQuery({
+  const {
+    data: bindingsData,
+    isLoading: bindingsLoading,
+    refetch: refetchBindings,
+  } = useQuery({
     queryKey: ['productVirtualInventoryBindings', productId],
     queryFn: () => getProductVirtualInventoryBindings(productId!),
     enabled: !!productId && !isNew,
@@ -89,8 +136,8 @@ function VirtualInventoryBindingCard({ productId, isNew }: { productId: number |
       setSelectedVirtualInventoryId('')
       refetchBindings()
     },
-    onError: (error: Error) => {
-      toast.error(error.message || t.admin.bindingFailed)
+    onError: (error: unknown) => {
+      toast.error(resolveApiErrorMessage(error, t, t.admin.bindingFailed))
     },
   })
 
@@ -101,8 +148,8 @@ function VirtualInventoryBindingCard({ productId, isNew }: { productId: number |
       toast.success(t.admin.unbindSuccess)
       refetchBindings()
     },
-    onError: (error: Error) => {
-      toast.error(error.message || t.admin.unbindFailed)
+    onError: (error: unknown) => {
+      toast.error(resolveApiErrorMessage(error, t, t.admin.unbindFailed))
     },
   })
 
@@ -138,10 +185,10 @@ function VirtualInventoryBindingCard({ productId, isNew }: { productId: number |
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="text-center py-8 text-muted-foreground">
-            <FileText className="h-12 w-12 mx-auto mb-4 opacity-50" />
+          <div className="py-8 text-center text-muted-foreground">
+            <FileText className="mx-auto mb-4 h-12 w-12 opacity-50" />
             <p>{t.admin.saveProductFirst}</p>
-            <p className="text-sm mt-2">{t.admin.virtualProductBindingHint}</p>
+            <p className="mt-2 text-sm">{t.admin.virtualProductBindingHint}</p>
           </div>
         </CardContent>
       </Card>
@@ -158,11 +205,11 @@ function VirtualInventoryBindingCard({ productId, isNew }: { productId: number |
           </CardTitle>
           <div className="flex gap-2">
             <Button type="button" variant="outline" size="sm" onClick={() => refetchBindings()}>
-              <RefreshCw className="h-4 w-4 mr-1" />
+              <RefreshCw className="mr-1 h-4 w-4" />
               {t.admin.refreshBtn}
             </Button>
             <Button type="button" size="sm" onClick={() => setAddDialogOpen(true)}>
-              <Plus className="h-4 w-4 mr-1" />
+              <Plus className="mr-1 h-4 w-4" />
               {t.admin.bindVirtualInventory}
             </Button>
           </div>
@@ -170,20 +217,18 @@ function VirtualInventoryBindingCard({ productId, isNew }: { productId: number |
       </CardHeader>
       <CardContent>
         {bindingsLoading ? (
-          <div className="text-center py-8">{t.common.loading}</div>
+          <div className="py-8 text-center">{t.common.loading}</div>
         ) : bindings.length === 0 ? (
-          <div className="text-center py-8 text-muted-foreground">
-            <FileText className="h-12 w-12 mx-auto mb-4 opacity-50" />
+          <div className="py-8 text-center text-muted-foreground">
+            <FileText className="mx-auto mb-4 h-12 w-12 opacity-50" />
             <p>{t.admin.noVirtualBinding}</p>
-            <p className="text-sm mt-2">{t.admin.noVirtualBindingHint}</p>
-            <div className="flex gap-2 justify-center mt-4">
+            <p className="mt-2 text-sm">{t.admin.noVirtualBindingHint}</p>
+            <div className="mt-4 flex justify-center gap-2">
               <Button variant="outline" asChild>
-                <Link href="/admin/inventories?tab=virtual">
-                  {t.admin.goCreateVirtual}
-                </Link>
+                <Link href="/admin/inventories?tab=virtual">{t.admin.goCreateVirtual}</Link>
               </Button>
               <Button type="button" onClick={() => setAddDialogOpen(true)}>
-                <Plus className="h-4 w-4 mr-1" />
+                <Plus className="mr-1 h-4 w-4" />
                 {t.admin.bindVirtualInventory}
               </Button>
             </div>
@@ -213,7 +258,8 @@ function VirtualInventoryBindingCard({ productId, isNew }: { productId: number |
                   <TableCell>
                     <Badge
                       variant={
-                        binding.virtual_inventory?.available > 0 || isScriptUnlimitedInventory(binding.virtual_inventory)
+                        binding.virtual_inventory?.available > 0 ||
+                        isScriptUnlimitedInventory(binding.virtual_inventory)
                           ? 'default'
                           : 'destructive'
                       }
@@ -221,12 +267,8 @@ function VirtualInventoryBindingCard({ productId, isNew }: { productId: number |
                       {getVirtualInventoryAvailableText(binding.virtual_inventory)}
                     </Badge>
                   </TableCell>
-                  <TableCell>
-                    {binding.virtual_inventory?.reserved || 0}
-                  </TableCell>
-                  <TableCell>
-                    {binding.virtual_inventory?.sold || 0}
-                  </TableCell>
+                  <TableCell>{binding.virtual_inventory?.reserved || 0}</TableCell>
+                  <TableCell>{binding.virtual_inventory?.sold || 0}</TableCell>
                   <TableCell>
                     {binding.virtual_inventory?.is_active ? (
                       <Badge variant="default">{t.admin.enabledStatus}</Badge>
@@ -244,9 +286,7 @@ function VirtualInventoryBindingCard({ productId, isNew }: { productId: number |
                       <AlertDialogContent>
                         <AlertDialogHeader>
                           <AlertDialogTitle>{t.admin.confirmUnbind}</AlertDialogTitle>
-                          <AlertDialogDescription>
-                            {t.admin.unbindDesc}
-                          </AlertDialogDescription>
+                          <AlertDialogDescription>{t.admin.unbindDesc}</AlertDialogDescription>
                         </AlertDialogHeader>
                         <AlertDialogFooter>
                           <AlertDialogCancel>{t.common.cancel}</AlertDialogCancel>
@@ -270,20 +310,16 @@ function VirtualInventoryBindingCard({ productId, isNew }: { productId: number |
           <DialogContent>
             <DialogHeader>
               <DialogTitle>{t.admin.bindVirtualTitle}</DialogTitle>
-              <DialogDescription>
-                {t.admin.selectVirtualPool}
-              </DialogDescription>
+              <DialogDescription>{t.admin.selectVirtualPool}</DialogDescription>
             </DialogHeader>
 
             <div className="space-y-4">
               {availableInventories.length === 0 ? (
-                <div className="text-center py-4 text-muted-foreground">
+                <div className="py-4 text-center text-muted-foreground">
                   <p>{t.admin.noAvailableVirtual}</p>
-                  <p className="text-sm mt-2">{t.admin.createVirtualFirst}</p>
+                  <p className="mt-2 text-sm">{t.admin.createVirtualFirst}</p>
                   <Button variant="outline" className="mt-4" asChild>
-                    <Link href="/admin/inventories?tab=virtual">
-                      {t.admin.goCreate}
-                    </Link>
+                    <Link href="/admin/inventories?tab=virtual">{t.admin.goCreate}</Link>
                   </Button>
                 </div>
               ) : (
@@ -299,7 +335,8 @@ function VirtualInventoryBindingCard({ productId, isNew }: { productId: number |
                     <SelectContent>
                       {availableInventories.map((vi: any) => (
                         <SelectItem key={vi.id} value={vi.id.toString()}>
-                          {vi.name} {vi.sku ? `(${vi.sku})` : ''} - {t.admin.availableLabel}: {getVirtualInventoryAvailableText(vi)}
+                          {vi.name} {vi.sku ? `(${vi.sku})` : ''} - {t.admin.availableLabel}:{' '}
+                          {getVirtualInventoryAvailableText(vi)}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -340,7 +377,12 @@ interface ProductForm {
   stock: number
   max_purchase_limit: number
   images: Array<{ url: string; alt: string; is_primary: boolean }>
-  attributes: Array<{ name: string; values: string[]; mode: 'user_select' | 'blind_box'; valuesInput?: string }>
+  attributes: Array<{
+    name: string
+    values: string[]
+    mode: 'user_select' | 'blind_box'
+    valuesInput?: string
+  }>
   status: string
   sort_order: number
   is_featured: boolean
@@ -348,9 +390,9 @@ interface ProductForm {
   auto_delivery: boolean
   remark: string
   // 规格与库存配置
-  variant_mode: 'user_select' | 'blind_box'  // 规格模式
-  variant_inventory_bindings: VariantInventoryBinding[]  // 规格库存绑定（实体商品）
-  virtual_variant_inventory_bindings: VirtualVariantInventoryBinding[]  // 规格库存绑定（虚拟商品）
+  variant_mode: 'user_select' | 'blind_box' // 规格模式
+  variant_inventory_bindings: VariantInventoryBinding[] // 规格库存绑定（实体商品）
+  virtual_variant_inventory_bindings: VirtualVariantInventoryBinding[] // 规格库存绑定（虚拟商品）
 }
 
 export default function ProductEditPage() {
@@ -361,6 +403,17 @@ export default function ProductEditPage() {
   const isNew = params.id === 'new'
   usePageTitle(isNew ? t.pageTitle.adminProductNew : t.pageTitle.adminProductEdit)
   const productId = isNew ? null : Number(params.id)
+  const formatProductActionError = (error: unknown, fallback: string) => {
+    const detail = resolveApiErrorMessage(error, t, fallback, {
+      messageMap: {
+        'SKU already exists': t.admin.skuAlreadyExists,
+        'Product name cannot be empty': t.admin.fillSkuAndName,
+        'Product SKU cannot be empty': t.admin.fillSkuAndName,
+        'Product price must be greater than or equal to 0': t.admin.priceMustBePositive,
+      },
+    })
+    return detail === fallback ? fallback : `${fallback}: ${detail}`
+  }
 
   const [form, setForm] = useState<ProductForm>({
     sku: '',
@@ -433,7 +486,9 @@ export default function ProductEditPage() {
         sku: product.sku || '',
         name: product.name || '',
         product_code: product.product_code || product.productCode || '',
-        product_type: (product.product_type || product.productType || 'physical') as 'physical' | 'virtual',
+        product_type: (product.product_type || product.productType || 'physical') as
+          | 'physical'
+          | 'virtual',
         description: product.description || '',
         short_description: product.short_description || product.shortDescription || '',
         category: product.category || '',
@@ -462,14 +517,18 @@ export default function ProductEditPage() {
         auto_delivery: product.auto_delivery ?? false,
         remark: product.remark || '',
         // 规格与库存配置
-        variant_mode: (product.inventory_mode === 'random' ? 'blind_box' : 'user_select') as 'user_select' | 'blind_box',
+        variant_mode: (product.inventory_mode === 'random' ? 'blind_box' : 'user_select') as
+          | 'user_select'
+          | 'blind_box',
         variant_inventory_bindings: (() => {
           // 辅助函数：标准化属性对象的key排序，确保一致性
           const normalizeAttributes = (attrs: Record<string, string>) => {
-            const sorted = Object.keys(attrs).sort().reduce((obj: Record<string, string>, key) => {
-              obj[key] = attrs[key]
-              return obj
-            }, {})
+            const sorted = Object.keys(attrs)
+              .sort()
+              .reduce((obj: Record<string, string>, key) => {
+                obj[key] = attrs[key]
+                return obj
+              }, {})
             return sorted
           }
 
@@ -510,16 +569,15 @@ export default function ProductEditPage() {
               return [{}]
             }
 
-            const validAttrs = product.attributes.filter((attr: any) => attr.name && attr.values && attr.values.length > 0)
+            const validAttrs = product.attributes.filter(
+              (attr: any) => attr.name && attr.values && attr.values.length > 0
+            )
             if (validAttrs.length === 0) {
               return [{}]
             }
 
             const cartesian = (arr: any[][]): any[][] => {
-              return arr.reduce(
-                (a, b) => a.flatMap((x) => b.map((y) => [...x, y])),
-                [[]]
-              )
+              return arr.reduce((a, b) => a.flatMap((x) => b.map((y) => [...x, y])), [[]])
             }
 
             const attrArrays = validAttrs.map((attr: any) =>
@@ -533,14 +591,16 @@ export default function ProductEditPage() {
           const allVariants = generateAllVariants()
 
           // 3. 合并：已存在的绑定保留配置，新的规格使用默认值
-          const result = allVariants.map(attrs => {
+          const result = allVariants.map((attrs) => {
             const key = JSON.stringify(attrs)
             const existing = existingBindingsMap.get(key)
-            return existing || {
-              attributes: attrs,
-              inventory_id: null,
-              priority: 1,
-            }
+            return (
+              existing || {
+                attributes: attrs,
+                inventory_id: null,
+                priority: 1,
+              }
+            )
           })
 
           return result
@@ -548,10 +608,12 @@ export default function ProductEditPage() {
         // 虚拟库存规格绑定
         virtual_variant_inventory_bindings: (() => {
           const normalizeAttributes = (attrs: Record<string, string>) => {
-            const sorted = Object.keys(attrs).sort().reduce((obj: Record<string, string>, key) => {
-              obj[key] = attrs[key]
-              return obj
-            }, {})
+            const sorted = Object.keys(attrs)
+              .sort()
+              .reduce((obj: Record<string, string>, key) => {
+                obj[key] = attrs[key]
+                return obj
+              }, {})
             return sorted
           }
 
@@ -579,16 +641,15 @@ export default function ProductEditPage() {
               return [{}]
             }
 
-            const validAttrs = product.attributes.filter((attr: any) => attr.name && attr.values && attr.values.length > 0)
+            const validAttrs = product.attributes.filter(
+              (attr: any) => attr.name && attr.values && attr.values.length > 0
+            )
             if (validAttrs.length === 0) {
               return [{}]
             }
 
             const cartesian = (arr: any[][]): any[][] => {
-              return arr.reduce(
-                (a, b) => a.flatMap((x) => b.map((y) => [...x, y])),
-                [[]]
-              )
+              return arr.reduce((a, b) => a.flatMap((x) => b.map((y) => [...x, y])), [[]])
             }
 
             const attrArrays = validAttrs.map((attr: any) =>
@@ -601,15 +662,17 @@ export default function ProductEditPage() {
 
           const allVariants = generateAllVariants()
 
-          const result = allVariants.map(attrs => {
+          const result = allVariants.map((attrs) => {
             const key = JSON.stringify(attrs)
             const existing = existingBindingsMap.get(key)
-            return existing || {
-              attributes: attrs,
-              virtual_inventory_id: null,
-              is_random: false,
-              priority: 1,
-            }
+            return (
+              existing || {
+                attributes: attrs,
+                virtual_inventory_id: null,
+                is_random: false,
+                priority: 1,
+              }
+            )
           })
 
           return result
@@ -620,7 +683,7 @@ export default function ProductEditPage() {
       setIsFormDataLoaded(true) // 标记数据已加载
 
       // 强制 Select 组件重新渲染
-      setSelectKey(prev => prev + 1)
+      setSelectKey((prev) => prev + 1)
     }
   }, [productData, productId, isNew])
 
@@ -628,11 +691,59 @@ export default function ProductEditPage() {
   // 辅助函数：标准化并序列化attributes（与后端保持一致）
   const normalizeAndStringify = (attrs: Record<string, string>) => {
     // 按key排序
-    const sorted = Object.keys(attrs).sort().reduce((obj: Record<string, string>, key) => {
-      obj[key] = attrs[key]
-      return obj
-    }, {})
+    const sorted = Object.keys(attrs)
+      .sort()
+      .reduce((obj: Record<string, string>, key) => {
+        obj[key] = attrs[key]
+        return obj
+      }, {})
     return JSON.stringify(sorted)
+  }
+
+  type BindingBatchErrorEntry = {
+    index?: number
+    inventory_id?: number
+    virtual_inventory_id?: number
+    error_key?: string
+    message?: string
+    params?: Record<string, any>
+  }
+
+  const formatBindingBatchWarning = (
+    result: any,
+    summaryTemplate: string,
+    fallbackMessage: string
+  ) => {
+    const batchErrors = Array.isArray(result?.data?.errors)
+      ? (result.data.errors as BindingBatchErrorEntry[])
+      : []
+    if (batchErrors.length === 0) {
+      return ''
+    }
+
+    const details = batchErrors
+      .slice(0, 3)
+      .map((error) => {
+        const reason = translateBizError(
+          t,
+          String(error.error_key || '').trim(),
+          error.params,
+          error.message || fallbackMessage
+        )
+
+        return t.admin.bindingBatchIssueItem
+          .replace('{index}', String(error.index || 0))
+          .replace('{reason}', reason)
+      })
+      .join('；')
+
+    const remainingCount = batchErrors.length - 3
+    const moreSuffix =
+      remainingCount > 0
+        ? `；${t.admin.bindingBatchMore.replace('{count}', String(remainingCount))}`
+        : ''
+
+    return `${summaryTemplate.replace('{count}', String(batchErrors.length))}：${details}${moreSuffix}`
   }
 
   const saveMutation = useMutation({
@@ -641,13 +752,18 @@ export default function ProductEditPage() {
         // 创建商品
         const response = await createProduct(data)
         const newProductId = response.data.id
+        let bindingWarningMessage = ''
 
         // 设置库存模式（将variant_mode转换为inventory_mode）
         const inventoryMode = form.variant_mode === 'blind_box' ? 'random' : 'fixed'
         await updateProductInventoryMode(newProductId, inventoryMode)
 
         // 实体商品：创建规格库存绑定（去重并批量创建）
-        if (form.product_type === 'physical' && form.variant_inventory_bindings && form.variant_inventory_bindings.length > 0) {
+        if (
+          form.product_type === 'physical' &&
+          form.variant_inventory_bindings &&
+          form.variant_inventory_bindings.length > 0
+        ) {
           const uniqueBindings = new Map()
 
           // 使用标准化的规格组合JSON字符串作为key进行去重
@@ -661,26 +777,35 @@ export default function ProductEditPage() {
           }
 
           // 批量创建绑定（一次请求）
-          const bindingsToCreate = Array.from(uniqueBindings.values()).map(binding => {
+          const bindingsToCreate = Array.from(uniqueBindings.values()).map((binding) => {
             const notesStr = normalizeAndStringify(binding.attributes)
             return {
               inventory_id: binding.inventory_id!,
               is_random: form.variant_mode === 'blind_box',
               priority: binding.priority || 1,
-              notes: notesStr,  // 直接发送JSON字符串
+              notes: notesStr, // 直接发送JSON字符串
             }
           })
 
           if (bindingsToCreate.length > 0) {
-            await batchCreateProductBindings(newProductId, bindingsToCreate)
+            const bindingResult = await batchCreateProductBindings(newProductId, bindingsToCreate)
+            bindingWarningMessage = formatBindingBatchWarning(
+              bindingResult,
+              t.admin.bindingBatchPartialSaved,
+              t.admin.bindingFailed
+            )
           }
         }
 
         // 虚拟商品：创建规格-虚拟库存绑定
-        if (form.product_type === 'virtual' && form.virtual_variant_inventory_bindings && form.virtual_variant_inventory_bindings.length > 0) {
+        if (
+          form.product_type === 'virtual' &&
+          form.virtual_variant_inventory_bindings &&
+          form.virtual_variant_inventory_bindings.length > 0
+        ) {
           const virtualBindings = form.virtual_variant_inventory_bindings
-            .filter(b => b.virtual_inventory_id !== null)
-            .map(b => ({
+            .filter((b) => b.virtual_inventory_id !== null)
+            .map((b) => ({
               attributes: b.attributes,
               virtual_inventory_id: b.virtual_inventory_id,
               is_random: b.is_random || false,
@@ -688,14 +813,23 @@ export default function ProductEditPage() {
             }))
 
           if (virtualBindings.length > 0) {
-            await saveProductVirtualVariantBindings(newProductId, virtualBindings)
+            const virtualBindingResult = await saveProductVirtualVariantBindings(
+              newProductId,
+              virtualBindings
+            )
+            bindingWarningMessage = formatBindingBatchWarning(
+              virtualBindingResult,
+              t.admin.virtualBindingBatchPartialSaved,
+              t.admin.bindingFailed
+            )
           }
         }
 
-        return response
+        return { response, bindingWarningMessage }
       } else {
         // 编辑模式：更新商品信息
         const response = await updateProduct(productId!, data)
+        let bindingWarningMessage = ''
 
         // 更新库存模式
         const inventoryMode = form.variant_mode === 'blind_box' ? 'random' : 'fixed'
@@ -718,25 +852,30 @@ export default function ProductEditPage() {
           }
 
           // 批量替换绑定（一次请求：删除所有旧的 + 创建新的）
-          const bindingsToCreate = Array.from(uniqueBindings.values()).map(binding => {
+          const bindingsToCreate = Array.from(uniqueBindings.values()).map((binding) => {
             const notesStr = normalizeAndStringify(binding.attributes)
             return {
               inventory_id: binding.inventory_id!,
               is_random: form.variant_mode === 'blind_box',
               priority: binding.priority || 1,
-              notes: notesStr,  // 直接发送JSON字符串
+              notes: notesStr, // 直接发送JSON字符串
             }
           })
 
           // 总是调用替换API，即使是空数组（用于删除所有绑定）
-          await replaceProductBindings(productId!, bindingsToCreate)
+          const bindingResult = await replaceProductBindings(productId!, bindingsToCreate)
+          bindingWarningMessage = formatBindingBatchWarning(
+            bindingResult,
+            t.admin.bindingBatchPartialSaved,
+            t.admin.bindingFailed
+          )
         }
 
         // 虚拟商品：处理虚拟库存绑定的更新
         if (form.product_type === 'virtual') {
           const virtualBindings = (form.virtual_variant_inventory_bindings || [])
-            .filter(b => b.virtual_inventory_id !== null)
-            .map(b => ({
+            .filter((b) => b.virtual_inventory_id !== null)
+            .map((b) => ({
               attributes: b.attributes,
               virtual_inventory_id: b.virtual_inventory_id,
               is_random: b.is_random || false,
@@ -744,29 +883,29 @@ export default function ProductEditPage() {
             }))
 
           // 总是调用保存API来更新绑定（会自动删除旧的并创建新的）
-          await saveProductVirtualVariantBindings(productId!, virtualBindings)
+          const virtualBindingResult = await saveProductVirtualVariantBindings(
+            productId!,
+            virtualBindings
+          )
+          bindingWarningMessage = formatBindingBatchWarning(
+            virtualBindingResult,
+            t.admin.virtualBindingBatchPartialSaved,
+            t.admin.bindingFailed
+          )
         }
 
-        return response
+        return { response, bindingWarningMessage }
       }
     },
-    onSuccess: () => {
+    onSuccess: (result: { bindingWarningMessage?: string }) => {
       toast.success(isNew ? t.admin.productCreated : t.admin.productUpdated)
+      if (result?.bindingWarningMessage) {
+        toast.error(result.bindingWarningMessage)
+      }
       router.push('/admin/products')
     },
-    onError: (error: Error) => {
-      const msg = (error?.message || '').toString()
-      const lower = msg.toLowerCase()
-      // Backend uses a stable message; also guard against legacy raw DB errors.
-      if (
-        lower.includes('sku already exists') ||
-        lower.includes('products.sku') ||
-        (lower.includes('unique') && lower.includes('sku'))
-      ) {
-        toast.error(t.admin.skuAlreadyExists)
-        return
-      }
-      toast.error(`${t.admin.productSaveFailed}: ${msg}`)
+    onError: (error: unknown) => {
+      toast.error(formatProductActionError(error, t.admin.productSaveFailed))
     },
   })
 
@@ -791,8 +930,12 @@ export default function ProductEditPage() {
     }
 
     // 实体商品：验证规格库存配置
-    if (form.product_type === 'physical' && form.variant_inventory_bindings && form.variant_inventory_bindings.length > 0) {
-      const hasUnassigned = form.variant_inventory_bindings.some(v => !v.inventory_id)
+    if (
+      form.product_type === 'physical' &&
+      form.variant_inventory_bindings &&
+      form.variant_inventory_bindings.length > 0
+    ) {
+      const hasUnassigned = form.variant_inventory_bindings.some((v) => !v.inventory_id)
       if (hasUnassigned) {
         toast.error(t.admin.configAllSpecInventory)
         return
@@ -800,8 +943,14 @@ export default function ProductEditPage() {
     }
 
     // 虚拟商品：验证虚拟库存规格配置
-    if (form.product_type === 'virtual' && form.virtual_variant_inventory_bindings && form.virtual_variant_inventory_bindings.length > 0) {
-      const hasUnassigned = form.virtual_variant_inventory_bindings.some(v => !v.virtual_inventory_id)
+    if (
+      form.product_type === 'virtual' &&
+      form.virtual_variant_inventory_bindings &&
+      form.virtual_variant_inventory_bindings.length > 0
+    ) {
+      const hasUnassigned = form.virtual_variant_inventory_bindings.some(
+        (v) => !v.virtual_inventory_id
+      )
       if (hasUnassigned) {
         toast.error(t.admin.configAllSpecVirtualInventory)
         return
@@ -819,7 +968,7 @@ export default function ProductEditPage() {
     delete (submitData as any).variant_mode
 
     // 清理 attributes 中的 valuesInput 字段（仅用于前端输入，不发送到后端）
-    submitData.attributes = submitData.attributes.map(attr => ({
+    submitData.attributes = submitData.attributes.map((attr) => ({
       name: attr.name,
       values: attr.values,
       mode: attr.mode,
@@ -836,7 +985,7 @@ export default function ProductEditPage() {
   }
 
   const removeTag = (tag: string) => {
-    setForm({ ...form, tags: form.tags.filter(t => t !== tag) })
+    setForm({ ...form, tags: form.tags.filter((t) => t !== tag) })
   }
 
   const addImage = () => {
@@ -896,8 +1045,8 @@ export default function ProductEditPage() {
 
       // 清空文件输入
       e.target.value = ''
-    } catch (error: any) {
-      toast.error(error.message || t.admin.imageUploadFailed)
+    } catch (error: unknown) {
+      toast.error(resolveApiErrorMessage(error, t, t.admin.imageUploadFailed))
     } finally {
       setIsUploading(false)
     }
@@ -919,17 +1068,27 @@ export default function ProductEditPage() {
   const addAttribute = () => {
     setForm({
       ...form,
-      attributes: [...form.attributes, { name: '', values: [], mode: 'user_select', valuesInput: '' }],
+      attributes: [
+        ...form.attributes,
+        { name: '', values: [], mode: 'user_select', valuesInput: '' },
+      ],
     })
   }
 
-  const updateAttribute = (index: number, field: 'name' | 'values' | 'mode' | 'valuesInput', value: any) => {
+  const updateAttribute = (
+    index: number,
+    field: 'name' | 'values' | 'mode' | 'valuesInput',
+    value: any
+  ) => {
     const newAttributes = [...form.attributes]
     if (field === 'valuesInput' && typeof value === 'string') {
       // 保存原始输入字符串
       newAttributes[index].valuesInput = value
       // 实时解析为数组（用于生成规格组合）
-      newAttributes[index].values = value.split(',').map(v => v.trim()).filter(v => v)
+      newAttributes[index].values = value
+        .split(',')
+        .map((v) => v.trim())
+        .filter((v) => v)
     } else if (field === 'name') {
       newAttributes[index].name = String(value || '')
     } else if (field === 'mode') {
@@ -950,15 +1109,45 @@ export default function ProductEditPage() {
     return (
       <div className="flex items-center justify-center py-12">
         <div className="text-center">
-          <Loader2 className="h-8 w-8 animate-spin mx-auto mb-4" />
+          <Loader2 className="mx-auto mb-4 h-8 w-8 animate-spin" />
           <p className="text-muted-foreground">{t.admin.loadingProductInfo}</p>
         </div>
       </div>
     )
   }
 
+  const adminProductDetailPluginContext = {
+    view: 'admin_product_detail',
+    mode: isNew ? 'create' : 'edit',
+    product_id: productId || undefined,
+    product: {
+      sku: form.sku || undefined,
+      name: form.name || undefined,
+      product_code: form.product_code || undefined,
+      product_type: form.product_type,
+      status: form.status,
+      category: form.category || undefined,
+      price_major: form.price || undefined,
+      original_price_major: form.original_price || undefined,
+      stock: Number(form.stock || 0),
+      max_purchase_limit: Number(form.max_purchase_limit || 0),
+      is_featured: Boolean(form.is_featured),
+      is_recommended: Boolean(form.is_recommended),
+      auto_delivery: Boolean(form.auto_delivery),
+    },
+    summary: {
+      image_count: form.images.length,
+      tag_count: form.tags.length,
+      attribute_count: form.attributes.length,
+      inventory_binding_count: form.variant_inventory_bindings.length,
+      virtual_inventory_binding_count: form.virtual_variant_inventory_bindings.length,
+      has_remote_product: Boolean(productData?.data),
+    },
+  }
+
   return (
     <div className="space-y-6">
+      <PluginSlot slot="admin.product_detail.top" context={adminProductDetailPluginContext} />
       <div className="flex items-center gap-4">
         <Button variant="outline" size="sm" asChild>
           <Link href="/admin/products">
@@ -966,7 +1155,7 @@ export default function ProductEditPage() {
             <span className="hidden md:inline">{t.common.back}</span>
           </Link>
         </Button>
-        <h1 className="text-lg md:text-xl font-bold">
+        <h1 className="text-lg font-bold md:text-xl">
           {isNew ? t.admin.addProductTitle : t.admin.editProduct}
         </h1>
         {!isNew && form.product_type === 'virtual' && (
@@ -1013,7 +1202,9 @@ export default function ProductEditPage() {
             <div className="space-y-2">
               <Label htmlFor="product_code">
                 {t.admin.productCodeLabel}
-                <span className="text-sm text-muted-foreground ml-2">{t.admin.productCodeHint}</span>
+                <span className="ml-2 text-sm text-muted-foreground">
+                  {t.admin.productCodeHint}
+                </span>
               </Label>
               <Input
                 id="product_code"
@@ -1023,7 +1214,8 @@ export default function ProductEditPage() {
                 maxLength={20}
               />
               <p className="text-xs text-muted-foreground">
-                {t.admin.productCodeTip}<strong>{t.admin.productCodeTipFormat}</strong>
+                {t.admin.productCodeTip}
+                <strong>{t.admin.productCodeTipFormat}</strong>
                 <br />
                 {t.admin.productCodeExample}
               </p>
@@ -1064,7 +1256,11 @@ export default function ProductEditPage() {
               {descPreview ? (
                 <div className="min-h-[156px] rounded-md border border-border p-3">
                   {form.description ? (
-                    <MarkdownMessage content={form.description} className="markdown-body text-sm" allowHtml />
+                    <MarkdownMessage
+                      content={form.description}
+                      className="markdown-body text-sm"
+                      allowHtml
+                    />
                   ) : (
                     <p className="text-sm text-muted-foreground">{t.admin.descPreviewEmpty}</p>
                   )}
@@ -1092,7 +1288,13 @@ export default function ProductEditPage() {
               </div>
               <div className="space-y-2">
                 <Label htmlFor="product_type">{t.admin.productTypeLabel}</Label>
-                <Select key={`type-${selectKey}`} value={form.product_type} onValueChange={(value: 'physical' | 'virtual') => setForm({ ...form, product_type: value })}>
+                <Select
+                  key={`type-${selectKey}`}
+                  value={form.product_type}
+                  onValueChange={(value: 'physical' | 'virtual') =>
+                    setForm({ ...form, product_type: value })
+                  }
+                >
                   <SelectTrigger>
                     <SelectValue placeholder={t.admin.productTypeLabel} />
                   </SelectTrigger>
@@ -1101,13 +1303,15 @@ export default function ProductEditPage() {
                     <SelectItem value="virtual">{t.admin.virtualProduct}</SelectItem>
                   </SelectContent>
                 </Select>
-                <p className="text-xs text-muted-foreground">
-                  {t.admin.virtualProductHint}
-                </p>
+                <p className="text-xs text-muted-foreground">{t.admin.virtualProductHint}</p>
               </div>
               <div className="space-y-2">
                 <Label htmlFor="status">{t.admin.statusLabel}</Label>
-                <Select key={selectKey} value={form.status} onValueChange={(value) => setForm({ ...form, status: value })}>
+                <Select
+                  key={selectKey}
+                  value={form.status}
+                  onValueChange={(value) => setForm({ ...form, status: value })}
+                >
                   <SelectTrigger>
                     <SelectValue placeholder={t.admin.statusLabel} />
                   </SelectTrigger>
@@ -1134,11 +1338,11 @@ export default function ProductEditPage() {
                   <Plus className="h-4 w-4" />
                 </Button>
               </div>
-              <div className="flex flex-wrap gap-2 mt-2">
+              <div className="mt-2 flex flex-wrap gap-2">
                 {form.tags.map((tag) => (
                   <div
                     key={tag}
-                    className="bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-300 px-3 py-1 rounded-full text-sm flex items-center gap-2"
+                    className="flex items-center gap-2 rounded-full bg-blue-100 px-3 py-1 text-sm text-blue-800 dark:bg-blue-900/30 dark:text-blue-300"
                   >
                     {tag}
                     <button
@@ -1194,13 +1398,13 @@ export default function ProductEditPage() {
                 type="number"
                 min="0"
                 value={form.max_purchase_limit}
-                onChange={(e) => setForm({ ...form, max_purchase_limit: parseInt(e.target.value) || 0 })}
+                onChange={(e) =>
+                  setForm({ ...form, max_purchase_limit: parseInt(e.target.value) || 0 })
+                }
                 placeholder={t.admin.maxPurchaseLimitPlaceholder}
                 className="w-64"
               />
-              <p className="text-xs text-muted-foreground">
-                {t.admin.maxPurchaseLimitHint}
-              </p>
+              <p className="text-xs text-muted-foreground">{t.admin.maxPurchaseLimitHint}</p>
             </div>
           </CardContent>
         </Card>
@@ -1219,12 +1423,12 @@ export default function ProductEditPage() {
                 >
                   {isUploading ? (
                     <>
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                       {t.admin.uploading}
                     </>
                   ) : (
                     <>
-                      <Upload className="h-4 w-4 mr-2" />
+                      <Upload className="mr-2 h-4 w-4" />
                       {t.admin.uploadImage}
                     </>
                   )}
@@ -1257,32 +1461,32 @@ export default function ProductEditPage() {
               </Button>
             </div>
             {form.images.length === 0 ? (
-              <div className="text-center py-12 border-2 border-dashed rounded-lg">
-                <ImageIcon className="w-12 h-12 mx-auto mb-3 text-muted-foreground" />
-                <p className="text-sm text-muted-foreground mb-3">{t.admin.noImages}</p>
+              <div className="rounded-lg border-2 border-dashed py-12 text-center">
+                <ImageIcon className="mx-auto mb-3 h-12 w-12 text-muted-foreground" />
+                <p className="mb-3 text-sm text-muted-foreground">{t.admin.noImages}</p>
                 <Button
                   type="button"
                   variant="outline"
                   size="sm"
                   onClick={() => document.getElementById('imageUpload')?.click()}
                 >
-                  <Upload className="h-4 w-4 mr-2" />
+                  <Upload className="mr-2 h-4 w-4" />
                   {t.admin.uploadFirstImage}
                 </Button>
               </div>
             ) : (
               <div className="grid grid-cols-4 gap-4">
                 {form.images.map((image, index) => (
-                  <div key={index} className="relative border rounded p-2 group">
+                  <div key={index} className="group relative rounded border p-2">
                     <div className="relative">
                       <img
                         src={image.url}
                         alt={image.alt}
-                        className="w-full h-32 object-cover rounded"
+                        className="h-32 w-full rounded object-cover"
                       />
                       {image.is_primary && (
-                        <div className="absolute top-1 left-1">
-                          <span className="bg-blue-500 text-white text-xs px-2 py-0.5 rounded">
+                        <div className="absolute left-1 top-1">
+                          <span className="rounded bg-blue-500 px-2 py-0.5 text-xs text-white">
                             {t.admin.primaryImage}
                           </span>
                         </div>
@@ -1303,7 +1507,7 @@ export default function ProductEditPage() {
                         onClick={() => removeImage(index)}
                         className="w-full"
                       >
-                        <Trash2 className="h-3 w-3 mr-1" />
+                        <Trash2 className="mr-1 h-3 w-3" />
                         {t.common.delete}
                       </Button>
                     </div>
@@ -1326,13 +1530,13 @@ export default function ProductEditPage() {
           </CardHeader>
           <CardContent className="space-y-4">
             {form.attributes.length === 0 ? (
-              <div className="text-center py-8 text-muted-foreground">
+              <div className="py-8 text-center text-muted-foreground">
                 <p>{t.admin.noSpecs}</p>
-                <p className="text-sm mt-2">{t.admin.noSpecsExample}</p>
+                <p className="mt-2 text-sm">{t.admin.noSpecsExample}</p>
               </div>
             ) : (
               form.attributes.map((attr, index) => (
-                <div key={index} className="border rounded-lg p-4 space-y-3">
+                <div key={index} className="space-y-3 rounded-lg border p-4">
                   <div className="flex items-start gap-3">
                     <div className="flex-1 space-y-3">
                       <div className="grid grid-cols-2 gap-4">
@@ -1349,7 +1553,9 @@ export default function ProductEditPage() {
                           <Label htmlFor={`attr-mode-${index}`}>{t.admin.specType}</Label>
                           <Select
                             value={attr.mode || 'user_select'}
-                            onValueChange={(value: 'user_select' | 'blind_box') => updateAttribute(index, 'mode', value)}
+                            onValueChange={(value: 'user_select' | 'blind_box') =>
+                              updateAttribute(index, 'mode', value)
+                            }
                           >
                             <SelectTrigger id={`attr-mode-${index}`}>
                               <SelectValue />
@@ -1369,22 +1575,25 @@ export default function ProductEditPage() {
                       <div className="space-y-2">
                         <Label htmlFor={`attr-values-${index}`}>
                           {t.admin.specValues}
-                          <span className="text-sm text-muted-foreground ml-2">
+                          <span className="ml-2 text-sm text-muted-foreground">
                             {t.admin.specValuesHint}
                           </span>
                         </Label>
                         <Input
                           id={`attr-values-${index}`}
                           placeholder={t.admin.specValuesPlaceholder}
-                          value={attr.valuesInput || (Array.isArray(attr.values) ? attr.values.join(',') : '')}
+                          value={
+                            attr.valuesInput ||
+                            (Array.isArray(attr.values) ? attr.values.join(',') : '')
+                          }
                           onChange={(e) => updateAttribute(index, 'valuesInput', e.target.value)}
                         />
                         {Array.isArray(attr.values) && attr.values.length > 0 && (
-                          <div className="flex flex-wrap gap-2 mt-2">
+                          <div className="mt-2 flex flex-wrap gap-2">
                             {attr.values.map((value, vIndex) => (
                               <div
                                 key={vIndex}
-                                className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300 px-3 py-1 rounded text-sm"
+                                className="rounded border border-blue-200 bg-blue-50 px-3 py-1 text-sm text-blue-700 dark:border-blue-800 dark:bg-blue-900/20 dark:text-blue-300"
                               >
                                 {String(value)}
                               </div>
@@ -1468,16 +1677,18 @@ export default function ProductEditPage() {
         {isFormDataLoaded && form.product_type === 'physical' && (
           <ProductVariantInventory
             key={selectKey}
-            attributes={form.attributes.map(attr => ({
+            attributes={form.attributes.map((attr) => ({
               name: attr.name,
               values: attr.values,
-              mode: attr.mode
+              mode: attr.mode,
             }))}
             variantMode={form.variant_mode}
             bindings={form.variant_inventory_bindings}
             inventories={inventoriesData?.data?.items || []}
             onVariantModeChange={(mode) => setForm({ ...form, variant_mode: mode })}
-            onBindingsChange={(bindings) => setForm({ ...form, variant_inventory_bindings: bindings })}
+            onBindingsChange={(bindings) =>
+              setForm({ ...form, variant_inventory_bindings: bindings })
+            }
           />
         )}
 
@@ -1485,15 +1696,17 @@ export default function ProductEditPage() {
         {isFormDataLoaded && form.product_type === 'virtual' && (
           <ProductVirtualVariantInventory
             key={`virtual-${selectKey}`}
-            attributes={form.attributes.map(attr => ({
+            attributes={form.attributes.map((attr) => ({
               name: attr.name,
               values: attr.values,
-              mode: attr.mode
+              mode: attr.mode,
             }))}
             variantMode={form.variant_mode}
             bindings={form.virtual_variant_inventory_bindings}
             virtualInventories={virtualInventoriesData?.data?.items || []}
-            onBindingsChange={(bindings) => setForm({ ...form, virtual_variant_inventory_bindings: bindings })}
+            onBindingsChange={(bindings) =>
+              setForm({ ...form, virtual_variant_inventory_bindings: bindings })
+            }
           />
         )}
 

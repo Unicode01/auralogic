@@ -3,6 +3,8 @@ package service
 import (
 	"fmt"
 	"log"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -16,8 +18,11 @@ import (
 type TicketAutoCloseService struct {
 	db            *gorm.DB
 	cfg           *config.Config
+	pluginManager *PluginManagerService
+	lifecycleMu   sync.Mutex
+	running       bool
 	stopChan      chan struct{}
-	wg            sync.WaitGroup
+	doneChan      chan struct{}
 	checkInterval time.Duration
 }
 
@@ -26,32 +31,110 @@ func NewTicketAutoCloseService(db *gorm.DB, cfg *config.Config) *TicketAutoClose
 	return &TicketAutoCloseService{
 		db:            db,
 		cfg:           cfg,
-		stopChan:      make(chan struct{}),
 		checkInterval: 30 * time.Minute, // 每30分钟检查一次
 	}
 }
 
+func (s *TicketAutoCloseService) SetPluginManager(pluginManager *PluginManagerService) {
+	s.pluginManager = pluginManager
+}
+
+func cloneTicketAutoCloseExecutionContext(execCtx *ExecutionContext) *ExecutionContext {
+	if execCtx == nil {
+		return nil
+	}
+	cloned := &ExecutionContext{
+		SessionID:      execCtx.SessionID,
+		RequestContext: execCtx.RequestContext,
+	}
+	if execCtx.UserID != nil {
+		userID := *execCtx.UserID
+		cloned.UserID = &userID
+	}
+	if execCtx.OrderID != nil {
+		orderID := *execCtx.OrderID
+		cloned.OrderID = &orderID
+	}
+	if len(execCtx.Metadata) > 0 {
+		cloned.Metadata = make(map[string]string, len(execCtx.Metadata))
+		for key, value := range execCtx.Metadata {
+			cloned.Metadata[key] = value
+		}
+	}
+	return cloned
+}
+
+func (s *TicketAutoCloseService) buildTicketAutoCloseExecutionContext(ticket *models.Ticket) *ExecutionContext {
+	if ticket == nil {
+		return nil
+	}
+	userID := ticket.UserID
+	metadata := map[string]string{
+		"source":    "ticket_auto_close",
+		"ticket_id": strconv.FormatUint(uint64(ticket.ID), 10),
+		"ticket_no": ticket.TicketNo,
+	}
+	return &ExecutionContext{
+		UserID:   &userID,
+		Metadata: metadata,
+	}
+}
+
+func ticketAutoCloseHookValueToOptionalString(value interface{}) (string, error) {
+	if value == nil {
+		return "", nil
+	}
+	str, ok := value.(string)
+	if !ok {
+		return "", fmt.Errorf("value must be string")
+	}
+	return str, nil
+}
+
 // Start 启动自动关闭服务
 func (s *TicketAutoCloseService) Start() {
+	s.lifecycleMu.Lock()
+	if s.running {
+		s.lifecycleMu.Unlock()
+		return
+	}
+	stopChan := make(chan struct{})
+	doneChan := make(chan struct{})
+	s.stopChan = stopChan
+	s.doneChan = doneChan
+	s.running = true
+	s.lifecycleMu.Unlock()
+
 	logger.LogSystemOperation(s.db, "ticket_auto_close_start", "system", nil, map[string]interface{}{
 		"auto_close_hours": s.cfg.Ticket.AutoCloseHours,
 		"check_interval":   s.checkInterval.String(),
 	})
 
-	s.wg.Add(1)
-	go s.closeLoop()
+	go s.closeLoop(stopChan, doneChan)
 }
 
 // Stop 停止自动关闭服务
 func (s *TicketAutoCloseService) Stop() {
+	s.lifecycleMu.Lock()
+	if !s.running {
+		s.lifecycleMu.Unlock()
+		return
+	}
+	stopChan := s.stopChan
+	doneChan := s.doneChan
+	s.stopChan = nil
+	s.doneChan = nil
+	s.running = false
+
 	logger.LogSystemOperation(s.db, "ticket_auto_close_stop", "system", nil, nil)
-	close(s.stopChan)
-	s.wg.Wait()
+	close(stopChan)
+	<-doneChan
+	s.lifecycleMu.Unlock()
 }
 
 // closeLoop 自动关闭循环
-func (s *TicketAutoCloseService) closeLoop() {
-	defer s.wg.Done()
+func (s *TicketAutoCloseService) closeLoop(stopChan <-chan struct{}, doneChan chan struct{}) {
+	defer close(doneChan)
 
 	// 启动时执行一次
 	s.closeInactiveTickets()
@@ -61,7 +144,7 @@ func (s *TicketAutoCloseService) closeLoop() {
 
 	for {
 		select {
-		case <-s.stopChan:
+		case <-stopChan:
 			return
 		case <-ticker.C:
 			s.closeInactiveTickets()
@@ -105,11 +188,14 @@ func (s *TicketAutoCloseService) closeInactiveTickets() {
 
 	closedCount := 0
 	for _, ticket := range tickets {
-		if err := s.closeTicket(&ticket, autoCloseHours, now, activeStatuses); err != nil {
+		closed, err := s.closeTicket(&ticket, autoCloseHours, now, activeStatuses)
+		if err != nil {
 			log.Printf("[TicketAutoClose] Error closing ticket %s: %v", ticket.TicketNo, err)
 			continue
 		}
-		closedCount++
+		if closed {
+			closedCount++
+		}
 	}
 
 	if closedCount > 0 {
@@ -122,8 +208,63 @@ func (s *TicketAutoCloseService) closeInactiveTickets() {
 }
 
 // closeTicket 关闭单个工单（事务内完成状态更新、系统消息、未读计数）
-func (s *TicketAutoCloseService) closeTicket(ticket *models.Ticket, autoCloseHours int, now time.Time, activeStatuses []string) error {
-	return s.db.Transaction(func(tx *gorm.DB) error {
+func (s *TicketAutoCloseService) closeTicket(ticket *models.Ticket, autoCloseHours int, now time.Time, activeStatuses []string) (bool, error) {
+	if ticket == nil {
+		return false, fmt.Errorf("ticket is nil")
+	}
+
+	beforeStatus := ticket.Status
+	msgContent := ticketAutoCloseMessage(ticket.User, autoCloseHours)
+	hookExecCtx := cloneTicketAutoCloseExecutionContext(s.buildTicketAutoCloseExecutionContext(ticket))
+	if s.pluginManager != nil {
+		hookPayload := map[string]interface{}{
+			"ticket_id":         ticket.ID,
+			"ticket_no":         ticket.TicketNo,
+			"user_id":           ticket.UserID,
+			"status_before":     beforeStatus,
+			"auto_close_hours":  autoCloseHours,
+			"last_message_at":   ticket.LastMessageAt,
+			"last_message_by":   ticket.LastMessageBy,
+			"unread_count_user": ticket.UnreadCountUser,
+			"source":            "ticket_auto_close",
+		}
+		hookResult, hookErr := s.pluginManager.ExecuteHook(HookExecutionRequest{
+			Hook:    "ticket.auto_close.before",
+			Payload: hookPayload,
+		}, hookExecCtx)
+		if hookErr != nil {
+			log.Printf("ticket.auto_close.before hook execution failed: ticket=%s err=%v", ticket.TicketNo, hookErr)
+		} else if hookResult != nil {
+			if hookResult.Blocked {
+				reason := strings.TrimSpace(hookResult.BlockReason)
+				if reason == "" {
+					reason = "ticket auto-close blocked by plugin"
+				}
+				log.Printf("[TicketAutoClose] Skip auto-close ticket %s: %s", ticket.TicketNo, reason)
+				return false, nil
+			}
+			if hookResult.Payload != nil {
+				if rawContent, exists := hookResult.Payload["content"]; exists {
+					content, convErr := ticketAutoCloseHookValueToOptionalString(rawContent)
+					if convErr != nil {
+						log.Printf("ticket.auto_close.before payload content decode failed, fallback to default: ticket=%s err=%v", ticket.TicketNo, convErr)
+					} else if strings.TrimSpace(content) != "" {
+						msgContent = content
+					}
+				} else if rawMessage, exists := hookResult.Payload["message"]; exists {
+					message, convErr := ticketAutoCloseHookValueToOptionalString(rawMessage)
+					if convErr != nil {
+						log.Printf("ticket.auto_close.before payload message decode failed, fallback to default: ticket=%s err=%v", ticket.TicketNo, convErr)
+					} else if strings.TrimSpace(message) != "" {
+						msgContent = message
+					}
+				}
+			}
+		}
+	}
+
+	closed := false
+	err := s.db.Transaction(func(tx *gorm.DB) error {
 		// 原子更新状态，WHERE status 条件防止并发重复处理
 		result := tx.Model(ticket).
 			Where("status IN ?", activeStatuses).
@@ -138,9 +279,9 @@ func (s *TicketAutoCloseService) closeTicket(ticket *models.Ticket, autoCloseHou
 			// 工单状态已被其他流程修改，跳过
 			return nil
 		}
+		closed = true
 
-		// 根据用户语言偏好生成系统消息
-		msgContent := ticketAutoCloseMessage(ticket.User, autoCloseHours)
+		// 生成系统消息（支持被插件 before hook 覆写）
 		sysMsg := &models.TicketMessage{
 			TicketID:      ticket.ID,
 			SenderType:    "admin",
@@ -171,6 +312,36 @@ func (s *TicketAutoCloseService) closeTicket(ticket *models.Ticket, autoCloseHou
 
 		return nil
 	})
+	if err != nil {
+		return false, err
+	}
+	if !closed {
+		return false, nil
+	}
+
+	if s.pluginManager != nil {
+		afterPayload := map[string]interface{}{
+			"ticket_id":        ticket.ID,
+			"ticket_no":        ticket.TicketNo,
+			"user_id":          ticket.UserID,
+			"status_before":    beforeStatus,
+			"status_after":     models.TicketStatusClosed,
+			"auto_close_hours": autoCloseHours,
+			"content":          msgContent,
+			"source":           "ticket_auto_close",
+		}
+		go func(execCtx *ExecutionContext, payload map[string]interface{}, ticketNo string) {
+			_, hookErr := s.pluginManager.ExecuteHook(HookExecutionRequest{
+				Hook:    "ticket.auto_close.after",
+				Payload: payload,
+			}, execCtx)
+			if hookErr != nil {
+				log.Printf("ticket.auto_close.after hook execution failed: ticket=%s err=%v", ticketNo, hookErr)
+			}
+		}(hookExecCtx, afterPayload, ticket.TicketNo)
+	}
+
+	return true, nil
 }
 
 // ticketAutoCloseMessage 根据用户语言偏好生成自动关闭消息

@@ -4,21 +4,22 @@ import { use } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { getPublicConfig, getUserDetail } from '@/lib/api'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { ArrowLeft, User, Mail, Shield, Calendar } from 'lucide-react'
+import { ArrowLeft, Calendar, Copy, Mail, Shield, User } from 'lucide-react'
 import Link from 'next/link'
 import { formatDate, formatPrice } from '@/lib/utils'
-import { getRoleColor } from '@/lib/role-utils'
 import { useLocale } from '@/hooks/use-locale'
 import { getTranslations } from '@/lib/i18n'
 import { usePageTitle } from '@/hooks/use-page-title'
+import { useToast } from '@/hooks/use-toast'
+import { PluginSlot } from '@/components/plugins/plugin-slot'
 
 export default function UserDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
   const userId = parseInt(id)
   const { locale } = useLocale()
   const t = getTranslations(locale)
+  const toast = useToast()
   usePageTitle(t.pageTitle.adminUserDetail)
 
   const roleLabels: Record<string, string> = {
@@ -39,26 +40,72 @@ export default function UserDetailPage({ params }: { params: Promise<{ id: strin
   })
 
   if (isLoading) {
-    return <div className="text-center py-12">{t.common.loading}</div>
+    return <div className="py-12 text-center">{t.common.loading}</div>
   }
 
   if (!data?.data) {
-    return <div className="text-center py-12">{t.admin.noData}</div>
+    return <div className="py-12 text-center">{t.admin.noData}</div>
   }
 
   const user = data.data
   const currency = publicConfigData?.data?.currency || 'CNY'
+  const adminUserDetailPluginContext = {
+    view: 'admin_user_detail',
+    user: {
+      id: user.id,
+      email: user.email || undefined,
+      phone: user.phone || undefined,
+      role: user.role,
+      uuid: user.uuid || undefined,
+      is_active: Boolean(user.isActive || user.is_active),
+      email_verified: Boolean(user.email_verified),
+      total_order_count: Number(user.total_order_count || 0),
+      total_spent_minor: Number(user.total_spent_minor || 0),
+      country: user.country || undefined,
+      locale: user.locale || undefined,
+    },
+    summary: {
+      has_phone: Boolean(user.phone),
+      has_email: Boolean(user.email),
+    },
+  }
+  const copyToClipboard = async (value?: string | number | null) => {
+    if (
+      value === undefined ||
+      value === null ||
+      value === '' ||
+      typeof navigator === 'undefined' ||
+      !navigator.clipboard
+    ) {
+      return
+    }
+    await navigator.clipboard.writeText(String(value))
+    toast.success(t.common.copiedToClipboard)
+  }
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center gap-4">
-        <Button asChild variant="outline" size="sm">
-          <Link href="/admin/users">
-            <ArrowLeft className="h-4 w-4 md:mr-1.5" />
-            <span className="hidden md:inline">{t.admin.backToList}</span>
-          </Link>
-        </Button>
-        <h1 className="text-lg md:text-xl font-bold">{t.admin.userDetail}</h1>
+      <PluginSlot slot="admin.user_detail.top" context={adminUserDetailPluginContext} />
+      <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+        <div className="flex items-center gap-4">
+          <Button asChild variant="outline" size="sm">
+            <Link href="/admin/users">
+              <ArrowLeft className="h-4 w-4 md:mr-1.5" />
+              <span className="hidden md:inline">{t.admin.backToList}</span>
+            </Link>
+          </Button>
+          <div>
+            <h1 className="text-lg font-bold md:text-xl">{t.admin.userDetail}</h1>
+            <p className="mt-1 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+              <span>#{user.id}</span>
+              {user.email ? <span className="break-all">{user.email}</span> : null}
+              {user.phone ? <span>{user.phone}</span> : null}
+              <span>{roleLabels[user.role] || user.role}</span>
+              <span>{user.isActive || user.is_active ? t.admin.active : t.admin.inactive}</span>
+              <span>{user.email_verified ? t.admin.verified : t.admin.unverified}</span>
+            </p>
+          </div>
+        </div>
       </div>
 
       <div className="grid gap-6 md:grid-cols-2">
@@ -68,43 +115,84 @@ export default function UserDetailPage({ params }: { params: Promise<{ id: strin
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="flex items-start gap-3">
-              <User className="h-5 w-5 text-muted-foreground mt-0.5" />
+              <User className="mt-0.5 h-5 w-5 text-muted-foreground" />
               <div className="flex-1">
                 <dt className="text-sm text-muted-foreground">{t.admin.userId}</dt>
-                <dd className="font-medium">{user.id}</dd>
+                <dd className="flex items-center gap-2 font-medium">
+                  <span>{user.id}</span>
+                  <Button
+                    type="button"
+                    size="icon"
+                    variant="ghost"
+                    className="h-7 w-7"
+                    onClick={() => void copyToClipboard(user.id)}
+                  >
+                    <Copy className="h-3.5 w-3.5" />
+                  </Button>
+                </dd>
               </div>
             </div>
 
             <div className="flex items-start gap-3">
-              <Mail className="h-5 w-5 text-muted-foreground mt-0.5" />
+              <Mail className="mt-0.5 h-5 w-5 text-muted-foreground" />
               <div className="flex-1">
                 <dt className="text-sm text-muted-foreground">{t.admin.email}</dt>
-                <dd className="font-medium">{user.email}</dd>
+                <dd className="flex items-center gap-2 font-medium">
+                  <span className="break-all">{user.email || '-'}</span>
+                  {user.email ? (
+                    <Button
+                      type="button"
+                      size="icon"
+                      variant="ghost"
+                      className="h-7 w-7 shrink-0"
+                      onClick={() => void copyToClipboard(user.email)}
+                    >
+                      <Copy className="h-3.5 w-3.5" />
+                    </Button>
+                  ) : null}
+                </dd>
               </div>
             </div>
 
             <div className="flex items-start gap-3">
-              <User className="h-5 w-5 text-muted-foreground mt-0.5" />
+              <User className="mt-0.5 h-5 w-5 text-muted-foreground" />
               <div className="flex-1">
                 <dt className="text-sm text-muted-foreground">{t.admin.name}</dt>
                 <dd className="font-medium">{user.name || t.admin.notSet}</dd>
               </div>
             </div>
 
+            {user.phone ? (
+              <div className="flex items-start gap-3">
+                <User className="mt-0.5 h-5 w-5 text-muted-foreground" />
+                <div className="flex-1">
+                  <dt className="text-sm text-muted-foreground">{t.ticket.phone}</dt>
+                  <dd className="flex items-center gap-2 font-medium">
+                    <span>{user.phone}</span>
+                    <Button
+                      type="button"
+                      size="icon"
+                      variant="ghost"
+                      className="h-7 w-7"
+                      onClick={() => void copyToClipboard(user.phone)}
+                    >
+                      <Copy className="h-3.5 w-3.5" />
+                    </Button>
+                  </dd>
+                </div>
+              </div>
+            ) : null}
+
             <div className="flex items-start gap-3">
-              <Shield className="h-5 w-5 text-muted-foreground mt-0.5" />
+              <Shield className="mt-0.5 h-5 w-5 text-muted-foreground" />
               <div className="flex-1">
                 <dt className="text-sm text-muted-foreground">{t.admin.role}</dt>
-                <dd>
-                  <Badge variant={getRoleColor(user.role)}>
-                    {roleLabels[user.role] || user.role}
-                  </Badge>
-                </dd>
+                <dd className="font-medium">{roleLabels[user.role] || user.role}</dd>
               </div>
             </div>
 
             <div className="flex items-start gap-3">
-              <Calendar className="h-5 w-5 text-muted-foreground mt-0.5" />
+              <Calendar className="mt-0.5 h-5 w-5 text-muted-foreground" />
               <div className="flex-1">
                 <dt className="text-sm text-muted-foreground">{t.admin.registrationTime}</dt>
                 <dd className="font-medium">
@@ -122,36 +210,56 @@ export default function UserDetailPage({ params }: { params: Promise<{ id: strin
             <CardTitle>{t.admin.accountStatus}</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="flex justify-between items-center">
+            <div className="flex items-center justify-between">
               <span className="text-sm">{t.admin.accountStatus}</span>
-              <Badge variant={user.isActive || user.is_active ? 'default' : 'secondary'}>
+              <span className="text-sm text-muted-foreground">
                 {user.isActive || user.is_active ? t.admin.active : t.admin.inactive}
-              </Badge>
+              </span>
             </div>
-            <div className="flex justify-between items-center">
+            <div className="flex items-center justify-between">
               <span className="text-sm">UUID</span>
-              <code className="text-xs bg-gray-100 px-2 py-1 rounded">{user.uuid}</code>
+              <div className="flex items-center gap-2">
+                <code className="rounded bg-gray-100 px-2 py-1 text-xs dark:bg-muted">
+                  {user.uuid}
+                </code>
+                <Button
+                  type="button"
+                  size="icon"
+                  variant="ghost"
+                  className="h-7 w-7"
+                  onClick={() => void copyToClipboard(user.uuid)}
+                >
+                  <Copy className="h-3.5 w-3.5" />
+                </Button>
+              </div>
             </div>
-            <div className="flex justify-between items-center">
+            <div className="flex items-center justify-between">
               <span className="text-sm">{t.admin.totalSpent}</span>
-              <span className="font-medium">{formatPrice(Number(user.total_spent_minor || 0), currency)}</span>
+              <span className="font-medium">
+                {formatPrice(Number(user.total_spent_minor || 0), currency)}
+              </span>
             </div>
-            <div className="flex justify-between items-center">
+            <div className="flex items-center justify-between">
               <span className="text-sm">{t.admin.orderCount}</span>
               <span className="font-medium">{Number(user.total_order_count || 0)}</span>
+            </div>
+            <div className="flex items-center justify-between gap-4">
+              <span className="text-sm">{t.admin.locale}</span>
+              <span className="font-medium">{user.locale || t.admin.notSet}</span>
+            </div>
+            <div className="flex items-center justify-between gap-4">
+              <span className="text-sm">{t.admin.country}</span>
+              <span className="font-medium">{user.country || t.admin.notSet}</span>
+            </div>
+            <div className="flex items-center justify-between gap-4">
+              <span className="text-sm">{t.admin.lastLoginAt}</span>
+              <span className="font-medium">
+                {user.last_login_at ? formatDate(user.last_login_at) : t.admin.notSet}
+              </span>
             </div>
           </CardContent>
         </Card>
       </div>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>{t.admin.orderHistory}</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <p className="text-muted-foreground text-center py-8">{t.admin.orderHistoryDeveloping}</p>
-        </CardContent>
-      </Card>
     </div>
   )
 }

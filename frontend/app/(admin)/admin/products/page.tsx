@@ -1,11 +1,18 @@
 'use client'
+/* eslint-disable @next/next/no-img-element */
 
-import { useState } from 'react'
+import { useDeferredValue, useState } from 'react'
 import { useQuery, useMutation } from '@tanstack/react-query'
-import { getAdminProducts, deleteProduct, toggleProductFeatured, updateProductStatus } from '@/lib/api'
+import {
+  getAdminProducts,
+  deleteProduct,
+  toggleProductFeatured,
+  updateProductStatus,
+} from '@/lib/api'
 import { DataTable } from '@/components/admin/data-table'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { Card, CardContent } from '@/components/ui/card'
 import {
   Plus,
   RefreshCw,
@@ -42,6 +49,29 @@ import { Product, ProductStatus } from '@/types/product'
 import { useLocale } from '@/hooks/use-locale'
 import { getTranslations } from '@/lib/i18n'
 import { usePageTitle } from '@/hooks/use-page-title'
+import { resolveApiErrorMessage } from '@/lib/api-error'
+import { PluginExtensionList } from '@/components/plugins/plugin-extension-list'
+import { PluginSlot } from '@/components/plugins/plugin-slot'
+import { usePluginExtensionBatch } from '@/lib/plugin-extension-batch'
+
+function buildAdminProductRowSummary(product: Product) {
+  return {
+    id: product.id,
+    name: product.name,
+    sku: product.sku,
+    category: product.category,
+    status: product.status,
+    product_type: product.product_type || product.productType,
+    is_featured: Boolean(product.is_featured || product.isFeatured),
+    price_minor: product.price_minor,
+    original_price_minor: product.original_price_minor,
+    stock: product.stock,
+    view_count: product.view_count || product.viewCount || 0,
+    sale_count: product.sale_count || product.saleCount || 0,
+    created_at: product.created_at || product.createdAt,
+    updated_at: product.updated_at || product.updatedAt,
+  }
+}
 
 export default function AdminProductsPage() {
   const [page, setPage] = useState(1)
@@ -49,29 +79,41 @@ export default function AdminProductsPage() {
   const [category, setCategory] = useState<string | undefined>()
   const [search, setSearch] = useState('')
   const [deleteId, setDeleteId] = useState<number | null>(null)
+  const deferredSearch = useDeferredValue(search)
   const { currency } = useCurrency()
   const { locale } = useLocale()
   const t = getTranslations(locale)
   usePageTitle(t.pageTitle.adminProducts)
+  const formatAdminError = (error: unknown, fallback: string) => {
+    const detail = resolveApiErrorMessage(error, t, fallback)
+    return detail === fallback ? fallback : `${fallback}: ${detail}`
+  }
 
   const statusConfig: Record<string, { label: string; color: string }> = {
     draft: { label: t.admin.draft, color: 'bg-muted text-muted-foreground' },
     active: { label: t.admin.onSale, color: 'bg-green-500/20 text-green-700 dark:text-green-400' },
-    inactive: { label: t.admin.offSale, color: 'bg-yellow-500/20 text-yellow-700 dark:text-yellow-400' },
-    out_of_stock: { label: t.admin.outOfStock, color: 'bg-red-500/20 text-red-700 dark:text-red-400' },
+    inactive: {
+      label: t.admin.offSale,
+      color: 'bg-yellow-500/20 text-yellow-700 dark:text-yellow-400',
+    },
+    out_of_stock: {
+      label: t.admin.outOfStock,
+      color: 'bg-red-500/20 text-red-700 dark:text-red-400',
+    },
   }
 
   const defaultStatusConfig = { label: '-', color: 'bg-muted text-muted-foreground' }
 
   const { data, isLoading, refetch } = useQuery({
-    queryKey: ['adminProducts', page, status, category, search],
-    queryFn: () => getAdminProducts({
-      page,
-      limit: 20,
-      status: status === 'all' ? undefined : status,
-      category: category === 'all' ? undefined : category,
-      search: search || undefined,
-    }),
+    queryKey: ['adminProducts', page, status, category, deferredSearch],
+    queryFn: () =>
+      getAdminProducts({
+        page,
+        limit: 20,
+        status: status === 'all' ? undefined : status,
+        category: category === 'all' ? undefined : category,
+        search: deferredSearch || undefined,
+      }),
   })
 
   // 删除商品
@@ -82,8 +124,8 @@ export default function AdminProductsPage() {
       refetch()
       setDeleteId(null)
     },
-    onError: (error: Error) => {
-      toast.error(`${t.admin.deleteFailed}: ${error.message}`)
+    onError: (error: unknown) => {
+      toast.error(formatAdminError(error, t.admin.deleteFailed))
     },
   })
 
@@ -94,22 +136,77 @@ export default function AdminProductsPage() {
       toast.success(t.admin.featuredUpdated)
       refetch()
     },
-    onError: (error: Error) => {
-      toast.error(`${t.admin.operationFailed}: ${error.message}`)
+    onError: (error: unknown) => {
+      toast.error(formatAdminError(error, t.admin.operationFailed))
     },
   })
 
   // 更新商品状态
   const updateStatusMutation = useMutation({
-    mutationFn: ({ id, status }: { id: number; status: string }) =>
-      updateProductStatus(id, status),
+    mutationFn: ({ id, status }: { id: number; status: string }) => updateProductStatus(id, status),
     onSuccess: () => {
       toast.success(t.admin.statusUpdated)
       refetch()
     },
-    onError: (error: Error) => {
-      toast.error(`${t.admin.operationFailed}: ${error.message}`)
+    onError: (error: unknown) => {
+      toast.error(formatAdminError(error, t.admin.operationFailed))
     },
+  })
+
+  const products = data?.data?.items || []
+  const totalProducts = Number(data?.data?.pagination?.total || 0)
+  const productFilterBadges = [
+    deferredSearch.trim() ? `${t.common.search}: ${deferredSearch.trim()}` : null,
+    status ? `${t.admin.status}: ${(statusConfig[status] || defaultStatusConfig).label}` : null,
+    category ? `${t.admin.category}: ${category}` : null,
+  ].filter(Boolean) as string[]
+  const adminProductsFilters = {
+    page,
+    status: status === 'all' ? undefined : status,
+    category: category === 'all' ? undefined : category,
+    search: deferredSearch || undefined,
+  }
+  const adminProductsPagination = {
+    page,
+    total_pages: data?.data?.pagination?.total_pages,
+    total: totalProducts,
+    limit: data?.data?.pagination?.limit,
+  }
+  const adminProductsPluginContext = {
+    view: 'admin_products',
+    filters: adminProductsFilters,
+    pagination: adminProductsPagination,
+    summary: {
+      total: totalProducts,
+      current_page_count: products.length,
+      active_filter_count: productFilterBadges.length,
+    },
+    active_filter_badges: productFilterBadges,
+  }
+  const adminProductRowActionItems = products.map((item: Product, index: number) => ({
+    key: String(item.id),
+    slot: 'admin.products.row_actions',
+    path: '/admin/products',
+    hostContext: {
+      view: 'admin_products_row',
+      product: buildAdminProductRowSummary(item),
+      row: {
+        index: index + 1,
+        absolute_index: (page - 1) * 20 + index + 1,
+      },
+      filters: adminProductsFilters,
+      pagination: adminProductsPagination,
+      summary: {
+        current_page_count: products.length,
+        total: totalProducts,
+      },
+    },
+  }))
+  const adminProductRowActionExtensions = usePluginExtensionBatch({
+    scope: 'admin',
+    path: '/admin/products',
+    items: adminProductRowActionItems,
+    enabled: products.length > 0,
   })
 
   const columns = [
@@ -117,18 +214,18 @@ export default function AdminProductsPage() {
       header: t.admin.productInfo,
       cell: ({ row }: { row: { original: Product } }) => {
         const product = row.original
-        const primaryImage = product.images?.find(img => img.is_primary || img.isPrimary)?.url
+        const primaryImage = product.images?.find((img) => img.is_primary || img.isPrimary)?.url
         return (
           <div className="flex items-center gap-3">
             {primaryImage ? (
               <img
                 src={primaryImage}
                 alt={product.name}
-                className="w-12 h-12 object-cover rounded"
+                className="h-12 w-12 rounded object-cover"
               />
             ) : (
-              <div className="w-12 h-12 bg-muted rounded flex items-center justify-center">
-                <Package className="w-6 h-6 text-muted-foreground" />
+              <div className="flex h-12 w-12 items-center justify-center rounded bg-muted">
+                <Package className="h-6 w-6 text-muted-foreground" />
               </div>
             )}
             <div>
@@ -148,8 +245,9 @@ export default function AdminProductsPage() {
           <div>
             <div>{product.category || '-'}</div>
             {product.attributes && product.attributes.length > 0 && (
-              <div className="text-xs text-muted-foreground mt-1">
-                {product.attributes.length}{t.admin.specs}
+              <div className="mt-1 text-xs text-muted-foreground">
+                {product.attributes.length}
+                {t.admin.specs}
               </div>
             )}
           </div>
@@ -180,11 +278,13 @@ export default function AdminProductsPage() {
         const config = statusConfig[status] || defaultStatusConfig
         return (
           <Badge
-            className={`${config.color} cursor-pointer hover:opacity-80 transition-opacity`}
-            onClick={() => updateStatusMutation.mutate({
-              id: product.id,
-              status: status === 'active' ? 'inactive' : 'active',
-            })}
+            className={`${config.color} cursor-pointer transition-opacity hover:opacity-80`}
+            onClick={() =>
+              updateStatusMutation.mutate({
+                id: product.id,
+                status: status === 'active' ? 'inactive' : 'active',
+              })
+            }
             title={status === 'active' ? t.admin.takeOffSale : t.admin.putOnSale}
           >
             {config.label}
@@ -199,11 +299,11 @@ export default function AdminProductsPage() {
         return (
           <div className="text-sm">
             <div className="flex items-center gap-1">
-              <Eye className="w-3 h-3" />
+              <Eye className="h-3 w-3" />
               {product.view_count || 0}
             </div>
             <div className="flex items-center gap-1">
-              <ShoppingBag className="w-3 h-3" />
+              <ShoppingBag className="h-3 w-3" />
               {product.sale_count || 0}
             </div>
           </div>
@@ -216,47 +316,50 @@ export default function AdminProductsPage() {
         const product = row.original
         const isFeatured = product.is_featured || product.isFeatured
         const isVirtual = product.product_type === 'virtual'
+        const rowExtensions = adminProductRowActionExtensions[String(product.id)] || []
         return (
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Button
               size="sm"
               variant="ghost"
               onClick={() => toggleFeaturedMutation.mutate(product.id)}
               title={isFeatured ? t.admin.cancelFeatured : t.admin.setFeatured}
             >
-              <Star
-                className={`w-4 h-4 ${isFeatured ? 'fill-yellow-500 text-yellow-500' : ''}`}
-              />
+              <Star className={`h-4 w-4 ${isFeatured ? 'fill-yellow-500 text-yellow-500' : ''}`} />
             </Button>
             {isVirtual && (
               <Button asChild size="sm" variant="outline" title={t.admin.virtualStockManage}>
                 <Link href={`/admin/products/${product.id}/virtual-stock`}>
-                  <Database className="w-4 h-4" />
+                  <Database className="h-4 w-4" />
                 </Link>
               </Button>
             )}
             <Button asChild size="sm" variant="outline">
               <Link href={`/admin/products/${product.id}`}>
-                <Pencil className="w-4 h-4" />
+                <Pencil className="h-4 w-4" />
               </Link>
             </Button>
-            <Button
-              size="sm"
-              variant="destructive"
-              onClick={() => setDeleteId(product.id)}
-            >
-              <Trash2 className="w-4 h-4" />
+            <Button size="sm" variant="destructive" onClick={() => setDeleteId(product.id)}>
+              <Trash2 className="h-4 w-4" />
             </Button>
+            <PluginExtensionList extensions={rowExtensions} display="inline" />
           </div>
         )
       },
     },
   ]
+  const deleteTarget = deleteId ? products.find((item: Product) => item.id === deleteId) : null
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold">{t.admin.productManagement}</h1>
+      <PluginSlot slot="admin.products.top" context={adminProductsPluginContext} />
+      <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+        <div>
+          <h1 className="text-3xl font-bold">{t.admin.productManagement}</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {t.admin.totalRecords.replace('{count}', String(totalProducts))}
+          </p>
+        </div>
         <div className="flex gap-2">
           <Button asChild>
             <Link href="/admin/products/new">
@@ -272,39 +375,50 @@ export default function AdminProductsPage() {
       </div>
 
       {/* 筛选器 */}
-      <div className="flex gap-4">
-        <Input
-          placeholder={t.admin.searchProduct}
-          value={search}
-          onChange={(e) => {
-            setSearch(e.target.value)
-            setPage(1)
-          }}
-          className="max-w-xs"
-        />
-        <Select
-          value={status || 'all'}
-          onValueChange={(value) => {
-            setStatus(value === 'all' ? undefined : value)
-            setPage(1)
-          }}
-        >
-          <SelectTrigger className="w-[150px]">
-            <SelectValue placeholder={t.admin.status} />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">{t.admin.allStatus}</SelectItem>
-            <SelectItem value="draft">{t.admin.draft}</SelectItem>
-            <SelectItem value="active">{t.admin.onSale}</SelectItem>
-            <SelectItem value="inactive">{t.admin.offSale}</SelectItem>
-            <SelectItem value="out_of_stock">{t.admin.outOfStock}</SelectItem>
-          </SelectContent>
-        </Select>
+      <PluginSlot
+        slot="admin.products.filters"
+        context={{ ...adminProductsPluginContext, section: 'filters' }}
+      />
+      <div className="flex flex-col gap-3">
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div className="flex gap-4">
+            <Input
+              placeholder={t.admin.searchProduct}
+              value={search}
+              onChange={(e) => {
+                setSearch(e.target.value)
+                setPage(1)
+              }}
+              className="max-w-xs"
+            />
+            <Select
+              value={status || 'all'}
+              onValueChange={(value) => {
+                setStatus(value === 'all' ? undefined : value)
+                setPage(1)
+              }}
+            >
+              <SelectTrigger className="w-[150px]">
+                <SelectValue placeholder={t.admin.status} />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">{t.admin.allStatus}</SelectItem>
+                <SelectItem value="draft">{t.admin.draft}</SelectItem>
+                <SelectItem value="active">{t.admin.onSale}</SelectItem>
+                <SelectItem value="inactive">{t.admin.offSale}</SelectItem>
+                <SelectItem value="out_of_stock">{t.admin.outOfStock}</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+        {productFilterBadges.length > 0 ? (
+          <p className="text-sm text-muted-foreground">{productFilterBadges.join(' · ')}</p>
+        ) : null}
       </div>
 
       <DataTable
         columns={columns}
-        data={data?.data?.items || []}
+        data={products}
         isLoading={isLoading}
         pagination={{
           page,
@@ -319,7 +433,19 @@ export default function AdminProductsPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>{t.admin.confirmDelete}</AlertDialogTitle>
             <AlertDialogDescription>
-              {t.admin.deleteProductConfirm}
+              <div className="space-y-3">
+                <p>{t.admin.deleteProductConfirm}</p>
+                {deleteTarget ? (
+                  <div className="rounded-md border border-dashed bg-muted/20 p-3 text-xs text-foreground">
+                    <div className="font-medium">{deleteTarget.name}</div>
+                    <div className="mt-1 flex flex-wrap items-center gap-2 text-muted-foreground">
+                      <span>SKU: {deleteTarget.sku}</span>
+                      <span>{deleteTarget.category || '-'}</span>
+                      <span>{formatPrice(deleteTarget.price_minor, currency)}</span>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

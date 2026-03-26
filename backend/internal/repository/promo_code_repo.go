@@ -4,8 +4,8 @@ import (
 	"fmt"
 
 	"auralogic/internal/models"
+	"auralogic/internal/pkg/dbutil"
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 type PromoCodeRepository struct {
@@ -76,9 +76,12 @@ func (r *PromoCodeRepository) Delete(id uint) error {
 // Reserve 预留优惠码（下单时）
 func (r *PromoCodeRepository) Reserve(promoCodeID uint, orderNo string) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := dbutil.LockForUpdate(tx, &models.PromoCode{}, "id = ?", promoCodeID); err != nil {
+			return err
+		}
+
 		var promoCode models.PromoCode
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			First(&promoCode, promoCodeID).Error; err != nil {
+		if err := tx.First(&promoCode, promoCodeID).Error; err != nil {
 			return err
 		}
 
@@ -97,9 +100,12 @@ func (r *PromoCodeRepository) Reserve(promoCodeID uint, orderNo string) error {
 // ReleaseReserve 释放预留优惠码（取消订单）
 func (r *PromoCodeRepository) ReleaseReserve(promoCodeID uint, orderNo string) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := dbutil.LockForUpdate(tx, &models.PromoCode{}, "id = ?", promoCodeID); err != nil {
+			return err
+		}
+
 		var promoCode models.PromoCode
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			First(&promoCode, promoCodeID).Error; err != nil {
+		if err := tx.First(&promoCode, promoCodeID).Error; err != nil {
 			return err
 		}
 
@@ -114,9 +120,12 @@ func (r *PromoCodeRepository) ReleaseReserve(promoCodeID uint, orderNo string) e
 // Deduct 扣减优惠码（订单完成）
 func (r *PromoCodeRepository) Deduct(promoCodeID uint, orderNo string) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := dbutil.LockForUpdate(tx, &models.PromoCode{}, "id = ?", promoCodeID); err != nil {
+			return err
+		}
+
 		var promoCode models.PromoCode
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			First(&promoCode, promoCodeID).Error; err != nil {
+		if err := tx.First(&promoCode, promoCodeID).Error; err != nil {
 			return err
 		}
 

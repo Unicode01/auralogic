@@ -6,10 +6,15 @@ import (
 	formHandler "auralogic/internal/handler/form"
 	userHandler "auralogic/internal/handler/user"
 	"auralogic/internal/middleware"
+	"auralogic/internal/pluginobs"
 	"auralogic/internal/repository"
 	"auralogic/internal/service"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -23,6 +28,7 @@ func SetupRouter(
 	userRepo *repository.UserRepository,
 	db *gorm.DB,
 	paymentPollingService *service.PaymentPollingService,
+	pluginManagerService *service.PluginManagerService,
 	version string,
 ) *gin.Engine {
 	// 设置Gin模式
@@ -58,47 +64,54 @@ func SetupRouter(
 	// CreateService - SMS
 	smsService := service.NewSMSService(cfg, db)
 	marketingService := service.NewMarketingService(db, emailService, smsService)
+	smsService.SetPluginManager(pluginManagerService)
+	marketingService.SetPluginManager(pluginManagerService)
+	serialService.SetPluginManager(pluginManagerService)
+	if emailService != nil {
+		emailService.SetPluginManager(pluginManagerService)
+	}
 
 	// CreateHandler
-	userAuthHandler := userHandler.NewAuthHandler(authService, emailService, smsService)
-	userOrderHandler := userHandler.NewOrderHandler(orderService, bindingService, virtualInventoryService, cfg)
-	userProductHandler := userHandler.NewProductHandler(productService, orderService, bindingService, virtualInventoryService)
+	userAuthHandler := userHandler.NewAuthHandler(authService, emailService, smsService, pluginManagerService)
+	userOrderHandler := userHandler.NewOrderHandler(orderService, bindingService, virtualInventoryService, pluginManagerService, cfg)
+	userProductHandler := userHandler.NewProductHandler(productService, orderService, bindingService, virtualInventoryService, pluginManagerService)
 	formShippingHandler := formHandler.NewShippingHandler(orderService, cfg)
-	jsRuntimeService := service.NewJSRuntimeService(db)
-	adminOrderHandler := adminHandler.NewOrderHandler(orderService, serialService, virtualInventoryService, jsRuntimeService, cfg)
-	adminProductHandler := adminHandler.NewProductHandler(productService, virtualInventoryService)
-	adminUserHandler := adminHandler.NewUserHandler(userRepo, db, cfg)
-	adminPermissionHandler := adminHandler.NewPermissionHandler(db)
-	adminAPIKeyHandler := adminHandler.NewAPIKeyHandler(db)
+	jsRuntimeService := service.NewJSRuntimeService(db, cfg)
+	adminOrderHandler := adminHandler.NewOrderHandler(orderService, serialService, virtualInventoryService, jsRuntimeService, pluginManagerService, cfg)
+	adminProductHandler := adminHandler.NewProductHandler(productService, virtualInventoryService, pluginManagerService)
+	adminUserHandler := adminHandler.NewUserHandler(userRepo, db, cfg, pluginManagerService)
+	adminPermissionHandler := adminHandler.NewPermissionHandler(db, pluginManagerService)
+	adminAPIKeyHandler := adminHandler.NewAPIKeyHandler(db, pluginManagerService)
 	adminAdminHandler := adminHandler.NewAdminHandler(userRepo, db, cfg)
-	adminLogHandler := adminHandler.NewLogHandler(db)
+	adminLogHandler := adminHandler.NewLogHandler(db, pluginManagerService)
 	adminDashboardHandler := adminHandler.NewDashboardHandler(db, cfg, version)
 	adminAnalyticsHandler := adminHandler.NewAnalyticsHandler(db, cfg)
-	adminSettingsHandler := adminHandler.NewSettingsHandler(db, cfg, smsService)
-	adminUploadHandler := adminHandler.NewUploadHandler(cfg.Upload.Dir, cfg.App.URL)
-	adminInventoryHandler := adminHandler.NewInventoryHandler(inventoryService)
-	adminBindingHandler := adminHandler.NewBindingHandler(bindingService)
+	adminSettingsHandler := adminHandler.NewSettingsHandler(db, cfg, smsService, emailService, pluginManagerService)
+	adminUploadHandler := adminHandler.NewUploadHandler(cfg.Upload.Dir, cfg.App.URL, pluginManagerService)
+	adminInventoryHandler := adminHandler.NewInventoryHandler(inventoryService, db, pluginManagerService)
+	adminBindingHandler := adminHandler.NewBindingHandler(bindingService, db, pluginManagerService)
 	adminInventoryLogHandler := adminHandler.NewInventoryLogHandler(db)
-	adminSerialHandler := adminHandler.NewSerialHandler(serialService)
+	adminSerialHandler := adminHandler.NewSerialHandler(serialService, pluginManagerService)
 	userSerialHandler := userHandler.NewSerialHandler(serialService)
-	userCartHandler := userHandler.NewCartHandler(cartService)
-	adminVirtualInventoryHandler := adminHandler.NewVirtualInventoryHandler(virtualInventoryService)
-	adminPaymentMethodHandler := adminHandler.NewPaymentMethodHandler(db)
-	userPaymentMethodHandler := userHandler.NewPaymentMethodHandler(db, paymentPollingService)
-	userTicketHandler := userHandler.NewTicketHandler(db, emailService)
-	adminTicketHandler := adminHandler.NewTicketHandler(db, emailService)
-	adminPromoCodeHandler := adminHandler.NewPromoCodeHandler(promoCodeService)
-	userPromoCodeHandler := userHandler.NewPromoCodeHandler(promoCodeService)
-	adminKnowledgeHandler := adminHandler.NewKnowledgeHandler(db)
-	adminAnnouncementHandler := adminHandler.NewAnnouncementHandler(db, emailService, smsService)
-	adminMarketingHandler := adminHandler.NewMarketingHandler(db, marketingService)
-	adminLandingPageHandler := adminHandler.NewLandingPageHandler(db, cfg)
-	userKnowledgeHandler := userHandler.NewKnowledgeHandler(db)
-	userAnnouncementHandler := userHandler.NewAnnouncementHandler(db)
+	userCartHandler := userHandler.NewCartHandler(cartService, pluginManagerService)
+	adminVirtualInventoryHandler := adminHandler.NewVirtualInventoryHandler(virtualInventoryService, db, pluginManagerService)
+	adminPaymentMethodHandler := adminHandler.NewPaymentMethodHandler(db, cfg, pluginManagerService)
+	userPaymentMethodHandler := userHandler.NewPaymentMethodHandler(db, paymentPollingService, pluginManagerService, cfg)
+	userTicketHandler := userHandler.NewTicketHandler(db, emailService, pluginManagerService)
+	adminTicketHandler := adminHandler.NewTicketHandler(db, emailService, pluginManagerService)
+	adminPromoCodeHandler := adminHandler.NewPromoCodeHandler(promoCodeService, pluginManagerService)
+	userPromoCodeHandler := userHandler.NewPromoCodeHandler(promoCodeService, pluginManagerService)
+	adminKnowledgeHandler := adminHandler.NewKnowledgeHandler(db, pluginManagerService)
+	adminAnnouncementHandler := adminHandler.NewAnnouncementHandler(db, emailService, smsService, pluginManagerService)
+	adminMarketingHandler := adminHandler.NewMarketingHandler(db, marketingService, pluginManagerService)
+	adminLandingPageHandler := adminHandler.NewLandingPageHandler(db, cfg, pluginManagerService)
+	userKnowledgeHandler := userHandler.NewKnowledgeHandler(db, pluginManagerService)
+	userAnnouncementHandler := userHandler.NewAnnouncementHandler(db, pluginManagerService)
+	adminPluginHandler := adminHandler.NewPluginHandler(db, pluginManagerService, cfg.Plugin.ArtifactDir)
 
-	// ========== 表单API（需要登录） ==========
+	// ========== 表单API（支持匿名 token 访问，登录态会附带所有权校验） ==========
 	form := r.Group("/api/form")
-	form.Use(middleware.AuthMiddleware())
+	form.Use(middleware.OptionalAuthMiddleware())
 	{
 		form.GET("/shipping", formShippingHandler.GetForm)
 		form.POST("/shipping", formShippingHandler.SubmitForm)
@@ -116,34 +129,68 @@ func SetupRouter(
 
 	// ========== 公开配置API（无需登录） ==========
 	configAPI := r.Group("/api/config")
+	publicPluginMiddlewares := []gin.HandlerFunc{
+		func(c *gin.Context) {
+			endpoint := strings.TrimSpace(c.FullPath())
+			if endpoint == "" {
+				endpoint = strings.TrimSpace(c.Request.URL.Path)
+			}
+			switch endpoint {
+			case "/api/config/plugin-extensions", "/api/config/plugin-bootstrap":
+				pluginobs.RecordPublicRequest(endpoint)
+			}
+			c.Next()
+		},
+		middleware.OptionalAuthMiddleware(),
+	}
+	publicPluginMiddlewares = append([]gin.HandlerFunc{
+		middleware.DynamicRateLimitMiddlewareWithObserver(resolveRateLimit(func(runtimeCfg *config.Config) int {
+			return runtimeCfg.RateLimit.UserRequest
+		}, 60), time.Minute, func(c *gin.Context, blocked bool, _ int64, _ int, _ time.Duration) {
+			endpoint := strings.TrimSpace(c.FullPath())
+			if endpoint == "" {
+				endpoint = strings.TrimSpace(c.Request.URL.Path)
+			}
+			switch endpoint {
+			case "/api/config/plugin-extensions", "/api/config/plugin-bootstrap":
+				pluginobs.RecordPublicRateLimit(endpoint, blocked)
+			}
+		}),
+	}, publicPluginMiddlewares...)
 	{
 		configAPI.GET("/public", adminSettingsHandler.GetPublicConfig)
 		configAPI.GET("/page-inject", adminSettingsHandler.GetPageInject)
+		configAPI.GET("/plugin-extensions", append(publicPluginMiddlewares, adminPluginHandler.GetPublicExtensions)...)
+		configAPI.POST("/plugin-extensions/batch", append(publicPluginMiddlewares, adminPluginHandler.GetPublicExtensionsBatch)...)
+		configAPI.GET("/plugin-bootstrap", append(publicPluginMiddlewares, adminPluginHandler.GetPublicFrontendBootstrap)...)
+		configAPI.POST("/plugins/:id/execute", append(publicPluginMiddlewares, adminPluginHandler.ExecutePublicPlugin)...)
+		configAPI.POST("/plugins/:id/execute/stream", append(publicPluginMiddlewares, adminPluginHandler.ExecutePublicPluginStream)...)
+	}
+	pluginPublicAPI := r.Group("/api/plugins")
+	{
+		pluginPublicAPI.Any("/:name/webhooks/:hook", append(publicPluginMiddlewares, adminPluginHandler.HandlePluginWebhook)...)
+	}
+	paymentWebhookMiddlewares := []gin.HandlerFunc{
+		middleware.DynamicRateLimitMiddleware(resolveRateLimit(func(runtimeCfg *config.Config) int {
+			return runtimeCfg.RateLimit.PaymentInfo
+		}, 120), time.Minute),
+	}
+	paymentPublicAPI := r.Group("/api/payment-methods")
+	{
+		paymentPublicAPI.Any("/:id/webhooks/:hook", append(paymentWebhookMiddlewares, userPaymentMethodHandler.HandleWebhook)...)
 	}
 
 	// ========== User端API ==========
 	userAPI := r.Group("/api/user")
-	if cfg.RateLimit.Enabled && cfg.RateLimit.UserRequest > 0 {
-		userAPI.Use(middleware.RateLimitMiddleware(cfg.RateLimit.UserRequest, time.Minute))
-	}
-	orderCreateLimit := cfg.RateLimit.OrderCreate
-	if orderCreateLimit <= 0 {
-		orderCreateLimit = 30
-	}
-	paymentInfoLimit := cfg.RateLimit.PaymentInfo
-	if paymentInfoLimit <= 0 {
-		paymentInfoLimit = 120
-	}
-	paymentSelectLimit := cfg.RateLimit.PaymentSelect
-	if paymentSelectLimit <= 0 {
-		paymentSelectLimit = 60
-	}
+	userAPI.Use(middleware.DynamicRateLimitMiddleware(resolveRateLimit(func(runtimeCfg *config.Config) int {
+		return runtimeCfg.RateLimit.UserRequest
+	}, 0), time.Minute))
 	{
 		// 认证
 		auth := userAPI.Group("/auth")
-		if cfg.RateLimit.Enabled && cfg.RateLimit.UserLogin > 0 {
-			auth.Use(middleware.RateLimitMiddleware(cfg.RateLimit.UserLogin, time.Minute))
-		}
+		auth.Use(middleware.DynamicRateLimitMiddleware(resolveRateLimit(func(runtimeCfg *config.Config) int {
+			return runtimeCfg.RateLimit.UserLogin
+		}, 0), time.Minute))
 		{
 			auth.POST("/login", userAuthHandler.Login)
 			auth.POST("/register", userAuthHandler.Register)
@@ -174,7 +221,9 @@ func SetupRouter(
 		orders := userAPI.Group("/orders")
 		orders.Use(middleware.AuthMiddleware())
 		{
-			orders.POST("", middleware.RateLimitMiddleware(orderCreateLimit, time.Minute), userOrderHandler.CreateOrder)
+			orders.POST("", middleware.DynamicRateLimitMiddleware(resolveRateLimit(func(runtimeCfg *config.Config) int {
+				return runtimeCfg.RateLimit.OrderCreate
+			}, 30), time.Minute), userOrderHandler.CreateOrder)
 			orders.GET("", userOrderHandler.ListOrders)
 			orders.GET("/:order_no", userOrderHandler.GetOrder)
 			orders.GET("/:order_no/form-token", userOrderHandler.GetOrRefreshFormToken)
@@ -231,9 +280,15 @@ func SetupRouter(
 		paymentAuth := userAPI.Group("/orders")
 		paymentAuth.Use(middleware.AuthMiddleware())
 		{
-			paymentAuth.GET("/:order_no/payment-info", middleware.RateLimitMiddleware(paymentInfoLimit, time.Minute), userPaymentMethodHandler.GetOrderPaymentInfo)
-			paymentAuth.GET("/:order_no/payment-card", middleware.RateLimitMiddleware(paymentInfoLimit, time.Minute), userPaymentMethodHandler.GetPaymentCard)
-			paymentAuth.POST("/:order_no/select-payment", middleware.RateLimitMiddleware(paymentSelectLimit, time.Minute), userPaymentMethodHandler.SelectPaymentMethod)
+			paymentAuth.GET("/:order_no/payment-info", middleware.DynamicRateLimitMiddleware(resolveRateLimit(func(runtimeCfg *config.Config) int {
+				return runtimeCfg.RateLimit.PaymentInfo
+			}, 120), time.Minute), userPaymentMethodHandler.GetOrderPaymentInfo)
+			paymentAuth.GET("/:order_no/payment-card", middleware.DynamicRateLimitMiddleware(resolveRateLimit(func(runtimeCfg *config.Config) int {
+				return runtimeCfg.RateLimit.PaymentInfo
+			}, 120), time.Minute), userPaymentMethodHandler.GetPaymentCard)
+			paymentAuth.POST("/:order_no/select-payment", middleware.DynamicRateLimitMiddleware(resolveRateLimit(func(runtimeCfg *config.Config) int {
+				return runtimeCfg.RateLimit.PaymentSelect
+			}, 60), time.Minute), userPaymentMethodHandler.SelectPaymentMethod)
 		}
 
 		// 工单/客服中心
@@ -274,10 +329,13 @@ func SetupRouter(
 
 	// ========== AdminAPI ==========
 	adminAPI := r.Group("/api/admin")
-	if cfg.RateLimit.Enabled && cfg.RateLimit.AdminRequest > 0 {
-		adminAPI.Use(middleware.RateLimitMiddleware(cfg.RateLimit.AdminRequest, time.Minute))
-	}
+	adminAPI.Use(middleware.DynamicRateLimitMiddleware(resolveRateLimit(func(runtimeCfg *config.Config) int {
+		return runtimeCfg.RateLimit.AdminRequest
+	}, 0), time.Minute))
 	{
+		adminAPI.GET("/plugin-bootstrap", middleware.AuthMiddleware(), middleware.RequireAdmin(), middleware.RequirePermission("plugin.view"), adminPluginHandler.GetAdminFrontendBootstrap)
+		adminAPI.GET("/plugin-extensions", middleware.AuthMiddleware(), middleware.RequireAdmin(), middleware.RequirePermission("plugin.view"), adminPluginHandler.GetAdminExtensions)
+		adminAPI.POST("/plugin-extensions/batch", middleware.AuthMiddleware(), middleware.RequireAdmin(), middleware.RequirePermission("plugin.view"), adminPluginHandler.GetAdminExtensionsBatch)
 
 		// 仪表盘（仅超级管理员）
 		dashboard := adminAPI.Group("/dashboard")
@@ -436,6 +494,7 @@ func SetupRouter(
 			settings.GET("/email-templates", middleware.RequirePermission("system.config"), adminSettingsHandler.ListEmailTemplates)
 			settings.GET("/email-templates/:filename", middleware.RequirePermission("system.config"), adminSettingsHandler.GetEmailTemplate)
 			settings.PUT("/email-templates/:filename", middleware.RequirePermission("system.config"), adminSettingsHandler.UpdateEmailTemplate)
+			settings.POST("/template-packages/import", middleware.RequirePermission("system.config"), adminSettingsHandler.ImportTemplatePackage)
 			settings.GET("/landing-page", middleware.RequirePermission("system.config"), adminLandingPageHandler.GetLandingPage)
 			settings.PUT("/landing-page", middleware.RequirePermission("system.config"), adminLandingPageHandler.UpdateLandingPage)
 			settings.POST("/landing-page/reset", middleware.RequirePermission("system.config"), adminLandingPageHandler.ResetLandingPage)
@@ -445,9 +504,16 @@ func SetupRouter(
 		paymentMethods := adminAPI.Group("/payment-methods")
 		paymentMethods.Use(middleware.AuthMiddleware(), middleware.RequireAdmin())
 		{
-			paymentMethods.GET("", middleware.RequirePermission("system.config"), adminPaymentMethodHandler.List)
+			paymentMethods.GET("", middleware.RequireAnyPermission("payment_method.view", "system.config"), adminPaymentMethodHandler.List)
 			paymentMethods.POST("", middleware.RequirePermission("system.config"), adminPaymentMethodHandler.Create)
-			paymentMethods.GET("/:id", middleware.RequirePermission("system.config"), adminPaymentMethodHandler.Get)
+			paymentMethods.GET("/market/sources", middleware.RequirePermission("system.config"), adminPaymentMethodHandler.ListMarketSources)
+			paymentMethods.GET("/market/catalog", middleware.RequirePermission("system.config"), adminPaymentMethodHandler.ListMarketCatalog)
+			paymentMethods.GET("/market/artifacts/:name", middleware.RequirePermission("system.config"), adminPaymentMethodHandler.GetMarketArtifact)
+			paymentMethods.POST("/market/preview", middleware.RequirePermission("system.config"), adminPaymentMethodHandler.PreviewMarketPackage)
+			paymentMethods.POST("/market/import", middleware.RequirePermission("system.config"), adminPaymentMethodHandler.ImportPackageFromMarket)
+			paymentMethods.POST("/preview-package", middleware.RequirePermission("system.config"), adminPaymentMethodHandler.PreviewPackage)
+			paymentMethods.POST("/upload-package", middleware.RequirePermission("system.config"), adminPaymentMethodHandler.UploadPackage)
+			paymentMethods.GET("/:id", middleware.RequireAnyPermission("payment_method.view", "system.config"), adminPaymentMethodHandler.Get)
 			paymentMethods.PUT("/:id", middleware.RequirePermission("system.config"), adminPaymentMethodHandler.Update)
 			paymentMethods.DELETE("/:id", middleware.RequirePermission("system.config"), adminPaymentMethodHandler.Delete)
 			paymentMethods.POST("/:id/toggle", middleware.RequirePermission("system.config"), adminPaymentMethodHandler.ToggleEnabled)
@@ -580,18 +646,71 @@ func SetupRouter(
 		marketingAdmin := adminAPI.Group("/marketing")
 		marketingAdmin.Use(middleware.AuthMiddleware(), middleware.RequireAdmin())
 		{
-			marketingAdmin.GET("/countries", middleware.RequirePermission("marketing.view"), middleware.RequirePermission("user.view"), adminMarketingHandler.ListRecipientCountries)
-			marketingAdmin.GET("/users", middleware.RequirePermission("marketing.view"), middleware.RequirePermission("user.view"), adminMarketingHandler.ListRecipients)
+			marketingAdmin.GET("/countries", middleware.RequireAllPermissions("marketing.view", "user.view"), adminMarketingHandler.ListRecipientCountries)
+			marketingAdmin.GET("/users", middleware.RequireAllPermissions("marketing.view", "user.view"), adminMarketingHandler.ListRecipients)
 			marketingAdmin.POST("/preview", middleware.RequirePermission("marketing.send"), adminMarketingHandler.PreviewMarketing)
 			marketingAdmin.GET("/batches", middleware.RequirePermission("marketing.view"), adminMarketingHandler.ListBatches)
 			marketingAdmin.GET("/batches/:id", middleware.RequirePermission("marketing.view"), adminMarketingHandler.GetBatch)
 			marketingAdmin.GET("/batches/:id/tasks", middleware.RequirePermission("marketing.view"), adminMarketingHandler.ListBatchTasks)
 			marketingAdmin.POST("/send", middleware.RequirePermission("marketing.send"), adminMarketingHandler.SendMarketing)
 		}
+
+		// 插件管理
+		plugins := adminAPI.Group("/plugins")
+		plugins.Use(middleware.AuthMiddleware(), middleware.RequireSuperAdmin())
+		{
+			plugins.GET("", middleware.RequirePermission("plugin.view"), adminPluginHandler.ListPlugins)
+			plugins.GET("/hook-catalog", middleware.RequirePermission("plugin.view"), adminPluginHandler.GetHookCatalog)
+			plugins.GET("/observability", middleware.RequirePermission("plugin.diagnostics"), adminPluginHandler.GetPluginObservability)
+			plugins.GET("/:id/diagnostics", middleware.RequirePermission("plugin.diagnostics"), adminPluginHandler.GetPluginDiagnostics)
+			plugins.GET("/:id/workspace", middleware.RequirePermission("plugin.diagnostics"), adminPluginHandler.GetPluginWorkspace)
+			plugins.GET("/:id/workspace/runtime", middleware.RequirePermission("plugin.diagnostics"), adminPluginHandler.GetPluginWorkspaceRuntimeState)
+			plugins.GET("/:id/workspace/ws", middleware.RequirePermission("plugin.diagnostics"), adminPluginHandler.WebSocketPluginWorkspace)
+			plugins.GET("/:id/workspace/stream", middleware.RequirePermission("plugin.diagnostics"), adminPluginHandler.StreamPluginWorkspace)
+			plugins.POST("/:id/workspace/control/claim", middleware.RequirePermission("plugin.execute"), adminPluginHandler.ClaimPluginWorkspaceControl)
+			plugins.POST("/:id/workspace/execute", middleware.RequirePermission("plugin.execute"), adminPluginHandler.ExecutePluginWorkspaceCommand)
+			plugins.POST("/:id/workspace/terminal", middleware.RequirePermission("plugin.execute"), adminPluginHandler.EnterPluginWorkspaceTerminalLine)
+			plugins.POST("/:id/workspace/runtime/reset", middleware.RequirePermission("plugin.execute"), adminPluginHandler.ResetPluginWorkspaceRuntime)
+			plugins.POST("/:id/workspace/runtime/eval", middleware.RequirePermission("plugin.execute"), adminPluginHandler.EvaluatePluginWorkspaceRuntime)
+			plugins.POST("/:id/workspace/runtime/inspect", middleware.RequirePermission("plugin.execute"), adminPluginHandler.InspectPluginWorkspaceRuntime)
+			plugins.POST("/:id/workspace/input", middleware.RequirePermission("plugin.execute"), adminPluginHandler.SubmitPluginWorkspaceInput)
+			plugins.POST("/:id/workspace/signal", middleware.RequirePermission("plugin.execute"), adminPluginHandler.SignalPluginWorkspace)
+			plugins.POST("/:id/workspace/reset", middleware.RequirePermission("plugin.execute"), adminPluginHandler.ResetPluginWorkspace)
+			plugins.POST("/:id/workspace/clear", middleware.RequirePermission("plugin.execute"), adminPluginHandler.ClearPluginWorkspace)
+			plugins.GET("/:id/tasks", middleware.RequirePermission("plugin.diagnostics"), adminPluginHandler.GetPluginExecutionTasks)
+			plugins.GET("/:id/tasks/:task_id", middleware.RequirePermission("plugin.diagnostics"), adminPluginHandler.GetPluginExecutionTask)
+			plugins.POST("/:id/tasks/:task_id/cancel", middleware.RequirePermission("plugin.execute"), adminPluginHandler.CancelPluginExecutionTask)
+			plugins.GET("/:id/secrets", middleware.RequirePermission("plugin.view"), adminPluginHandler.GetPluginSecrets)
+			plugins.POST("", middleware.RequirePermission("plugin.edit"), adminPluginHandler.CreatePlugin)
+			plugins.POST("/upload/preview", middleware.RequirePermission("plugin.upload"), adminPluginHandler.PreviewPluginPackage)
+			plugins.POST("/upload", middleware.RequirePermission("plugin.upload"), adminPluginHandler.UploadPluginPackage)
+			plugins.POST("/market/preview", middleware.RequirePermission("market.install"), adminPluginHandler.PreviewPluginMarketInstall)
+			plugins.POST("/market/install", middleware.RequirePermission("market.install"), adminPluginHandler.InstallPluginFromMarket)
+			plugins.GET("/:id", middleware.RequirePermission("plugin.view"), adminPluginHandler.GetPlugin)
+			plugins.PUT("/:id", middleware.RequirePermission("plugin.edit"), adminPluginHandler.UpdatePlugin)
+			plugins.PUT("/:id/secrets", middleware.RequirePermission("plugin.edit"), adminPluginHandler.UpdatePluginSecrets)
+			plugins.DELETE("/:id", middleware.RequirePermission("plugin.edit"), adminPluginHandler.DeletePlugin)
+			plugins.POST("/:id/lifecycle", middleware.RequirePermission("plugin.lifecycle"), adminPluginHandler.HandleLifecycleAction)
+			plugins.POST("/:id/test", middleware.RequirePermission("plugin.execute"), adminPluginHandler.TestPlugin)
+			plugins.POST("/:id/execute", middleware.RequirePermission("plugin.execute"), adminPluginHandler.ExecutePlugin)
+			plugins.POST("/:id/execute/stream", middleware.RequirePermission("plugin.execute"), adminPluginHandler.ExecutePluginStream)
+			plugins.GET("/:id/versions", middleware.RequirePermission("plugin.view"), adminPluginHandler.GetPluginVersions)
+			plugins.DELETE("/:id/versions/:version_id", middleware.RequirePermission("plugin.lifecycle"), adminPluginHandler.DeletePluginVersion)
+			plugins.POST("/:id/versions/:version_id/activate", middleware.RequirePermission("plugin.lifecycle"), adminPluginHandler.ActivatePluginVersion)
+			plugins.GET("/:id/executions", middleware.RequirePermission("plugin.diagnostics"), adminPluginHandler.GetPluginExecutions)
+		}
 	}
 
-	// 静态文件服务（上传的图片）
-	r.Static("/uploads", cfg.Upload.Dir)
+	// 按业务类型分别暴露上传静态资源，避免整个 upload 根目录直出。
+	uploadsGroup := r.Group("/uploads")
+	{
+		productUploadHandler := buildDynamicUploadFileHandler("products", cfg.Upload.Dir)
+		ticketUploadHandler := buildDynamicUploadFileHandler("tickets", cfg.Upload.Dir)
+		uploadsGroup.GET("/products/*filepath", productUploadHandler)
+		uploadsGroup.HEAD("/products/*filepath", productUploadHandler)
+		uploadsGroup.GET("/tickets/*filepath", ticketUploadHandler)
+		uploadsGroup.HEAD("/tickets/*filepath", ticketUploadHandler)
+	}
 
 	// 落地页（公开）
 	r.GET("/", adminLandingPageHandler.ServeLandingPage)
@@ -602,4 +721,75 @@ func SetupRouter(
 	})
 
 	return r
+}
+
+func resolveRateLimit(limitSelector func(*config.Config) int, fallback int) middleware.RateLimitResolver {
+	return func(c *gin.Context) (int, bool) {
+		runtimeCfg := config.GetConfig()
+		if runtimeCfg == nil {
+			return 0, false
+		}
+
+		limit := 0
+		if limitSelector != nil {
+			limit = limitSelector(runtimeCfg)
+		}
+		if limit <= 0 {
+			limit = fallback
+		}
+		return limit, runtimeCfg.RateLimit.Enabled && limit > 0
+	}
+}
+
+func buildDynamicUploadFileHandler(area string, fallbackUploadDir string) gin.HandlerFunc {
+	normalizedArea := strings.TrimSpace(area)
+	return func(c *gin.Context) {
+		runtimeCfg := config.GetConfig()
+		currentUploadDir := "uploads"
+		if runtimeCfg != nil && strings.TrimSpace(runtimeCfg.Upload.Dir) != "" {
+			currentUploadDir = runtimeCfg.Upload.Dir
+		}
+
+		relativePath := strings.TrimPrefix(strings.TrimSpace(c.Param("filepath")), "/")
+		cleanRel := filepath.Clean(filepath.FromSlash(relativePath))
+		if cleanRel == "." || cleanRel == "" || strings.HasPrefix(cleanRel, "..") {
+			c.Status(http.StatusNotFound)
+			return
+		}
+
+		seen := make(map[string]struct{}, 2)
+		uploadDirs := []string{currentUploadDir, fallbackUploadDir}
+		for _, uploadDir := range uploadDirs {
+			trimmedDir := strings.TrimSpace(uploadDir)
+			if trimmedDir == "" {
+				continue
+			}
+			if _, exists := seen[trimmedDir]; exists {
+				continue
+			}
+			seen[trimmedDir] = struct{}{}
+
+			baseDir, err := filepath.Abs(filepath.Join(trimmedDir, normalizedArea))
+			if err != nil {
+				continue
+			}
+			filePath, err := filepath.Abs(filepath.Join(baseDir, cleanRel))
+			if err != nil {
+				continue
+			}
+			if filePath != baseDir && !strings.HasPrefix(filePath, baseDir+string(os.PathSeparator)) {
+				continue
+			}
+
+			info, err := os.Stat(filePath)
+			if err != nil || info.IsDir() {
+				continue
+			}
+
+			c.File(filePath)
+			return
+		}
+
+		c.Status(http.StatusNotFound)
+	}
 }

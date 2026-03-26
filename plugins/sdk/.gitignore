@@ -1,0 +1,4 @@
+dist/
+dist-test/
+node_modules/
+.npm-cache/

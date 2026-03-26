@@ -16,8 +16,10 @@ import (
 type TicketAttachmentCleanupService struct {
 	db            *gorm.DB
 	cfg           *config.Config
+	lifecycleMu   sync.Mutex
+	running       bool
 	stopChan      chan struct{}
-	wg            sync.WaitGroup
+	doneChan      chan struct{}
 	checkInterval time.Duration
 }
 
@@ -26,13 +28,24 @@ func NewTicketAttachmentCleanupService(db *gorm.DB, cfg *config.Config) *TicketA
 	return &TicketAttachmentCleanupService{
 		db:            db,
 		cfg:           cfg,
-		stopChan:      make(chan struct{}),
 		checkInterval: 1 * time.Hour, // 每小时检查一次
 	}
 }
 
 // Start 启动清理服务
 func (s *TicketAttachmentCleanupService) Start() {
+	s.lifecycleMu.Lock()
+	if s.running {
+		s.lifecycleMu.Unlock()
+		return
+	}
+	stopChan := make(chan struct{})
+	doneChan := make(chan struct{})
+	s.stopChan = stopChan
+	s.doneChan = doneChan
+	s.running = true
+	s.lifecycleMu.Unlock()
+
 	retentionDays := 0
 	if s.cfg.Ticket.Attachment != nil {
 		retentionDays = s.cfg.Ticket.Attachment.RetentionDays
@@ -43,20 +56,31 @@ func (s *TicketAttachmentCleanupService) Start() {
 		"check_interval": s.checkInterval.String(),
 	})
 
-	s.wg.Add(1)
-	go s.cleanupLoop()
+	go s.cleanupLoop(stopChan, doneChan)
 }
 
 // Stop 停止清理服务
 func (s *TicketAttachmentCleanupService) Stop() {
+	s.lifecycleMu.Lock()
+	if !s.running {
+		s.lifecycleMu.Unlock()
+		return
+	}
+	stopChan := s.stopChan
+	doneChan := s.doneChan
+	s.stopChan = nil
+	s.doneChan = nil
+	s.running = false
+
 	logger.LogSystemOperation(s.db, "ticket_attachment_cleanup_stop", "system", nil, nil)
-	close(s.stopChan)
-	s.wg.Wait()
+	close(stopChan)
+	<-doneChan
+	s.lifecycleMu.Unlock()
 }
 
 // cleanupLoop 清理循环
-func (s *TicketAttachmentCleanupService) cleanupLoop() {
-	defer s.wg.Done()
+func (s *TicketAttachmentCleanupService) cleanupLoop(stopChan <-chan struct{}, doneChan chan struct{}) {
+	defer close(doneChan)
 
 	// 启动时执行一次
 	s.cleanExpiredAttachments()
@@ -66,7 +90,7 @@ func (s *TicketAttachmentCleanupService) cleanupLoop() {
 
 	for {
 		select {
-		case <-s.stopChan:
+		case <-stopChan:
 			return
 		case <-ticker.C:
 			s.cleanExpiredAttachments()

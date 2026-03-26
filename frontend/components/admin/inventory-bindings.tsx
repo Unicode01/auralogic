@@ -53,9 +53,9 @@ import {
 } from '@/components/ui/alert-dialog'
 import { Plus, Trash2, Link as LinkIcon, Package, Sparkles } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { useToast } from '@/hooks/use-toast'
 import { useLocale } from '@/hooks/use-locale'
-import { getTranslations, translateBizError } from '@/lib/i18n'
+import { getTranslations } from '@/lib/i18n'
+import { resolveApiErrorMessage } from '@/lib/api-error'
 
 interface InventoryBindingsProps {
   productId: number
@@ -66,6 +66,8 @@ export function InventoryBindings({ productId, currentMode }: InventoryBindingsP
   const { locale } = useLocale()
   const t = getTranslations(locale)
   const queryClient = useQueryClient()
+  const getErrorMessage = (error: unknown, fallback: string) =>
+    resolveApiErrorMessage(error, t, fallback)
 
   // 所有状态声明
   const [inventoryMode, setInventoryMode] = useState<'fixed' | 'random'>(currentMode)
@@ -105,12 +107,8 @@ export function InventoryBindings({ productId, currentMode }: InventoryBindingsP
       toast.success(t.admin.updateSuccess)
       queryClient.invalidateQueries({ queryKey: ['adminProduct', productId] })
     },
-    onError: (error: any) => {
-      if (error.code === 40010 && error.data?.error_key) {
-        toast.error(translateBizError(t, error.data.error_key, error.data.params, error.message))
-      } else {
-        toast.error(error.message || t.admin.updateFailed)
-      }
+    onError: (error: unknown) => {
+      toast.error(getErrorMessage(error, t.admin.updateFailed))
     },
   })
 
@@ -124,12 +122,8 @@ export function InventoryBindings({ productId, currentMode }: InventoryBindingsP
       setShowAddDialog(false)
       resetAddForm()
     },
-    onError: (error: any) => {
-      if (error.code === 40010 && error.data?.error_key) {
-        toast.error(translateBizError(t, error.data.error_key, error.data.params, error.message))
-      } else {
-        toast.error(error.message || t.admin.bindingFailed)
-      }
+    onError: (error: unknown) => {
+      toast.error(getErrorMessage(error, t.admin.bindingFailed))
     },
   })
 
@@ -142,12 +136,8 @@ export function InventoryBindings({ productId, currentMode }: InventoryBindingsP
       queryClient.invalidateQueries({ queryKey: ['productBindings', productId] })
       setDeleteBindingId(null)
     },
-    onError: (error: any) => {
-      if (error.code === 40010 && error.data?.error_key) {
-        toast.error(translateBizError(t, error.data.error_key, error.data.params, error.message))
-      } else {
-        toast.error(error.message || t.admin.deleteFailed)
-      }
+    onError: (error: unknown) => {
+      toast.error(getErrorMessage(error, t.admin.deleteFailed))
     },
   })
 
@@ -164,12 +154,8 @@ export function InventoryBindings({ productId, currentMode }: InventoryBindingsP
       toast.success(t.admin.updateSuccess)
       queryClient.invalidateQueries({ queryKey: ['productBindings', productId] })
     },
-    onError: (error: any) => {
-      if (error.code === 40010 && error.data?.error_key) {
-        toast.error(translateBizError(t, error.data.error_key, error.data.params, error.message))
-      } else {
-        toast.error(error.message || t.admin.updateFailed)
-      }
+    onError: (error: unknown) => {
+      toast.error(getErrorMessage(error, t.admin.updateFailed))
     },
   })
 
@@ -211,30 +197,15 @@ export function InventoryBindings({ productId, currentMode }: InventoryBindingsP
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="flex items-center justify-between">
-          <span className="flex items-center gap-2">
-            <LinkIcon className="h-5 w-5" />
-            库存配置
-          </span>
-          <Badge variant={inventoryMode === 'random' ? 'default' : 'secondary'}>
-            {inventoryMode === 'random' ? (
-              <>
-                <Sparkles className="h-3 w-3 mr-1" />
-                盲盒模式
-              </>
-            ) : (
-              <>
-                <Package className="h-3 w-3 mr-1" />
-                固定模式
-              </>
-            )}
-          </Badge>
+        <CardTitle className="flex items-center gap-2">
+          <LinkIcon className="h-5 w-5" />
+          {t.admin.inventoryConfig}
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-6">
         {/* 库存模式选择 */}
         <div className="space-y-2">
-          <Label>库存模式</Label>
+          <Label>{t.admin.inventoryModeLabel}</Label>
           <Select key={selectKey} value={inventoryMode} onValueChange={handleModeChange}>
             <SelectTrigger>
               <SelectValue />
@@ -243,59 +214,59 @@ export function InventoryBindings({ productId, currentMode }: InventoryBindingsP
               <SelectItem value="fixed">
                 <div className="flex items-center gap-2">
                   <Package className="h-4 w-4" />
-                  固定模式 - 用户选择属性
+                  {t.admin.inventoryModeFixedWithDesc}
                 </div>
               </SelectItem>
               <SelectItem value="random">
                 <div className="flex items-center gap-2">
                   <Sparkles className="h-4 w-4" />
-                  盲盒模式 - 系统随机分配
+                  {t.admin.inventoryModeRandomWithDesc}
                 </div>
               </SelectItem>
             </SelectContent>
           </Select>
           <p className="text-sm text-muted-foreground">
             {inventoryMode === 'random'
-              ? '盲盒模式：购买时系统会根据权重随机分配库存属性'
-              : '固定模式：用户选择具体属性，系统匹配对应库存'}
+              ? t.admin.inventoryModeRandomHint
+              : t.admin.inventoryModeFixedHint}
           </p>
         </div>
 
         {/* 总库存统计 */}
         <div className="p-4 bg-muted rounded-lg">
-          <div className="text-sm text-muted-foreground mb-1">总可用库存</div>
+          <div className="text-sm text-muted-foreground mb-1">{t.admin.totalAvailableStock}</div>
           <div className="text-2xl font-bold">{totalStock}</div>
         </div>
 
         {/* 库存绑定列表 */}
         <div className="space-y-3">
           <div className="flex items-center justify-between">
-            <Label>已绑定的库存配置</Label>
+            <Label>{t.admin.boundInventoryConfigs}</Label>
             <Dialog open={showAddDialog} onOpenChange={setShowAddDialog}>
               <DialogTrigger asChild>
                 <Button size="sm" variant="outline">
                   <Plus className="mr-2 h-4 w-4" />
-                  添加库存绑定
+                  {t.admin.addInventoryBinding}
                 </Button>
               </DialogTrigger>
               <DialogContent>
                 <DialogHeader>
-                  <DialogTitle>添加库存绑定</DialogTitle>
+                  <DialogTitle>{t.admin.addInventoryBinding}</DialogTitle>
                   <DialogDescription>
-                    选择一个库存配置并设置绑定参数
+                    {t.admin.addInventoryBindingDesc}
                   </DialogDescription>
                 </DialogHeader>
                 <div className="space-y-4 py-4">
                   <div className="space-y-2">
-                    <Label>库存配置 *</Label>
+                    <Label>{t.admin.inventoryConfigRequired}</Label>
                     <Select value={selectedInventory} onValueChange={setSelectedInventory}>
                       <SelectTrigger>
-                        <SelectValue placeholder="选择库存配置" />
+                        <SelectValue placeholder={t.admin.inventorySelectPlaceholder} />
                       </SelectTrigger>
                       <SelectContent>
                         {inventories.map((inv: any) => (
                           <SelectItem key={inv.id} value={inv.id.toString()}>
-                            {inv.name} (剩余: {inv.stock - inv.sold_quantity - inv.reserved_quantity})
+                            {inv.name} ({t.admin.inventoryRemainingInline.replace('{count}', String(inv.stock - inv.sold_quantity - inv.reserved_quantity))})
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -308,41 +279,41 @@ export function InventoryBindings({ productId, currentMode }: InventoryBindingsP
                       checked={isRandom}
                       onCheckedChange={setIsRandom}
                     />
-                    <Label htmlFor="is_random">参与盲盒随机分配</Label>
+                    <Label htmlFor="is_random">{t.admin.randomAssignEnabledLabel}</Label>
                   </div>
 
                   {isRandom && (
                     <div className="space-y-2">
-                      <Label>权重</Label>
+                      <Label>{t.admin.weight}</Label>
                       <Input
                         type="number"
                         min="1"
                         value={priority}
                         onChange={(e) => setPriority(e.target.value)}
-                        placeholder="权重值（越大概率越高）"
+                        placeholder={t.admin.weightPlaceholder}
                       />
                       <p className="text-xs text-muted-foreground">
-                        权重用于盲盒随机分配，数值越大被抽中的概率越高
+                        {t.admin.weightHint}
                       </p>
                     </div>
                   )}
 
                   <div className="space-y-2">
-                    <Label>备注</Label>
+                    <Label>{t.admin.bindingNotesLabel}</Label>
                     <Textarea
                       value={notes}
                       onChange={(e) => setNotes(e.target.value)}
-                      placeholder="绑定说明（可选）"
+                      placeholder={t.admin.bindingNotesPlaceholder}
                       rows={2}
                     />
                   </div>
                 </div>
                 <DialogFooter>
                   <Button variant="outline" onClick={() => setShowAddDialog(false)}>
-                    取消
+                    {t.common.cancel}
                   </Button>
                   <Button onClick={handleAddBinding} disabled={createMutation.isPending}>
-                    {createMutation.isPending ? '添加中...' : '添加'}
+                    {createMutation.isPending ? t.admin.addBindingPending : t.admin.addInventoryBinding}
                   </Button>
                 </DialogFooter>
               </DialogContent>
@@ -350,21 +321,21 @@ export function InventoryBindings({ productId, currentMode }: InventoryBindingsP
           </div>
 
           {isLoading ? (
-            <div className="text-center py-8 text-muted-foreground">加载中...</div>
+            <div className="text-center py-8 text-muted-foreground">{t.common.loading}</div>
           ) : bindings.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground border-2 border-dashed rounded-lg">
-              暂无绑定的库存配置，请先添加
+              {t.admin.noBoundInventoryConfig}
             </div>
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>库存名称</TableHead>
-                  <TableHead>属性</TableHead>
-                  <TableHead>剩余库存</TableHead>
-                  <TableHead>参与随机</TableHead>
-                  <TableHead>权重</TableHead>
-                  <TableHead>操作</TableHead>
+                  <TableHead>{t.admin.inventoryNameCol}</TableHead>
+                  <TableHead>{t.product.attributes}</TableHead>
+                  <TableHead>{t.admin.remainingStockCol}</TableHead>
+                  <TableHead>{t.admin.randomParticipationCol}</TableHead>
+                  <TableHead>{t.admin.weight}</TableHead>
+                  <TableHead>{t.admin.actions}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -372,10 +343,10 @@ export function InventoryBindings({ productId, currentMode }: InventoryBindingsP
                   <TableRow key={binding.id}>
                     <TableCell>
                       <div>
-                        <div className="font-medium">{binding.inventory?.name || 'N/A'}</div>
+                        <div className="font-medium">{binding.inventory?.name || t.common.noData}</div>
                         {binding.inventory?.sku && (
                           <div className="text-sm text-muted-foreground">
-                            SKU: {binding.inventory.sku}
+                            {t.admin.skuCol}: {binding.inventory.sku}
                           </div>
                         )}
                       </div>
@@ -458,7 +429,7 @@ export function InventoryBindings({ productId, currentMode }: InventoryBindingsP
           <div className="p-4 bg-blue-50 dark:bg-blue-950 border border-blue-200 dark:border-blue-800 rounded-lg">
             <h4 className="font-medium text-blue-900 dark:text-blue-200 mb-2 flex items-center gap-2">
               <Sparkles className="h-4 w-4" />
-              盲盒随机分配规则
+              {t.admin.blindBoxRules}
             </h4>
             <div className="text-sm text-blue-800 dark:text-blue-200 space-y-1">
               {bindings
@@ -473,7 +444,9 @@ export function InventoryBindings({ productId, currentMode }: InventoryBindingsP
                       : '0.0'
                   return (
                     <div key={binding.id}>
-                      • {binding.inventory?.name}: {probability}% 概率
+                      • {t.admin.blindBoxProbabilityLine
+                        .replace('{name}', binding.inventory?.name || t.common.noData)
+                        .replace('{probability}', probability)}
                     </div>
                   )
                 })}
@@ -489,20 +462,20 @@ export function InventoryBindings({ productId, currentMode }: InventoryBindingsP
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>确认删除</AlertDialogTitle>
+            <AlertDialogTitle>{t.admin.confirmDelete}</AlertDialogTitle>
             <AlertDialogDescription>
-              确定要删除这个库存绑定吗？删除后该库存将不再与此商品关联。
+              {t.admin.deleteBindingConfirmDesc}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogCancel>{t.common.cancel}</AlertDialogCancel>
             <AlertDialogAction
               onClick={() =>
                 deleteBindingId && deleteMutation.mutate({ bindingId: deleteBindingId })
               }
               className="bg-red-600 hover:bg-red-700"
             >
-              删除
+              {t.common.delete}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

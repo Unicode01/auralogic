@@ -722,6 +722,54 @@ extract_domain() {
 }
 
 # ---------------------------
+# 管理员初始化引导文件
+# ---------------------------
+write_admin_bootstrap() {
+  local pending="$1"
+  local email="$2"
+  local password="$3"
+  local name="$4"
+
+  mkdir -p "$WORK_DIR/docker-build/bootstrap"
+  rm -f "$WORK_DIR/docker-build/admin.json"
+
+  cat > "$WORK_DIR/docker-build/bootstrap/admin.json" <<EOF
+{
+  "bootstrap_pending": $pending,
+  "super_admin": {
+    "email": "$email",
+    "password": "$password",
+    "name": "$name"
+  }
+}
+EOF
+
+  chmod 600 "$WORK_DIR/docker-build/bootstrap/admin.json" 2>/dev/null || true
+}
+
+prepare_admin_bootstrap_for_update() {
+  local removed=false
+
+  if [ -f "$WORK_DIR/docker-build/admin.json" ]; then
+    rm -f "$WORK_DIR/docker-build/admin.json"
+    removed=true
+  fi
+
+  if [ -f "$WORK_DIR/docker-build/bootstrap/admin.json" ]; then
+    rm -f "$WORK_DIR/docker-build/bootstrap/admin.json"
+    removed=true
+  fi
+
+  mkdir -p "$WORK_DIR/docker-build/bootstrap"
+
+  if [ "$removed" = true ]; then
+    warn "update 前已清理遗留的管理员初始化文件，避免旧凭据再次进入镜像或容器"
+  else
+    info "未检测到待清理的管理员初始化文件"
+  fi
+}
+
+# ---------------------------
 # 生成配置文件
 # ---------------------------
 generate_configs() {
@@ -952,16 +1000,8 @@ generate_configs() {
 }
 EOF
 
-  # 生成 admin.json
-  cat > "$WORK_DIR/docker-build/admin.json" <<EOF
-{
-  "super_admin": {
-    "email": "$ADMIN_EMAIL",
-    "password": "$ADMIN_PASSWORD",
-    "name": "$ADMIN_NAME"
-  }
-}
-EOF
+  # 生成管理员初始化引导文件
+  write_admin_bootstrap true "$ADMIN_EMAIL" "$ADMIN_PASSWORD" "$ADMIN_NAME"
 
   # ---------------------------
   # 前端配置: .env.production
@@ -1096,6 +1136,7 @@ build_docker_image() {
     .
 
   ok "Docker 镜像构建完成: ${IMAGE_NAME}:${IMAGE_TAG}"
+  rm -f "$WORK_DIR/docker-build/admin.json"
 }
 
 # ---------------------------
@@ -1116,6 +1157,7 @@ services:
       - "${EXPOSE_PORT}:80"
     volumes:
       - ./docker-build/config.json:/app/backend/config/config.json
+      - ./docker-build/bootstrap:/app/backend/bootstrap
       - ./docker-build/templates:/app/backend/templates
       - auralogic_data:/app/backend/data
       - auralogic_logs:/app/backend/logs
@@ -1140,6 +1182,7 @@ services:
       - "${EXPOSE_PORT}:80"
     volumes:
       - ./docker-build/config.json:/app/backend/config/config.json
+      - ./docker-build/bootstrap:/app/backend/bootstrap
       - ./docker-build/templates:/app/backend/templates
       - auralogic_logs:/app/backend/logs
       - auralogic_uploads:/app/backend/uploads
@@ -1186,6 +1229,7 @@ services:
       - "${EXPOSE_PORT}:80"
     volumes:
       - ./docker-build/config.json:/app/backend/config/config.json
+      - ./docker-build/bootstrap:/app/backend/bootstrap
       - ./docker-build/templates:/app/backend/templates
       - auralogic_logs:/app/backend/logs
       - auralogic_uploads:/app/backend/uploads
@@ -1229,6 +1273,35 @@ EOF
 }
 
 # ---------------------------
+# 容器/卷探测辅助
+# ---------------------------
+get_container_volume_name() {
+  local container_name="$1"
+  local destination="$2"
+
+  docker inspect "$container_name" \
+    --format "{{range .Mounts}}{{if and (eq .Type \"volume\") (eq .Destination \"$destination\")}}{{.Name}}{{println}}{{end}}{{end}}" \
+    2>/dev/null | head -1
+}
+
+volume_has_compose_label() {
+  local volume_name="$1"
+
+  if [ -z "$volume_name" ]; then
+    return 1
+  fi
+
+  local compose_project
+  compose_project=$(docker volume inspect "$volume_name" --format '{{index .Labels "com.docker.compose.project"}}' 2>/dev/null || true)
+  [ -n "$compose_project" ] && [ "$compose_project" != "<no value>" ]
+}
+
+find_compose_volume_by_logical_name() {
+  local logical_name="$1"
+  docker volume ls --filter "label=com.docker.compose.volume=${logical_name}" --format '{{.Name}}' | head -1
+}
+
+# ---------------------------
 # 更新本地容器 (跳过交互配置，复用上次构建)
 # ---------------------------
 update_container() {
@@ -1262,6 +1335,8 @@ update_container() {
     info "已取消"
     exit 0
   fi
+
+  prepare_admin_bootstrap_for_update
 
   # 可选: 覆盖邮件模板文件
   if [ -d "$PROJECT_ROOT/backend/templates" ]; then
@@ -1361,12 +1436,35 @@ NEXTEOF
     .
 
   ok "镜像构建完成: ${IMAGE_NAME}:${IMAGE_TAG}"
+  rm -f "$WORK_DIR/docker-build/admin.json"
 
   # 更新并重启容器
   step "更新容器"
 
-  # 先停止并移除旧容器（避免容器名冲突）
+  local has_existing_container=false
+  local data_volume="auralogic_data"
+  local logs_volume="auralogic_logs"
+  local uploads_volume="auralogic_uploads"
+  local redis_volume="redis_data"
+  local volume_source_note=""
+
   if docker ps -aq -f name='^auralogic$' | grep -q .; then
+    has_existing_container=true
+    data_volume="$(get_container_volume_name auralogic /app/backend/data)"
+    logs_volume="$(get_container_volume_name auralogic /app/backend/logs)"
+    uploads_volume="$(get_container_volume_name auralogic /app/backend/uploads)"
+    redis_volume="$(get_container_volume_name auralogic /var/lib/redis)"
+
+    data_volume="${data_volume:-auralogic_data}"
+    logs_volume="${logs_volume:-auralogic_logs}"
+    uploads_volume="${uploads_volume:-auralogic_uploads}"
+    redis_volume="${redis_volume:-redis_data}"
+
+    volume_source_note="当前容器"
+  fi
+
+  # 先停止并移除旧容器（避免容器名冲突）
+  if [ "$has_existing_container" = true ]; then
     info "停止并移除旧容器..."
     docker stop auralogic 2>/dev/null || true
     docker rm auralogic 2>/dev/null || true
@@ -1382,6 +1480,12 @@ NEXTEOF
     # 移除 config.json 挂载的 :ro 标志（如有）
     sed -i 's|:/app/backend/config/config.json:ro|:/app/backend/config/config.json|g' "$WORK_DIR/docker-compose.yml"
 
+    # 如果 compose 文件中没有 bootstrap 挂载，自动添加
+    if ! grep -q 'docker-build/bootstrap:/app/backend/bootstrap' "$WORK_DIR/docker-compose.yml"; then
+      sed -i '/docker-build\/config.json:\/app\/backend\/config\/config.json/a\      - ./docker-build/bootstrap:/app/backend/bootstrap' "$WORK_DIR/docker-compose.yml"
+      info "已为 docker-compose.yml 添加管理员 bootstrap 挂载"
+    fi
+
     # 如果 compose 文件中没有模板挂载，自动添加
     if ! grep -q 'docker-build/templates:/app/backend/templates' "$WORK_DIR/docker-compose.yml"; then
       sed -i '/docker-build\/config.json:\/app\/backend\/config\/config.json/a\      - ./docker-build/templates:/app/backend/templates' "$WORK_DIR/docker-compose.yml"
@@ -1392,26 +1496,52 @@ NEXTEOF
     docker compose up -d --force-recreate
     ok "容器已通过 docker compose 更新"
   else
-    # 无 compose 文件，直接操作容器
-    local container_id
-    container_id=$(docker ps -aq -f name='^auralogic$')
+    # 无 compose 文件时，优先复用当前容器卷，避免意外切到新卷。
+    if [ "$has_existing_container" = true ]; then
+      warn "未找到 docker-compose.yml，将复用当前容器的数据卷继续更新，避免切换到空卷"
+      if volume_has_compose_label "$data_volume" || volume_has_compose_label "$logs_volume" || volume_has_compose_label "$uploads_volume" || volume_has_compose_label "$redis_volume"; then
+        warn "检测到当前容器使用的是 docker compose 管理卷，建议尽快恢复 docker-compose.yml，避免后续运维混用启动方式"
+      fi
+      info "数据卷: ${data_volume}"
+      info "日志卷: ${logs_volume}"
+      info "上传卷: ${uploads_volume}"
+      info "Redis 卷: ${redis_volume}"
+    else
+      local compose_data_volume
+      local compose_logs_volume
+      local compose_uploads_volume
+      local compose_redis_volume
 
-    if [ -n "$container_id" ]; then
-      info "停止并移除旧容器..."
-      docker stop auralogic 2>/dev/null || true
-      docker rm auralogic 2>/dev/null || true
+      compose_data_volume="$(find_compose_volume_by_logical_name auralogic_data)"
+      compose_logs_volume="$(find_compose_volume_by_logical_name auralogic_logs)"
+      compose_uploads_volume="$(find_compose_volume_by_logical_name auralogic_uploads)"
+      compose_redis_volume="$(find_compose_volume_by_logical_name redis_data)"
+
+      if [ -n "$compose_data_volume" ] || [ -n "$compose_logs_volume" ] || [ -n "$compose_uploads_volume" ] || [ -n "$compose_redis_volume" ]; then
+        err "检测到 docker compose 管理的数据卷，但当前目录缺少 docker-compose.yml，已停止更新以避免切换到新空卷"
+        err "请恢复 docker-compose.yml 后重试，或手动确认要使用的卷名"
+        exit 1
+      fi
+
+      warn "未找到 docker-compose.yml，也未检测到运行中的 auralogic 容器，将按默认卷名启动"
+      volume_source_note="默认卷名"
     fi
 
-    info "启动新容器..."
+    if [ -z "$volume_source_note" ]; then
+      volume_source_note="默认卷名"
+    fi
+
+    info "启动新容器... (${volume_source_note})"
     docker run -d \
       -p "${EXPOSE_PORT}:80" \
       --name auralogic \
       -v "$WORK_DIR/docker-build/config.json:/app/backend/config/config.json" \
+      -v "$WORK_DIR/docker-build/bootstrap:/app/backend/bootstrap" \
       -v "$WORK_DIR/docker-build/templates:/app/backend/templates" \
-      -v auralogic_data:/app/backend/data \
-      -v auralogic_logs:/app/backend/logs \
-      -v auralogic_uploads:/app/backend/uploads \
-      -v redis_data:/var/lib/redis \
+      -v "${data_volume}:/app/backend/data" \
+      -v "${logs_volume}:/app/backend/logs" \
+      -v "${uploads_volume}:/app/backend/uploads" \
+      -v "${redis_volume}:/var/lib/redis" \
       "${IMAGE_NAME}:${IMAGE_TAG}"
     ok "容器已启动"
   fi
@@ -1458,11 +1588,7 @@ summary() {
   echo ""
   echo "启动服务:"
   echo "  cd $WORK_DIR"
-  if [ "$DB_DRIVER" = "sqlite" ]; then
-    echo "  docker run -d -p ${EXPOSE_PORT}:80 --name auralogic ${IMAGE_NAME}:${IMAGE_TAG}"
-  else
-    echo "  docker compose up -d"
-  fi
+  echo "  docker compose up -d"
   echo ""
   echo "访问应用:"
   echo "  $APP_URL"
@@ -1474,7 +1600,7 @@ summary() {
   echo "=========================================="
   echo -e "${YELLOW}⚠️  重要提示:${NC}"
   echo "  1. 首次启动会自动初始化数据库和管理员账号"
-  echo "  2. 请妥善保管配置文件和管理员密码"
+  echo "  2. docker-build/bootstrap/admin.json 会在首次启动成功后自动删除"
   echo "  3. 生产环境建议配置 HTTPS 反向代理"
   if [ "$DB_DRIVER" != "sqlite" ]; then
     echo "  4. 确保 PostgreSQL/MySQL 服务正常运行"

@@ -11,20 +11,23 @@ import (
 	"time"
 
 	"auralogic/internal/config"
+	"auralogic/internal/middleware"
 	"auralogic/internal/models"
 	"auralogic/internal/pkg/response"
 	"auralogic/internal/pkg/utils"
+	"auralogic/internal/service"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
 
 type LandingPageHandler struct {
-	db  *gorm.DB
-	cfg *config.Config
+	db            *gorm.DB
+	cfg           *config.Config
+	pluginManager *service.PluginManagerService
 }
 
-func NewLandingPageHandler(db *gorm.DB, cfg *config.Config) *LandingPageHandler {
-	return &LandingPageHandler{db: db, cfg: cfg}
+func NewLandingPageHandler(db *gorm.DB, cfg *config.Config, pluginManager *service.PluginManagerService) *LandingPageHandler {
+	return &LandingPageHandler{db: db, cfg: cfg, pluginManager: pluginManager}
 }
 
 func matchPageRule(pagePath string, rule config.PageRule) bool {
@@ -173,6 +176,40 @@ func (h *LandingPageHandler) UpdateLandingPage(c *gin.Context) {
 		response.BadRequest(c, "html_content is required")
 		return
 	}
+	adminID := middleware.MustGetUserID(c)
+	if h.pluginManager != nil {
+		hookPayload := map[string]interface{}{
+			"slug":         "home",
+			"html_content": req.HTMLContent,
+			"admin_id":     adminID,
+			"source":       "admin_api",
+		}
+		hookResult, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+			Hook:    "landing_page.update.before",
+			Payload: hookPayload,
+		}, buildAdminHookExecutionContext(c, &adminID, map[string]string{
+			"hook_resource": "landing_page",
+			"hook_source":   "admin_api",
+			"page_slug":     "home",
+		}))
+		if hookErr != nil {
+			log.Printf("landing_page.update.before hook execution failed: admin=%d err=%v", adminID, hookErr)
+		} else if hookResult != nil {
+			if hookResult.Blocked {
+				reason := strings.TrimSpace(hookResult.BlockReason)
+				if reason == "" {
+					reason = "Landing page update rejected by plugin"
+				}
+				response.BadRequest(c, reason)
+				return
+			}
+			if hookResult.Payload != nil {
+				if value, exists := hookResult.Payload["html_content"]; exists {
+					req.HTMLContent = parseStringFromAny(value)
+				}
+			}
+		}
+	}
 
 	// 验证 HTML 可被 Go template 解析
 	if _, err := template.New("validate").Parse(req.HTMLContent); err != nil {
@@ -180,14 +217,14 @@ func (h *LandingPageHandler) UpdateLandingPage(c *gin.Context) {
 		return
 	}
 
-	// 获取当前用户 ID
-	userID, _ := c.Get("userID")
-	uid, _ := userID.(uint)
+	uid := adminID
 
 	var page models.LandingPage
+	created := false
 	err := h.db.Where("slug = ?", "home").First(&page).Error
 	if err != nil {
 		// 不存在则创建
+		created = true
 		page = models.LandingPage{
 			Slug:        "home",
 			HTMLContent: req.HTMLContent,
@@ -220,6 +257,32 @@ func (h *LandingPageHandler) UpdateLandingPage(c *gin.Context) {
 		}
 		h.db.Create(&opLog)
 	}()
+	if h.pluginManager != nil {
+		afterPayload := map[string]interface{}{
+			"page_id":        page.ID,
+			"slug":           page.Slug,
+			"html_content":   page.HTMLContent,
+			"content_length": len(page.HTMLContent),
+			"is_active":      page.IsActive,
+			"updated_by":     uid,
+			"created":        created,
+			"admin_id":       adminID,
+			"source":         "admin_api",
+		}
+		go func(execCtx *service.ExecutionContext, payload map[string]interface{}, pageID uint) {
+			_, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+				Hook:    "landing_page.update.after",
+				Payload: payload,
+			}, execCtx)
+			if hookErr != nil {
+				log.Printf("landing_page.update.after hook execution failed: admin=%d page=%d err=%v", adminID, pageID, hookErr)
+			}
+		}(cloneAdminHookExecutionContext(buildAdminHookExecutionContext(c, &adminID, map[string]string{
+			"hook_resource": "landing_page",
+			"hook_source":   "admin_api",
+			"page_slug":     "home",
+		})), afterPayload, page.ID)
+	}
 
 	response.Success(c, page)
 }
@@ -228,12 +291,48 @@ func (h *LandingPageHandler) UpdateLandingPage(c *gin.Context) {
 func (h *LandingPageHandler) ResetLandingPage(c *gin.Context) {
 	defaultHTML := DefaultLandingPageHTML
 
-	userID, _ := c.Get("userID")
-	uid, _ := userID.(uint)
+	adminID := middleware.MustGetUserID(c)
+	if h.pluginManager != nil {
+		hookPayload := map[string]interface{}{
+			"slug":         "home",
+			"html_content": defaultHTML,
+			"admin_id":     adminID,
+			"source":       "admin_api",
+		}
+		hookResult, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+			Hook:    "landing_page.reset.before",
+			Payload: hookPayload,
+		}, buildAdminHookExecutionContext(c, &adminID, map[string]string{
+			"hook_resource": "landing_page",
+			"hook_source":   "admin_api",
+			"page_slug":     "home",
+		}))
+		if hookErr != nil {
+			log.Printf("landing_page.reset.before hook execution failed: admin=%d err=%v", adminID, hookErr)
+		} else if hookResult != nil {
+			if hookResult.Blocked {
+				reason := strings.TrimSpace(hookResult.BlockReason)
+				if reason == "" {
+					reason = "Landing page reset rejected by plugin"
+				}
+				response.BadRequest(c, reason)
+				return
+			}
+			if hookResult.Payload != nil {
+				if value, exists := hookResult.Payload["html_content"]; exists {
+					defaultHTML = parseStringFromAny(value)
+				}
+			}
+		}
+	}
+
+	uid := adminID
 
 	var page models.LandingPage
+	created := false
 	err := h.db.Where("slug = ?", "home").First(&page).Error
 	if err != nil {
+		created = true
 		page = models.LandingPage{
 			Slug:        "home",
 			HTMLContent: defaultHTML,
@@ -265,6 +364,32 @@ func (h *LandingPageHandler) ResetLandingPage(c *gin.Context) {
 		}
 		h.db.Create(&opLog)
 	}()
+	if h.pluginManager != nil {
+		afterPayload := map[string]interface{}{
+			"page_id":        page.ID,
+			"slug":           page.Slug,
+			"html_content":   page.HTMLContent,
+			"content_length": len(page.HTMLContent),
+			"is_active":      page.IsActive,
+			"updated_by":     uid,
+			"created":        created,
+			"admin_id":       adminID,
+			"source":         "admin_api",
+		}
+		go func(execCtx *service.ExecutionContext, payload map[string]interface{}, pageID uint) {
+			_, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+				Hook:    "landing_page.reset.after",
+				Payload: payload,
+			}, execCtx)
+			if hookErr != nil {
+				log.Printf("landing_page.reset.after hook execution failed: admin=%d page=%d err=%v", adminID, pageID, hookErr)
+			}
+		}(cloneAdminHookExecutionContext(buildAdminHookExecutionContext(c, &adminID, map[string]string{
+			"hook_resource": "landing_page",
+			"hook_source":   "admin_api",
+			"page_slug":     "home",
+		})), afterPayload, page.ID)
+	}
 
 	response.Success(c, page)
 }

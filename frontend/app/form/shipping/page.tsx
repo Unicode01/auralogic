@@ -1,26 +1,28 @@
 'use client'
 
-import { Suspense, useEffect, useState } from 'react'
-import { useSearchParams, useRouter } from 'next/navigation'
+import { Suspense, useCallback, useEffect, useState } from 'react'
+import { useSearchParams } from 'next/navigation'
 import { getFormInfo } from '@/lib/api'
 import { ShippingForm } from '@/components/forms/shipping-form'
 import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Globe } from 'lucide-react'
 import { useLocale } from '@/hooks/use-locale'
 import { getTranslations } from '@/lib/i18n'
 import { PageLoading } from '@/components/ui/page-loading'
 import { usePageTitle } from '@/hooks/use-page-title'
+import { PluginSlot } from '@/components/plugins/plugin-slot'
 import { getToken } from '@/lib/auth'
 
 function ShippingFormContent() {
   const searchParams = useSearchParams()
-  const router = useRouter()
   const { locale } = useLocale()
   const t = getTranslations(locale)
   usePageTitle(t.pageTitle.shippingForm)
   const token = searchParams.get('token')
   const [formData, setFormData] = useState<any>(null)
-  const [error, setError] = useState('')
+  const [errorType, setErrorType] = useState<'missingToken' | 'loadFailed' | null>(null)
+  const [errorDetail, setErrorDetail] = useState('')
   const [isLoading, setIsLoading] = useState(true)
 
   // 初始化语言状态（只在首次渲染时执行）
@@ -31,45 +33,59 @@ function ShippingFormContent() {
     }
     return 'zh' // 客户端也先用默认值，在 useEffect 中再更新
   })
+  const activeLocale = lang === 'en' ? 'en' : 'zh'
+  const activeT = getTranslations(activeLocale)
 
   // 初始化语言：从 URL 读取或自动检测（只在组件挂载时执行一次）
   useEffect(() => {
     const urlLang = searchParams.get('lang')
+    let nextLang: 'zh' | 'en'
     if (urlLang && (urlLang === 'zh' || urlLang === 'en')) {
-      setLang(urlLang)
+      nextLang = urlLang
     } else if (typeof window !== 'undefined') {
       // 优先读取用户已保存的语言偏好，其次检测浏览器语言
       const storedLocale = localStorage.getItem('auralogic_locale')
-      let detectedLang: string
       if (storedLocale === 'zh' || storedLocale === 'en') {
-        detectedLang = storedLocale
+        nextLang = storedLocale
       } else {
         const browserLang = navigator.language.toLowerCase()
-        detectedLang = browserLang.startsWith('zh') ? 'zh' : 'en'
+        nextLang = browserLang.startsWith('zh') ? 'zh' : 'en'
       }
-      // 更新 URL 并刷新页面
-      const url = new URL(window.location.href)
-      url.searchParams.set('lang', detectedLang)
-      window.location.href = url.toString()
+    } else {
+      nextLang = 'zh'
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []) // 只在挂载时执行一次，忽略依赖检查
 
-  // 切换语言 - 使用页面刷新确保状态一致性
+    setLang(nextLang)
+
+    if (typeof window !== 'undefined') {
+      const url = new URL(window.location.href)
+      if (url.searchParams.get('lang') !== nextLang) {
+        url.searchParams.set('lang', nextLang)
+        window.history.replaceState({}, '', url.toString())
+      }
+    }
+  }, [searchParams])
+
   const toggleLanguage = () => {
     const newLang = lang === 'zh' ? 'en' : 'zh'
+    setLang(newLang)
     const url = new URL(window.location.href)
     url.searchParams.set('lang', newLang)
-    // 使用 window.location.href 触发页面刷新
-    window.location.href = url.toString()
+    window.history.replaceState({}, '', url.toString())
   }
 
-  useEffect(() => {
+  const loadFormInfo = useCallback(() => {
     if (!token) {
-      setError(lang === 'zh' ? '缺少表单令牌' : 'Missing form token')
+      setFormData(null)
+      setErrorType('missingToken')
+      setErrorDetail('')
       setIsLoading(false)
       return
     }
+
+    setIsLoading(true)
+    setErrorType(null)
+    setErrorDetail('')
 
     getFormInfo(token)
       .then((res) => {
@@ -77,24 +93,92 @@ function ShippingFormContent() {
         setIsLoading(false)
       })
       .catch((err) => {
-        setError(err.message || (lang === 'zh' ? '表单加载失败' : 'Failed to load form'))
+        setFormData(null)
+        setErrorType('loadFailed')
+        setErrorDetail(err?.message || '')
         setIsLoading(false)
       })
-  }, [token]) // 移除 lang 依赖，避免切换语言时重新加载数据
+  }, [token])
+
+  useEffect(() => {
+    loadFormInfo()
+  }, [loadFormInfo])
+  const hasAuthToken = typeof window !== 'undefined' && !!getToken()
+  const publicShippingFormPluginContext = {
+    view: 'public_shipping_form',
+    locale: activeLocale,
+    shipping_form: {
+      token_present: Boolean(token),
+      is_loading: isLoading,
+      error_type: errorType || undefined,
+      has_form_data: Boolean(formData),
+      hide_password: hasAuthToken,
+    },
+    order: formData
+      ? {
+          order_no: formData.orderNo || formData.order_no || undefined,
+          item_count: Array.isArray(formData.items) ? formData.items.length : 0,
+        }
+      : undefined,
+    state: {
+      loading: isLoading,
+      load_failed: Boolean(errorType),
+      missing_token: errorType === 'missingToken',
+      ready: !isLoading && !errorType && Boolean(formData),
+    },
+  }
 
   if (isLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <PageLoading text={lang === 'zh' ? '加载中...' : 'Loading...'} />
+      <div className="flex min-h-screen items-center justify-center px-4">
+        <div className="w-full max-w-md space-y-4">
+          <PluginSlot slot="public.shipping_form.top" context={publicShippingFormPluginContext} />
+          <div className="flex justify-center">
+            <PageLoading text={activeT.common.loading} />
+          </div>
+          <PluginSlot
+            slot="public.shipping_form.bottom"
+            context={publicShippingFormPluginContext}
+          />
+        </div>
       </div>
     )
   }
 
-  if (error) {
+  const errorMessage =
+    errorType === 'missingToken'
+      ? activeT.shippingPublic.missingFormToken
+      : errorDetail || activeT.shippingPublic.formLoadFailed
+
+  if (errorType) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-center">
-          <p className="text-red-600">{error}</p>
+      <div className="flex min-h-screen items-center justify-center px-4">
+        <div className="w-full max-w-md space-y-4">
+          <PluginSlot slot="public.shipping_form.top" context={publicShippingFormPluginContext} />
+          <Card>
+            <CardHeader>
+              <CardTitle>{activeT.common.error}</CardTitle>
+              <CardDescription>{activeT.shippingPublic.formLoadFailed}</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <p className="rounded-lg border border-destructive/20 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+                {errorMessage}
+              </p>
+              {token && (
+                <Button variant="outline" className="w-full" onClick={loadFormInfo}>
+                  {activeT.common.refresh}
+                </Button>
+              )}
+            </CardContent>
+          </Card>
+          <PluginSlot
+            slot="public.shipping_form.load_failed"
+            context={{ ...publicShippingFormPluginContext, section: 'form_state' }}
+          />
+          <PluginSlot
+            slot="public.shipping_form.bottom"
+            context={publicShippingFormPluginContext}
+          />
         </div>
       </div>
     )
@@ -105,32 +189,51 @@ function ShippingFormContent() {
   }
 
   return (
-    <div className="min-h-screen bg-muted/50 py-12 relative">
+    <div className="relative min-h-screen bg-muted/50 py-12">
+      <div className="mx-auto flex max-w-5xl flex-col gap-6 px-4">
+        <PluginSlot slot="public.shipping_form.top" context={publicShippingFormPluginContext} />
+      </div>
+
       {/* 悬浮的语言切换按钮 */}
       <Button
         variant="outline"
         size="sm"
         onClick={toggleLanguage}
-        className="fixed top-4 right-4 z-50 gap-2 shadow-lg hover:shadow-xl transition-shadow bg-background"
+        className="fixed right-4 top-4 z-50 gap-2 bg-background shadow-lg transition-shadow hover:shadow-xl"
       >
         <Globe className="h-4 w-4" />
-        {lang === 'zh' ? 'English' : '中文'}
+        {lang === 'zh' ? activeT.language.en : activeT.language.zh}
       </Button>
 
-      <ShippingForm formToken={token!} orderInfo={formData} lang={lang} hidePassword={typeof window !== 'undefined' && !!getToken()} />
+      <ShippingForm
+        formToken={token!}
+        orderInfo={formData}
+        lang={lang}
+        hidePassword={hasAuthToken}
+        pluginSlotNamespace="public.shipping_form"
+        pluginSlotContext={publicShippingFormPluginContext}
+      />
+
+      <div className="mx-auto flex max-w-5xl flex-col gap-6 px-4">
+        <PluginSlot
+          slot="public.shipping_form.bottom"
+          context={publicShippingFormPluginContext}
+        />
+      </div>
     </div>
   )
 }
 
 export default function ShippingFormPage() {
   return (
-    <Suspense fallback={
-      <div className="min-h-screen flex items-center justify-center">
-        <PageLoading />
-      </div>
-    }>
+    <Suspense
+      fallback={
+        <div className="flex min-h-screen items-center justify-center">
+          <PageLoading />
+        </div>
+      }
+    >
       <ShippingFormContent />
     </Suspense>
   )
 }
-

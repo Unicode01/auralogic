@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
+	"log"
 	"strconv"
 	"strings"
 	"time"
@@ -27,14 +28,22 @@ type OrderHandler struct {
 	orderService            *service.OrderService
 	bindingService          *service.BindingService
 	virtualInventoryService *service.VirtualInventoryService
+	pluginManager           *service.PluginManagerService
 	cfg                     *config.Config
 }
 
-func NewOrderHandler(orderService *service.OrderService, bindingService *service.BindingService, virtualInventoryService *service.VirtualInventoryService, cfg *config.Config) *OrderHandler {
+func NewOrderHandler(
+	orderService *service.OrderService,
+	bindingService *service.BindingService,
+	virtualInventoryService *service.VirtualInventoryService,
+	pluginManager *service.PluginManagerService,
+	cfg *config.Config,
+) *OrderHandler {
 	return &OrderHandler{
 		orderService:            orderService,
 		bindingService:          bindingService,
 		virtualInventoryService: virtualInventoryService,
+		pluginManager:           pluginManager,
 		cfg:                     cfg,
 	}
 }
@@ -56,24 +65,47 @@ func (h *OrderHandler) CreateOrder(c *gin.Context) {
 		return
 	}
 
-	// Validate product items
-	if len(req.Items) == 0 {
-		response.BadRequest(c, "Order items cannot be empty")
+	if validationMessage := normalizeCreateOrderRequest(&req); validationMessage != "" {
+		response.BadRequest(c, validationMessage)
 		return
 	}
 
-	// 清理备注（最大500个字符）
-	req.Remark = validator.SanitizeText(req.Remark)
-	if !validator.ValidateLength(req.Remark, 0, 500) {
-		response.BadRequest(c, "Order remark length cannot exceed 500 characters")
-		return
-	}
+	hookExecCtx := h.buildOrderHookExecutionContext(c, userID)
+	if h.pluginManager != nil {
+		originalReq := req
+		hookResult, err := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+			Hook: "order.create.before",
+			Payload: map[string]interface{}{
+				"user_id":    userID,
+				"items":      req.Items,
+				"remark":     req.Remark,
+				"promo_code": req.PromoCode,
+				"source":     "user_api",
+			},
+		}, hookExecCtx)
+		if err != nil {
+			// 插件异常不影响主流程，仅记录日志
+			log.Printf("order.create.before hook execution failed: user=%d err=%v", userID, err)
+		} else if hookResult != nil {
+			if hookResult.Blocked {
+				reason := strings.TrimSpace(hookResult.BlockReason)
+				if reason == "" {
+					reason = "Order request rejected by plugin"
+				}
+				response.BadRequest(c, reason)
+				return
+			}
 
-	// 清理优惠码
-	req.PromoCode = validator.SanitizeInput(req.PromoCode)
-	if !validator.ValidateLength(req.PromoCode, 0, 50) {
-		response.BadRequest(c, "Promo code length cannot exceed 50 characters")
-		return
+			if hookResult.Payload != nil {
+				if err := applyCreateOrderHookPayload(&req, hookResult.Payload); err != nil {
+					log.Printf("order.create.before returned invalid payload, fallback to original request: user=%d err=%v", userID, err)
+					req = originalReq
+				} else if validationMessage := normalizeCreateOrderRequest(&req); validationMessage != "" {
+					log.Printf("order.create.before returned payload not passing validation (%s), fallback to original request: user=%d", validationMessage, userID)
+					req = originalReq
+				}
+			}
+		}
 	}
 
 	// Create order draft (internal user)
@@ -88,12 +120,170 @@ func (h *OrderHandler) CreateOrder(c *gin.Context) {
 		return
 	}
 
+	if h.pluginManager != nil {
+		afterExecCtx := cloneExecutionContext(hookExecCtx)
+		afterPayload := map[string]interface{}{
+			"user_id":       userID,
+			"order_id":      order.ID,
+			"order_no":      order.OrderNo,
+			"status":        order.Status,
+			"items":         order.Items,
+			"remark":        order.Remark,
+			"promo_code":    order.PromoCodeStr,
+			"total_amount":  order.TotalAmount,
+			"currency":      order.Currency,
+			"source":        "user_api",
+			"created_at":    order.CreatedAt.Format(time.RFC3339),
+			"request_items": req.Items,
+		}
+		go func(execCtx *service.ExecutionContext, payload map[string]interface{}, uid uint) {
+			_, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+				Hook:    "order.create.after",
+				Payload: payload,
+			}, execCtx)
+			if hookErr != nil {
+				log.Printf("order.create.after hook execution failed: user=%d order=%v err=%v", uid, payload["order_no"], hookErr)
+			}
+		}(afterExecCtx, afterPayload, userID)
+	}
+
 	response.Success(c, gin.H{
 		"order_id":   order.ID,
 		"order_no":   order.OrderNo,
 		"status":     order.Status,
 		"created_at": order.CreatedAt,
 	})
+}
+
+func normalizeCreateOrderRequest(req *CreateOrderRequest) string {
+	if req == nil {
+		return "Invalid request parameters"
+	}
+
+	// Validate product items
+	if len(req.Items) == 0 {
+		return "Order items cannot be empty"
+	}
+
+	// 清理备注（最大500个字符）
+	req.Remark = validator.SanitizeText(req.Remark)
+	if !validator.ValidateLength(req.Remark, 0, 500) {
+		return "Order remark length cannot exceed 500 characters"
+	}
+
+	// 清理优惠码
+	req.PromoCode = validator.SanitizeInput(req.PromoCode)
+	if !validator.ValidateLength(req.PromoCode, 0, 50) {
+		return "Promo code length cannot exceed 50 characters"
+	}
+
+	return ""
+}
+
+func (h *OrderHandler) buildOrderHookExecutionContext(c *gin.Context, userID uint) *service.ExecutionContext {
+	if c == nil {
+		return nil
+	}
+
+	metadata := map[string]string{
+		"request_path":    c.Request.URL.Path,
+		"route":           c.FullPath(),
+		"method":          c.Request.Method,
+		"client_ip":       c.ClientIP(),
+		"user_agent":      c.GetHeader("User-Agent"),
+		"accept_language": c.GetHeader("Accept-Language"),
+	}
+	sessionID := strings.TrimSpace(c.GetHeader("X-Session-ID"))
+	return &service.ExecutionContext{
+		UserID:         &userID,
+		SessionID:      sessionID,
+		Metadata:       metadata,
+		RequestContext: c.Request.Context(),
+	}
+}
+
+func cloneExecutionContext(execCtx *service.ExecutionContext) *service.ExecutionContext {
+	if execCtx == nil {
+		return nil
+	}
+
+	cloned := &service.ExecutionContext{
+		SessionID:      execCtx.SessionID,
+		RequestContext: execCtx.RequestContext,
+	}
+	if execCtx.UserID != nil {
+		userID := *execCtx.UserID
+		cloned.UserID = &userID
+	}
+	if execCtx.OrderID != nil {
+		orderID := *execCtx.OrderID
+		cloned.OrderID = &orderID
+	}
+	if len(execCtx.Metadata) > 0 {
+		cloned.Metadata = make(map[string]string, len(execCtx.Metadata))
+		for key, value := range execCtx.Metadata {
+			cloned.Metadata[key] = value
+		}
+	}
+	return cloned
+}
+
+func applyCreateOrderHookPayload(req *CreateOrderRequest, payload map[string]interface{}) error {
+	if req == nil || payload == nil {
+		return nil
+	}
+
+	if rawItems, exists := payload["items"]; exists {
+		items, err := decodeHookOrderItems(rawItems)
+		if err != nil {
+			return fmt.Errorf("decode items: %w", err)
+		}
+		req.Items = items
+	}
+
+	if rawRemark, exists := payload["remark"]; exists {
+		remark, err := valueToOptionalString(rawRemark)
+		if err != nil {
+			return fmt.Errorf("decode remark: %w", err)
+		}
+		req.Remark = remark
+	}
+
+	if rawPromoCode, exists := payload["promo_code"]; exists {
+		promoCode, err := valueToOptionalString(rawPromoCode)
+		if err != nil {
+			return fmt.Errorf("decode promo_code: %w", err)
+		}
+		req.PromoCode = promoCode
+	}
+
+	return nil
+}
+
+func decodeHookOrderItems(value interface{}) ([]models.OrderItem, error) {
+	if value == nil {
+		return []models.OrderItem{}, nil
+	}
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	var items []models.OrderItem
+	if err := json.Unmarshal(raw, &items); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+func valueToOptionalString(value interface{}) (string, error) {
+	if value == nil {
+		return "", nil
+	}
+	str, ok := value.(string)
+	if !ok {
+		return "", fmt.Errorf("value must be string")
+	}
+	return str, nil
 }
 
 // ListOrders - Get my order list
@@ -266,6 +456,44 @@ func (h *OrderHandler) CompleteOrder(c *gin.Context) {
 		response.Forbidden(c, "No permission to operate this order")
 		return
 	}
+	beforeStatus := order.Status
+	hookExecCtx := h.buildOrderHookExecutionContext(c, userID)
+
+	if h.pluginManager != nil {
+		originalReq := req
+		hookPayload := map[string]interface{}{
+			"order_id":     order.ID,
+			"order_no":     order.OrderNo,
+			"user_id":      userID,
+			"status":       order.Status,
+			"feedback":     req.Feedback,
+			"source":       "user_api",
+			"requested_at": time.Now().Format(time.RFC3339),
+		}
+
+		hookResult, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+			Hook:    "order.complete.before",
+			Payload: hookPayload,
+		}, hookExecCtx)
+		if hookErr != nil {
+			log.Printf("order.complete.before hook execution failed: user=%d order=%s err=%v", userID, order.OrderNo, hookErr)
+		} else if hookResult != nil {
+			if hookResult.Blocked {
+				reason := strings.TrimSpace(hookResult.BlockReason)
+				if reason == "" {
+					reason = "Order completion rejected by plugin"
+				}
+				response.BadRequest(c, reason)
+				return
+			}
+			if hookResult.Payload != nil {
+				if applyErr := applyCompleteOrderHookPayload(&req, hookResult.Payload); applyErr != nil {
+					log.Printf("order.complete.before payload apply failed, fallback to original request: user=%d order=%s err=%v", userID, order.OrderNo, applyErr)
+					req = originalReq
+				}
+			}
+		}
+	}
 
 	// Complete order
 	if err := h.orderService.CompleteOrder(order.ID, userID, req.Feedback, ""); err != nil {
@@ -276,11 +504,51 @@ func (h *OrderHandler) CompleteOrder(c *gin.Context) {
 	// Re-query order
 	order, _ = h.orderService.GetOrderByID(order.ID)
 
+	if h.pluginManager != nil && order != nil {
+		afterPayload := map[string]interface{}{
+			"order_id":       order.ID,
+			"order_no":       order.OrderNo,
+			"user_id":        userID,
+			"before_status":  beforeStatus,
+			"after_status":   order.Status,
+			"feedback":       req.Feedback,
+			"completed_at":   order.CompletedAt,
+			"source":         "user_api",
+			"order_total":    order.TotalAmount,
+			"order_currency": order.Currency,
+		}
+		go func(execCtx *service.ExecutionContext, payload map[string]interface{}, uid uint, orderNumber string) {
+			_, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+				Hook:    "order.complete.after",
+				Payload: payload,
+			}, execCtx)
+			if hookErr != nil {
+				log.Printf("order.complete.after hook execution failed: user=%d order=%s err=%v", uid, orderNumber, hookErr)
+			}
+		}(cloneExecutionContext(hookExecCtx), afterPayload, userID, order.OrderNo)
+	}
+
 	response.Success(c, gin.H{
 		"order_no":     order.OrderNo,
 		"status":       order.Status,
 		"completed_at": order.CompletedAt,
 	})
+}
+
+func applyCompleteOrderHookPayload(req *CompleteOrderRequest, payload map[string]interface{}) error {
+	if req == nil || payload == nil {
+		return nil
+	}
+
+	if rawFeedback, exists := payload["feedback"]; exists {
+		feedback, err := valueToOptionalString(rawFeedback)
+		if err != nil {
+			return fmt.Errorf("decode feedback: %w", err)
+		}
+		req.Feedback = feedback
+	}
+
+	return nil
 }
 
 // GetOrRefreshFormToken - Get or refresh form token

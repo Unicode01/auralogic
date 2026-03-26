@@ -1,3 +1,5 @@
+import { normalizeAuthUser } from '@/lib/auth-user'
+
 const TOKEN_KEY = 'auth_token'
 const USER_KEY = 'user_info'
 
@@ -20,13 +22,13 @@ export function isAuthenticated(): boolean {
 }
 
 export function setUser(user: any): void {
-  localStorage.setItem(USER_KEY, JSON.stringify(user))
+  localStorage.setItem(USER_KEY, JSON.stringify(normalizeAuthUser(user)))
 }
 
 export function getUser(): any {
   if (typeof window === 'undefined') return null
   const user = localStorage.getItem(USER_KEY)
-  return user ? JSON.parse(user) : null
+  return user ? normalizeAuthUser(JSON.parse(user)) : null
 }
 
 export function isAdmin(): boolean {

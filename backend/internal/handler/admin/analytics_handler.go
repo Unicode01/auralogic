@@ -117,12 +117,24 @@ func (h *AnalyticsHandler) GetUserAnalytics(c *gin.Context) {
 		} `json:"top_users"`
 	}
 
-	// Overview
-	h.db.Model(&models.User{}).Where("role = ?", "user").Count(&result.Overview.Total)
-	h.db.Model(&models.User{}).Where("role = ? AND is_active = ?", "user", true).Count(&result.Overview.Active)
-	h.db.Model(&models.User{}).Where("role = ? AND is_active = ?", "user", false).Count(&result.Overview.Inactive)
-	h.db.Model(&models.User{}).Where("role = ? AND created_at >= ?", "user", monthStart).Count(&result.Overview.ThisMonth)
-	h.db.Model(&models.User{}).Where("role = ? AND created_at >= ? AND created_at < ?", "user", lastMonthStart, monthStart).Count(&result.Overview.LastMonth)
+	if err := h.db.Model(&models.User{}).
+		Select(strings.Join([]string{
+			aggregateCountExpr("role = ?", "total"),
+			aggregateCountExpr("role = ? AND is_active = ?", "active"),
+			aggregateCountExpr("role = ? AND is_active = ?", "inactive"),
+			aggregateCountExpr("role = ? AND created_at >= ?", "this_month"),
+			aggregateCountExpr("role = ? AND created_at >= ? AND created_at < ?", "last_month"),
+		}, ", "),
+			"user",
+			"user", true,
+			"user", false,
+			"user", monthStart,
+			"user", lastMonthStart, monthStart,
+		).
+		Scan(&result.Overview).Error; err != nil {
+		response.InternalError(c, "Query failed")
+		return
+	}
 	if result.Overview.LastMonth > 0 {
 		result.Overview.MonthlyGrowth = float64(result.Overview.ThisMonth-result.Overview.LastMonth) / float64(result.Overview.LastMonth) * 100
 	}
@@ -251,25 +263,39 @@ func (h *AnalyticsHandler) GetOrderAnalytics(c *gin.Context) {
 		} `json:"top_products"`
 	}
 
-	// Overview
-	h.db.Model(&models.Order{}).Count(&result.Overview.Total)
-	h.db.Model(&models.Order{}).Where("created_at >= ?", monthStart).Count(&result.Overview.ThisMonth)
-	h.db.Model(&models.Order{}).Where("created_at >= ? AND created_at < ?", lastMonthStart, monthStart).Count(&result.Overview.LastMonth)
+	paidStatusCondition := "(status = ? OR status = ? OR status = ?)"
+	var orderOverview struct {
+		Total     int64 `gorm:"column:total"`
+		ThisMonth int64 `gorm:"column:this_month"`
+		LastMonth int64 `gorm:"column:last_month"`
+		PaidSum   int64 `gorm:"column:paid_sum"`
+		PaidCount int64 `gorm:"column:paid_count"`
+	}
+	if err := h.db.Model(&models.Order{}).
+		Select(strings.Join([]string{
+			"COUNT(*) AS total",
+			aggregateCountExpr("created_at >= ?", "this_month"),
+			aggregateCountExpr("created_at >= ? AND created_at < ?", "last_month"),
+			aggregateSumExpr("total_amount", paidStatusCondition+" AND total_amount > 0", "paid_sum"),
+			aggregateCountExpr(paidStatusCondition+" AND total_amount > 0", "paid_count"),
+		}, ", "),
+			monthStart,
+			lastMonthStart, monthStart,
+			paidStatuses[0], paidStatuses[1], paidStatuses[2],
+			paidStatuses[0], paidStatuses[1], paidStatuses[2],
+		).
+		Scan(&orderOverview).Error; err != nil {
+		response.InternalError(c, "Query failed")
+		return
+	}
+	result.Overview.Total = orderOverview.Total
+	result.Overview.ThisMonth = orderOverview.ThisMonth
+	result.Overview.LastMonth = orderOverview.LastMonth
 	if result.Overview.LastMonth > 0 {
 		result.Overview.MonthlyGrowth = float64(result.Overview.ThisMonth-result.Overview.LastMonth) / float64(result.Overview.LastMonth) * 100
 	}
-
-	// Average order value (paid orders only, integer-safe via sum/count).
-	var avgResult struct {
-		Sum   int64
-		Count int64
-	}
-	h.db.Model(&models.Order{}).
-		Select("COALESCE(SUM(total_amount), 0) as sum, COUNT(*) as count").
-		Where("status IN ? AND total_amount > 0", paidStatuses).
-		Scan(&avgResult)
-	if avgResult.Count > 0 {
-		result.Overview.AvgOrderValue = (avgResult.Sum + avgResult.Count/2) / avgResult.Count
+	if orderOverview.PaidCount > 0 {
+		result.Overview.AvgOrderValue = (orderOverview.PaidSum + orderOverview.PaidCount/2) / orderOverview.PaidCount
 	}
 	result.Overview.Currency = h.cfg.Order.Currency
 	if result.Overview.Currency == "" {
@@ -419,56 +445,48 @@ func (h *AnalyticsHandler) GetRevenueAnalytics(c *gin.Context) {
 		} `json:"revenue_by_country"`
 	}
 
-	// Overview - total revenue
-	var totalRev struct{ Total int64 }
-	h.db.Model(&models.Order{}).
-		Select("COALESCE(SUM(total_amount), 0) as total").
-		Where("status IN ?", paidStatuses).
-		Scan(&totalRev)
-	result.Overview.TotalRevenue = totalRev.Total
-
-	// This month
-	var thisMonthRev struct{ Total int64 }
-	h.db.Model(&models.Order{}).
-		Select("COALESCE(SUM(total_amount), 0) as total").
-		Where("status IN ? AND created_at >= ?", paidStatuses, monthStart).
-		Scan(&thisMonthRev)
-	result.Overview.ThisMonth = thisMonthRev.Total
-
-	// Last month
-	var lastMonthRev struct{ Total int64 }
-	h.db.Model(&models.Order{}).
-		Select("COALESCE(SUM(total_amount), 0) as total").
-		Where("status IN ? AND created_at >= ? AND created_at < ?", paidStatuses, lastMonthStart, monthStart).
-		Scan(&lastMonthRev)
-	result.Overview.LastMonth = lastMonthRev.Total
+	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	paidStatusCondition := "(status = ? OR status = ? OR status = ?)"
+	var revenueOverview struct {
+		TotalRevenue      int64 `gorm:"column:total_revenue"`
+		ThisMonth         int64 `gorm:"column:this_month"`
+		LastMonth         int64 `gorm:"column:last_month"`
+		TodayRevenue      int64 `gorm:"column:today_revenue"`
+		PositivePaidSum   int64 `gorm:"column:positive_paid_sum"`
+		PositivePaidCount int64 `gorm:"column:positive_paid_count"`
+	}
+	if err := h.db.Model(&models.Order{}).
+		Select(strings.Join([]string{
+			aggregateSumExpr("total_amount", paidStatusCondition, "total_revenue"),
+			aggregateSumExpr("total_amount", paidStatusCondition+" AND created_at >= ?", "this_month"),
+			aggregateSumExpr("total_amount", paidStatusCondition+" AND created_at >= ? AND created_at < ?", "last_month"),
+			aggregateSumExpr("total_amount", paidStatusCondition+" AND created_at >= ?", "today_revenue"),
+			aggregateSumExpr("total_amount", paidStatusCondition+" AND total_amount > 0", "positive_paid_sum"),
+			aggregateCountExpr(paidStatusCondition+" AND total_amount > 0", "positive_paid_count"),
+		}, ", "),
+			paidStatuses[0], paidStatuses[1], paidStatuses[2],
+			paidStatuses[0], paidStatuses[1], paidStatuses[2], monthStart,
+			paidStatuses[0], paidStatuses[1], paidStatuses[2], lastMonthStart, monthStart,
+			paidStatuses[0], paidStatuses[1], paidStatuses[2], todayStart,
+			paidStatuses[0], paidStatuses[1], paidStatuses[2],
+			paidStatuses[0], paidStatuses[1], paidStatuses[2],
+		).
+		Scan(&revenueOverview).Error; err != nil {
+		response.InternalError(c, "Query failed")
+		return
+	}
+	result.Overview.TotalRevenue = revenueOverview.TotalRevenue
+	result.Overview.ThisMonth = revenueOverview.ThisMonth
+	result.Overview.LastMonth = revenueOverview.LastMonth
+	result.Overview.TodayRevenue = revenueOverview.TodayRevenue
 
 	if result.Overview.LastMonth > 0 {
 		result.Overview.MonthlyGrowth = float64(result.Overview.ThisMonth-result.Overview.LastMonth) / float64(result.Overview.LastMonth) * 100
 	}
-
-	// Today
-	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-	var todayRev struct{ Total int64 }
-	h.db.Model(&models.Order{}).
-		Select("COALESCE(SUM(total_amount), 0) as total").
-		Where("status IN ? AND created_at >= ?", paidStatuses, todayStart).
-		Scan(&todayRev)
-	result.Overview.TodayRevenue = todayRev.Total
-
-	// Average and count (integer-safe via sum/count).
-	var paidStats struct {
-		Sum   int64
-		Count int64
+	if revenueOverview.PositivePaidCount > 0 {
+		result.Overview.AvgOrderValue = (revenueOverview.PositivePaidSum + revenueOverview.PositivePaidCount/2) / revenueOverview.PositivePaidCount
 	}
-	h.db.Model(&models.Order{}).
-		Select("COALESCE(SUM(total_amount), 0) as sum, COUNT(*) as count").
-		Where("status IN ? AND total_amount > 0", paidStatuses).
-		Scan(&paidStats)
-	if paidStats.Count > 0 {
-		result.Overview.AvgOrderValue = (paidStats.Sum + paidStats.Count/2) / paidStats.Count
-	}
-	result.Overview.TotalPaidOrders = paidStats.Count
+	result.Overview.TotalPaidOrders = revenueOverview.PositivePaidCount
 	result.Overview.Currency = currency
 
 	// Daily revenue trend (last 30 days)
@@ -540,6 +558,60 @@ func parseOS(ua string) string {
 	}
 }
 
+type analyticsDistributionItem struct {
+	Name  string `json:"name"`
+	Count int64  `json:"count"`
+}
+
+type analyticsUserAgentRow struct {
+	UserAgent string
+}
+
+func buildSortedAnalyticsDistribution(counts map[string]int64) []analyticsDistributionItem {
+	if len(counts) == 0 {
+		return []analyticsDistributionItem{}
+	}
+
+	items := make([]analyticsDistributionItem, 0, len(counts))
+	for name, count := range counts {
+		items = append(items, analyticsDistributionItem{Name: name, Count: count})
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].Count == items[j].Count {
+			return items[i].Name < items[j].Name
+		}
+		return items[i].Count > items[j].Count
+	})
+	return items
+}
+
+func (h *AnalyticsHandler) aggregateUserAgentDistributions(query *gorm.DB) ([]analyticsDistributionItem, []analyticsDistributionItem, int64, error) {
+	deviceCounts := make(map[string]int64)
+	osCounts := make(map[string]int64)
+	total := int64(0)
+
+	rows, err := query.Rows()
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var row analyticsUserAgentRow
+		if err := query.ScanRows(rows, &row); err != nil {
+			return nil, nil, 0, err
+		}
+		total++
+		deviceCounts[parseDeviceType(row.UserAgent)]++
+		osCounts[parseOS(row.UserAgent)]++
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, 0, err
+	}
+
+	return buildSortedAnalyticsDistribution(deviceCounts), buildSortedAnalyticsDistribution(osCounts), total, nil
+}
+
 // GetPageViewAnalytics returns page view analytics data
 func (h *AnalyticsHandler) GetPageViewAnalytics(c *gin.Context) {
 	if h.checkDisabled(c) {
@@ -570,22 +642,26 @@ func (h *AnalyticsHandler) GetPageViewAnalytics(c *gin.Context) {
 			Count   int64  `json:"count"`
 		} `json:"referer_distribution"`
 
-		DeviceDistribution []struct {
-			Name  string `json:"name"`
-			Count int64  `json:"count"`
-		} `json:"device_distribution"`
+		DeviceDistribution []analyticsDistributionItem `json:"device_distribution"`
 
-		OSDistribution []struct {
-			Name  string `json:"name"`
-			Count int64  `json:"count"`
-		} `json:"os_distribution"`
+		OSDistribution []analyticsDistributionItem `json:"os_distribution"`
 	}
 
-	// Overview
-	h.db.Model(&models.PageView{}).Count(&result.Overview.Total)
-	h.db.Model(&models.PageView{}).Where("created_at >= ?", todayStart).Count(&result.Overview.Today)
-	h.db.Model(&models.PageView{}).Where("created_at >= ?", monthStart).Count(&result.Overview.ThisMonth)
-	h.db.Model(&models.PageView{}).Where("created_at >= ? AND created_at < ?", lastMonthStart, monthStart).Count(&result.Overview.LastMonth)
+	if err := h.db.Model(&models.PageView{}).
+		Select(strings.Join([]string{
+			"COUNT(*) AS total",
+			aggregateCountExpr("created_at >= ?", "today"),
+			aggregateCountExpr("created_at >= ?", "this_month"),
+			aggregateCountExpr("created_at >= ? AND created_at < ?", "last_month"),
+		}, ", "),
+			todayStart,
+			monthStart,
+			lastMonthStart, monthStart,
+		).
+		Scan(&result.Overview).Error; err != nil {
+		response.InternalError(c, "Query failed")
+		return
+	}
 	if result.Overview.LastMonth > 0 {
 		result.Overview.MonthlyGrowth = float64(result.Overview.ThisMonth-result.Overview.LastMonth) / float64(result.Overview.LastMonth) * 100
 	}
@@ -607,43 +683,16 @@ func (h *AnalyticsHandler) GetPageViewAnalytics(c *gin.Context) {
 		Limit(20).
 		Scan(&result.RefererDistribution)
 
-	// Device & OS distribution from user_agent
-	var views []struct {
-		UserAgent string
+	var err error
+	result.DeviceDistribution, result.OSDistribution, _, err = h.aggregateUserAgentDistributions(
+		h.db.Model(&models.PageView{}).
+			Select("user_agent").
+			Where("user_agent != ''"),
+	)
+	if err != nil {
+		response.InternalError(c, "Query failed")
+		return
 	}
-	h.db.Model(&models.PageView{}).
-		Select("user_agent").
-		Where("user_agent != ''").
-		Find(&views)
-
-	deviceCounts := map[string]int64{}
-	osCounts := map[string]int64{}
-	for _, v := range views {
-		device := parseDeviceType(v.UserAgent)
-		os := parseOS(v.UserAgent)
-		deviceCounts[device]++
-		osCounts[os]++
-	}
-
-	for name, count := range deviceCounts {
-		result.DeviceDistribution = append(result.DeviceDistribution, struct {
-			Name  string `json:"name"`
-			Count int64  `json:"count"`
-		}{Name: name, Count: count})
-	}
-	for name, count := range osCounts {
-		result.OSDistribution = append(result.OSDistribution, struct {
-			Name  string `json:"name"`
-			Count int64  `json:"count"`
-		}{Name: name, Count: count})
-	}
-
-	sort.Slice(result.DeviceDistribution, func(i, j int) bool {
-		return result.DeviceDistribution[i].Count > result.DeviceDistribution[j].Count
-	})
-	sort.Slice(result.OSDistribution, func(i, j int) bool {
-		return result.OSDistribution[i].Count > result.OSDistribution[j].Count
-	})
 
 	response.Success(c, result)
 }
@@ -653,55 +702,22 @@ func (h *AnalyticsHandler) GetDeviceAnalytics(c *gin.Context) {
 	if h.checkDisabled(c) {
 		return
 	}
-	var logs []struct {
-		UserAgent string
-	}
-	h.db.Model(&models.OperationLog{}).
-		Select("user_agent").
-		Where("action = ? AND user_agent != ''", "login").
-		Find(&logs)
-
-	deviceCounts := map[string]int64{}
-	osCounts := map[string]int64{}
-
-	for _, log := range logs {
-		device := parseDeviceType(log.UserAgent)
-		os := parseOS(log.UserAgent)
-		deviceCounts[device]++
-		osCounts[os]++
-	}
-
-	type distItem struct {
-		Name  string `json:"name"`
-		Count int64  `json:"count"`
-	}
-
 	var result struct {
-		DeviceDistribution []distItem `json:"device_distribution"`
-		OSDistribution     []distItem `json:"os_distribution"`
-		Total              int64      `json:"total"`
+		DeviceDistribution []analyticsDistributionItem `json:"device_distribution"`
+		OSDistribution     []analyticsDistributionItem `json:"os_distribution"`
+		Total              int64                       `json:"total"`
 	}
 
-	result.Total = int64(len(logs))
-
-	for name, count := range deviceCounts {
-		result.DeviceDistribution = append(result.DeviceDistribution, distItem{Name: name, Count: count})
+	var err error
+	result.DeviceDistribution, result.OSDistribution, result.Total, err = h.aggregateUserAgentDistributions(
+		h.db.Model(&models.OperationLog{}).
+			Select("user_agent").
+			Where("action = ? AND user_agent != ''", "login"),
+	)
+	if err != nil {
+		response.InternalError(c, "Query failed")
+		return
 	}
-	for name, count := range osCounts {
-		result.OSDistribution = append(result.OSDistribution, distItem{Name: name, Count: count})
-	}
-
-	sortDist := func(items []distItem) {
-		for i := 0; i < len(items); i++ {
-			for j := i + 1; j < len(items); j++ {
-				if items[j].Count > items[i].Count {
-					items[i], items[j] = items[j], items[i]
-				}
-			}
-		}
-	}
-	sortDist(result.DeviceDistribution)
-	sortDist(result.OSDistribution)
 
 	response.Success(c, result)
 }

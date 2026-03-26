@@ -84,6 +84,8 @@ wait_for_redis() {
 # ---------------------------
 init_database() {
   cd /app/backend
+  bootstrap_admin="bootstrap/admin.json"
+  runtime_admin="config/admin.json"
 
   # 检查配置文件
   if [ ! -f config/config.json ]; then
@@ -91,9 +93,26 @@ init_database() {
     exit 1
   fi
 
-  # admin.json 不存在说明已经初始化过，跳过
-  if [ ! -f config/admin.json ]; then
-    echo "[INIT] admin.json 不存在，已完成过初始化，跳过"
+  # 优先使用宿主机挂载的一次性 bootstrap 文件；兼容旧镜像中遗留的 config/admin.json
+  if [ -f "$bootstrap_admin" ]; then
+    if grep -Eq '"bootstrap_pending"[[:space:]]*:[[:space:]]*false' "$bootstrap_admin"; then
+      echo "[INIT] bootstrap/admin.json 已标记为非引导状态，清理后跳过"
+      rm -f "$bootstrap_admin" "$runtime_admin"
+      return 0
+    fi
+
+    cp "$bootstrap_admin" "$runtime_admin"
+    echo "[INIT] 检测到 bootstrap/admin.json，准备初始化超级管理员"
+  elif [ -f "$runtime_admin" ]; then
+    if grep -Eq '"bootstrap_pending"[[:space:]]*:[[:space:]]*false' "$runtime_admin"; then
+      echo "[INIT] config/admin.json 已标记为非引导状态，清理后跳过"
+      rm -f "$runtime_admin"
+      return 0
+    fi
+
+    echo "[INIT] 检测到旧版 config/admin.json，继续兼容初始化"
+  else
+    echo "[INIT] 未检测到管理员初始化文件，已完成过初始化，跳过"
     return 0
   fi
 
@@ -114,8 +133,8 @@ init_database() {
   echo "$OUTPUT"
 
   # 安全清理: 删除包含明文密码的 admin.json
-  echo "[SECURITY] 删除 admin.json 防止密码泄露..."
-  rm -f config/admin.json
+  echo "[SECURITY] 删除管理员初始化文件防止密码泄露..."
+  rm -f "$bootstrap_admin" "$runtime_admin"
 
   echo "[INIT] 数据库初始化完成"
 }

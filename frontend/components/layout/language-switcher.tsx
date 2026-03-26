@@ -22,8 +22,14 @@ export function LanguageSwitcher() {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="outline" size="sm" className="w-full justify-start">
-          <Languages className="h-4 w-4 mr-2" />
+        <Button
+          variant="outline"
+          size="sm"
+          className="w-full justify-start"
+          aria-label={t.sidebar.language}
+          title={t.sidebar.language}
+        >
+          <Languages className="mr-2 h-4 w-4" />
           {t.sidebar.language}
         </Button>
       </DropdownMenuTrigger>

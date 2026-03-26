@@ -23,8 +23,23 @@ interface PageInjectCache {
   [path: string]: {
     css: string
     js: string
+    rules?: PageInjectRule[]
     ts: number // 缓存时间戳
   }
+}
+
+interface PageInjectRule {
+  name?: string
+  pattern?: string
+  match_type?: string
+  css?: string
+  js?: string
+}
+
+interface PageInjectPayload {
+  css: string
+  js: string
+  rules: PageInjectRule[]
 }
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
@@ -104,24 +119,64 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     pageInjectIdsRef.current = []
   }, [])
 
+  const normalizePageInjectPayload = useCallback((raw: any): PageInjectPayload => {
+    const css = typeof raw?.css === 'string' ? raw.css : ''
+    const js = typeof raw?.js === 'string' ? raw.js : ''
+    const rules = Array.isArray(raw?.rules)
+      ? raw.rules
+        .filter((item: any) => item && typeof item === 'object')
+        .map((item: any) => ({
+          name: typeof item.name === 'string' ? item.name : undefined,
+          pattern: typeof item.pattern === 'string' ? item.pattern : undefined,
+          match_type: typeof item.match_type === 'string' ? item.match_type : undefined,
+          css: typeof item.css === 'string' ? item.css : '',
+          js: typeof item.js === 'string' ? item.js : '',
+        }))
+      : []
+    return { css, js, rules }
+  }, [])
+
   // 注入CSS/JS到页面
-  const applyPageInject = useCallback((css: string, js: string) => {
+  const applyPageInject = useCallback((payload: PageInjectPayload) => {
     clearPageInject()
 
+    const { css, js, rules } = payload
+    const hasRuleBlocks = Array.isArray(rules) && rules.length > 0
+
+    if (hasRuleBlocks) {
+      rules.forEach((rule, index) => {
+        if (rule.css) {
+          const styleEl = document.createElement('style')
+          styleEl.id = `auralogic-page-inject-css-${index}`
+          styleEl.textContent = rule.css
+          document.head.appendChild(styleEl)
+          pageInjectIdsRef.current.push(styleEl.id)
+        }
+        if (rule.js) {
+          const scriptEl = document.createElement('script')
+          scriptEl.id = `auralogic-page-inject-js-${index}`
+          scriptEl.textContent = rule.js
+          document.body.appendChild(scriptEl)
+          pageInjectIdsRef.current.push(scriptEl.id)
+        }
+      })
+      return
+    }
+
     if (css) {
-      const el = document.createElement('style')
-      el.id = 'auralogic-page-inject-css'
-      el.textContent = css
-      document.head.appendChild(el)
-      pageInjectIdsRef.current.push(el.id)
+      const styleEl = document.createElement('style')
+      styleEl.id = 'auralogic-page-inject-css'
+      styleEl.textContent = css
+      document.head.appendChild(styleEl)
+      pageInjectIdsRef.current.push(styleEl.id)
     }
 
     if (js) {
-      const el = document.createElement('script')
-      el.id = 'auralogic-page-inject-js'
-      el.textContent = js
-      document.body.appendChild(el)
-      pageInjectIdsRef.current.push(el.id)
+      const scriptEl = document.createElement('script')
+      scriptEl.id = 'auralogic-page-inject-js'
+      scriptEl.textContent = js
+      document.body.appendChild(scriptEl)
+      pageInjectIdsRef.current.push(scriptEl.id)
     }
   }, [clearPageInject])
 
@@ -146,18 +201,18 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 
     if (cached && (now - cached.ts) < PAGE_INJECT_TTL) {
       // 缓存有效，直接应用
-      applyPageInject(cached.css, cached.js)
+      const cachedPayload = normalizePageInjectPayload(cached)
+      applyPageInject(cachedPayload)
       return
     }
 
     // 缓存不存在或已过期，从API获取
     clearPageInject()
     getPageInject(pathname).then((res: any) => {
-      const css = res?.data?.css || ''
-      const js = res?.data?.js || ''
+      const payload = normalizePageInjectPayload(res?.data)
 
       // 写入缓存
-      cache[pathname] = { css, js, ts: Date.now() }
+      cache[pathname] = { ...payload, ts: Date.now() }
       // 清理过期缓存条目
       for (const key in cache) {
         if (Date.now() - cache[key].ts > PAGE_INJECT_TTL) {
@@ -172,7 +227,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 
       // 确保还在同一页面才应用
       if (lastInjectPathRef.current === pathname) {
-        applyPageInject(css, js)
+        applyPageInject(payload)
       }
     }).catch(() => {
       // 请求失败，静默处理
@@ -181,7 +236,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     return () => {
       clearPageInject()
     }
-  }, [mounted, pathname, applyPageInject, clearPageInject])
+  }, [mounted, pathname, applyPageInject, clearPageInject, normalizePageInjectPayload])
 
   // 应用主题
   useEffect(() => {

@@ -1,0 +1,24 @@
+{
+  "name": "@auralogic/plugin-sdk",
+  "version": "0.5.0",
+  "private": true,
+  "description": "Local TypeScript SDK for AuraLogic js_worker plugins.",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "clean": "node ./scripts/clean.mjs",
+    "ensure:dist": "node ./scripts/ensure-dist.mjs",
+    "check:sample-manifests": "node ./scripts/check-sample-manifests.mjs",
+    "generate:catalog": "node ./scripts/generate-catalog.mjs",
+    "build": "npm run clean && tsc -p tsconfig.json",
+    "test": "npm run clean && tsc -p tsconfig.json && tsc -p tsconfig.test.json && node --test dist-test/sdk.test.js",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.19",
+    "typescript": "^5.8.2"
+  }
+}

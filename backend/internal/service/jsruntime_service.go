@@ -3,7 +3,9 @@ package service
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
 	"crypto/md5"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -21,6 +23,7 @@ import (
 	"strings"
 	"time"
 
+	"auralogic/internal/config"
 	"auralogic/internal/models"
 	"auralogic/internal/pkg/money"
 
@@ -144,14 +147,25 @@ func isBlockedIP(ip netip.Addr) bool {
 type JSRuntimeService struct {
 	db              *gorm.DB
 	moneyMinorUnits bool
+	publicBaseURL   string
 }
 
 // NewJSRuntimeService 创建JS运行时服务
-func NewJSRuntimeService(db *gorm.DB) *JSRuntimeService {
-	svc := &JSRuntimeService{db: db}
+func NewJSRuntimeService(db *gorm.DB, cfg *config.Config) *JSRuntimeService {
+	svc := &JSRuntimeService{
+		db:            db,
+		publicBaseURL: normalizeJSRuntimePublicBaseURL(cfg),
+	}
 	svc.moneyMinorUnits = svc.detectMoneyMinorUnits()
 	svc.ensurePaymentStorageMigrated()
 	return svc
+}
+
+func normalizeJSRuntimePublicBaseURL(cfg *config.Config) string {
+	if cfg == nil {
+		return ""
+	}
+	return strings.TrimRight(strings.TrimSpace(cfg.App.URL), "/")
 }
 
 func (s *JSRuntimeService) detectMoneyMinorUnits() bool {
@@ -178,6 +192,20 @@ type JSContext struct {
 	Order           *models.Order
 	DB              *gorm.DB
 	TestStorage     map[string]string
+	Webhook         *PaymentWebhookRequest
+}
+
+type PaymentWebhookRequest struct {
+	Key         string
+	Method      string
+	Path        string
+	QueryString string
+	QueryParams map[string]string
+	Headers     map[string]string
+	BodyText    string
+	BodyBase64  string
+	ContentType string
+	RemoteAddr  string
 }
 
 func (s *JSRuntimeService) newJSContext(pmID uint, order *models.Order) *JSContext {
@@ -301,11 +329,17 @@ func (s *JSRuntimeService) registerAPIs(vm *goja.Runtime, ctx *JSContext, pm *mo
 	utils.Set("formatDate", s.createFormatDate(vm))
 	utils.Set("generateId", s.createGenerateId(vm))
 	utils.Set("md5", s.createMD5(vm))
+	utils.Set("hmacSHA256", s.createHMACSHA256(vm))
 	utils.Set("base64Encode", s.createBase64Encode(vm))
 	utils.Set("base64Decode", s.createBase64Decode(vm))
 	utils.Set("jsonEncode", s.createJSONEncode(vm))
 	utils.Set("jsonDecode", s.createJSONDecode(vm))
 	utils.Set("qrcode", s.createQRCode(vm))
+
+	// Webhook API
+	webhook := vm.NewObject()
+	auralogic.Set("webhook", webhook)
+	s.registerWebhookAPI(vm, webhook, ctx)
 
 	// HTTP API
 	httpObj := vm.NewObject()
@@ -324,6 +358,82 @@ func (s *JSRuntimeService) registerAPIs(vm *goja.Runtime, ctx *JSContext, pm *mo
 	auralogic.Set("system", system)
 	system.Set("getTimestamp", s.createGetTimestamp(vm))
 	system.Set("getPaymentMethodInfo", s.createGetPaymentMethodInfo(vm, pm))
+	system.Set("getWebhookUrl", s.createGetWebhookURL(vm, pm))
+}
+
+func (s *JSRuntimeService) registerWebhookAPI(vm *goja.Runtime, webhook *goja.Object, ctx *JSContext) {
+	req := &PaymentWebhookRequest{
+		QueryParams: map[string]string{},
+		Headers:     map[string]string{},
+	}
+	if ctx != nil && ctx.Webhook != nil {
+		req = ctx.Webhook
+		if req.QueryParams == nil {
+			req.QueryParams = map[string]string{}
+		}
+		if req.Headers == nil {
+			req.Headers = map[string]string{}
+		}
+	}
+
+	_ = webhook.Set("enabled", ctx != nil && ctx.Webhook != nil)
+	_ = webhook.Set("key", req.Key)
+	_ = webhook.Set("method", req.Method)
+	_ = webhook.Set("path", req.Path)
+	_ = webhook.Set("query_string", req.QueryString)
+	_ = webhook.Set("queryString", req.QueryString)
+	_ = webhook.Set("query_params", req.QueryParams)
+	_ = webhook.Set("queryParams", req.QueryParams)
+	_ = webhook.Set("headers", req.Headers)
+	_ = webhook.Set("content_type", req.ContentType)
+	_ = webhook.Set("contentType", req.ContentType)
+	_ = webhook.Set("remote_addr", req.RemoteAddr)
+	_ = webhook.Set("remoteAddr", req.RemoteAddr)
+	_ = webhook.Set("body_text", req.BodyText)
+	_ = webhook.Set("bodyText", req.BodyText)
+	_ = webhook.Set("body_base64", req.BodyBase64)
+	_ = webhook.Set("bodyBase64", req.BodyBase64)
+	_ = webhook.Set("header", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			return goja.Undefined()
+		}
+		name := strings.ToLower(strings.TrimSpace(call.Arguments[0].String()))
+		if name == "" {
+			return goja.Undefined()
+		}
+		value, ok := req.Headers[name]
+		if !ok {
+			return goja.Undefined()
+		}
+		return vm.ToValue(value)
+	})
+	_ = webhook.Set("query", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 1 {
+			return goja.Undefined()
+		}
+		name := strings.TrimSpace(call.Arguments[0].String())
+		if name == "" {
+			return goja.Undefined()
+		}
+		value, ok := req.QueryParams[name]
+		if !ok {
+			return goja.Undefined()
+		}
+		return vm.ToValue(value)
+	})
+	_ = webhook.Set("text", func(call goja.FunctionCall) goja.Value {
+		return vm.ToValue(req.BodyText)
+	})
+	_ = webhook.Set("json", func(call goja.FunctionCall) goja.Value {
+		if strings.TrimSpace(req.BodyText) == "" {
+			return goja.Undefined()
+		}
+		var decoded interface{}
+		if err := json.Unmarshal([]byte(req.BodyText), &decoded); err != nil {
+			panic(vm.ToValue(fmt.Sprintf("invalid webhook json: %v", err)))
+		}
+		return vm.ToValue(decoded)
+	})
 }
 
 // Storage APIs - 按付款方式隔离的持久化 KV 存储
@@ -1044,6 +1154,51 @@ func (s *JSRuntimeService) CheckPaymentStatus(pm *models.PaymentMethod, order *m
 	return s.parseCheckResult(result)
 }
 
+func (s *JSRuntimeService) ExecuteWebhook(pm *models.PaymentMethod, req *PaymentWebhookRequest) (*PaymentWebhookResult, error) {
+	if pm == nil {
+		return nil, fmt.Errorf("payment method is required")
+	}
+	if pm.Script == "" {
+		return nil, fmt.Errorf("payment method has no script configured")
+	}
+
+	vm := goja.New()
+	ctx := s.newJSContext(pm.ID, nil)
+	ctx.Webhook = clonePaymentWebhookRequest(req)
+
+	timer := time.AfterFunc(10*time.Second, func() {
+		vm.Interrupt("execution timeout")
+	})
+	defer timer.Stop()
+
+	s.registerAPIs(vm, ctx, pm)
+
+	program, err := getOrCompileJSProgram("payment_method", pm.Script)
+	if err != nil {
+		return nil, fmt.Errorf("script compile error: %w", err)
+	}
+	_, err = vm.RunProgram(program)
+	if err != nil {
+		return nil, fmt.Errorf("script execution error: %w", err)
+	}
+
+	fn, ok := goja.AssertFunction(vm.Get("onWebhook"))
+	if !ok {
+		return nil, fmt.Errorf("onWebhook function not found")
+	}
+
+	configData := s.parseConfig(pm.Config)
+	hookKey := ""
+	if ctx.Webhook != nil {
+		hookKey = ctx.Webhook.Key
+	}
+	result, err := fn(goja.Undefined(), vm.ToValue(hookKey), vm.ToValue(configData))
+	if err != nil {
+		return nil, fmt.Errorf("onWebhook error: %w", err)
+	}
+	return s.parseWebhookResult(result)
+}
+
 // parseCheckResult 解析付款检查结果
 func (s *JSRuntimeService) parseCheckResult(result goja.Value) (*PaymentCheckResult, error) {
 	if result == nil || goja.IsUndefined(result) || goja.IsNull(result) {
@@ -1071,6 +1226,230 @@ func (s *JSRuntimeService) parseCheckResult(result goja.Value) (*PaymentCheckRes
 		return checkResult, nil
 	default:
 		return &PaymentCheckResult{Paid: false}, nil
+	}
+}
+
+type PaymentWebhookResult struct {
+	AckStatus    int                    `json:"ack_status"`
+	AckHeaders   map[string]string      `json:"ack_headers,omitempty"`
+	AckBody      string                 `json:"ack_body,omitempty"`
+	Paid         bool                   `json:"paid"`
+	OrderID      uint                   `json:"order_id,omitempty"`
+	OrderNo      string                 `json:"order_no,omitempty"`
+	TransactionID string                `json:"transaction_id,omitempty"`
+	Message      string                 `json:"message,omitempty"`
+	Data         map[string]interface{} `json:"data,omitempty"`
+	QueuePolling bool                   `json:"queue_polling,omitempty"`
+}
+
+func (s *JSRuntimeService) parseWebhookResult(result goja.Value) (*PaymentWebhookResult, error) {
+	if result == nil || goja.IsUndefined(result) || goja.IsNull(result) {
+		return &PaymentWebhookResult{
+			AckStatus: 200,
+			AckBody:   "ok",
+		}, nil
+	}
+
+	exported := result.Export()
+	switch v := exported.(type) {
+	case bool:
+		return &PaymentWebhookResult{
+			AckStatus: 200,
+			AckBody:   "ok",
+			Paid:      v,
+		}, nil
+	case string:
+		return &PaymentWebhookResult{
+			AckStatus: 200,
+			AckBody:   v,
+		}, nil
+	case map[string]interface{}:
+		out := &PaymentWebhookResult{
+			AckStatus: 200,
+			AckHeaders: map[string]string{},
+		}
+		if value, ok := parsePaymentWebhookResultInt(v["ack_status"]); ok && value > 0 {
+			out.AckStatus = value
+		} else if value, ok := parsePaymentWebhookResultInt(v["status"]); ok && value > 0 {
+			out.AckStatus = value
+		}
+		if body, contentType, err := stringifyPaymentWebhookBody(v["ack_body"]); err == nil && body != "" {
+			out.AckBody = body
+			if contentType != "" {
+				out.AckHeaders["Content-Type"] = contentType
+			}
+		} else if body, contentType, err := stringifyPaymentWebhookBody(v["body"]); err == nil && body != "" {
+			out.AckBody = body
+			if contentType != "" {
+				out.AckHeaders["Content-Type"] = contentType
+			}
+		}
+		if headers := parsePaymentWebhookHeaders(v["ack_headers"]); len(headers) > 0 {
+			for key, value := range headers {
+				out.AckHeaders[key] = value
+			}
+		}
+		if headers := parsePaymentWebhookHeaders(v["headers"]); len(headers) > 0 {
+			for key, value := range headers {
+				out.AckHeaders[key] = value
+			}
+		}
+		if paid, ok := v["paid"].(bool); ok {
+			out.Paid = paid
+		}
+		if queuePolling, ok := v["queue_polling"].(bool); ok {
+			out.QueuePolling = queuePolling
+		} else if queuePolling, ok := v["queuePolling"].(bool); ok {
+			out.QueuePolling = queuePolling
+		}
+		if orderID, ok := parsePaymentWebhookResultUint(v["order_id"]); ok {
+			out.OrderID = orderID
+		} else if orderID, ok := parsePaymentWebhookResultUint(v["orderId"]); ok {
+			out.OrderID = orderID
+		}
+		if orderNo, ok := v["order_no"].(string); ok {
+			out.OrderNo = strings.TrimSpace(orderNo)
+		} else if orderNo, ok := v["orderNo"].(string); ok {
+			out.OrderNo = strings.TrimSpace(orderNo)
+		}
+		if txID, ok := v["transaction_id"].(string); ok {
+			out.TransactionID = strings.TrimSpace(txID)
+		} else if txID, ok := v["transactionId"].(string); ok {
+			out.TransactionID = strings.TrimSpace(txID)
+		}
+		if message, ok := v["message"].(string); ok {
+			out.Message = strings.TrimSpace(message)
+		}
+		if data, ok := v["data"].(map[string]interface{}); ok {
+			out.Data = data
+		}
+		if out.AckBody == "" {
+			out.AckBody = "ok"
+		}
+		return out, nil
+	default:
+		return nil, fmt.Errorf("unsupported onWebhook result type %T", exported)
+	}
+}
+
+func clonePaymentWebhookRequest(req *PaymentWebhookRequest) *PaymentWebhookRequest {
+	if req == nil {
+		return nil
+	}
+	cloned := &PaymentWebhookRequest{
+		Key:         req.Key,
+		Method:      req.Method,
+		Path:        req.Path,
+		QueryString: req.QueryString,
+		BodyText:    req.BodyText,
+		BodyBase64:  req.BodyBase64,
+		ContentType: req.ContentType,
+		RemoteAddr:  req.RemoteAddr,
+		QueryParams: map[string]string{},
+		Headers:     map[string]string{},
+	}
+	for key, value := range req.QueryParams {
+		cloned.QueryParams[key] = value
+	}
+	for key, value := range req.Headers {
+		cloned.Headers[key] = value
+	}
+	return cloned
+}
+
+func parsePaymentWebhookResultInt(value interface{}) (int, bool) {
+	switch typed := value.(type) {
+	case int:
+		return typed, true
+	case int64:
+		return int(typed), true
+	case float64:
+		return int(typed), true
+	case string:
+		trimmed := strings.TrimSpace(typed)
+		if trimmed == "" {
+			return 0, false
+		}
+		parsed, err := strconv.Atoi(trimmed)
+		if err != nil {
+			return 0, false
+		}
+		return parsed, true
+	default:
+		return 0, false
+	}
+}
+
+func parsePaymentWebhookResultUint(value interface{}) (uint, bool) {
+	switch typed := value.(type) {
+	case uint:
+		return typed, true
+	case uint64:
+		return uint(typed), true
+	case int:
+		if typed < 0 {
+			return 0, false
+		}
+		return uint(typed), true
+	case int64:
+		if typed < 0 {
+			return 0, false
+		}
+		return uint(typed), true
+	case float64:
+		if typed < 0 {
+			return 0, false
+		}
+		return uint(typed), true
+	case string:
+		trimmed := strings.TrimSpace(typed)
+		if trimmed == "" {
+			return 0, false
+		}
+		parsed, err := strconv.ParseUint(trimmed, 10, 64)
+		if err != nil {
+			return 0, false
+		}
+		return uint(parsed), true
+	default:
+		return 0, false
+	}
+}
+
+func parsePaymentWebhookHeaders(value interface{}) map[string]string {
+	if value == nil {
+		return nil
+	}
+	typed, ok := value.(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	out := make(map[string]string, len(typed))
+	for key, raw := range typed {
+		normalizedKey := strings.TrimSpace(key)
+		if normalizedKey == "" {
+			continue
+		}
+		out[normalizedKey] = fmt.Sprintf("%v", raw)
+	}
+	return out
+}
+
+func stringifyPaymentWebhookBody(value interface{}) (string, string, error) {
+	if value == nil {
+		return "", "", nil
+	}
+	switch typed := value.(type) {
+	case string:
+		return typed, "text/plain; charset=utf-8", nil
+	case []byte:
+		return string(typed), "application/octet-stream", nil
+	default:
+		body, err := json.Marshal(typed)
+		if err != nil {
+			return "", "", err
+		}
+		return string(body), "application/json; charset=utf-8", nil
 	}
 }
 
@@ -1256,6 +1635,20 @@ func (s *JSRuntimeService) createMD5(vm *goja.Runtime) func(call goja.FunctionCa
 		data := call.Arguments[0].String()
 		hash := md5.Sum([]byte(data))
 		return vm.ToValue(hex.EncodeToString(hash[:]))
+	}
+}
+
+// createHMACSHA256 计算 HMAC-SHA256 十六进制摘要
+func (s *JSRuntimeService) createHMACSHA256(vm *goja.Runtime) func(call goja.FunctionCall) goja.Value {
+	return func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) < 2 {
+			return vm.ToValue("")
+		}
+		payload := call.Arguments[0].String()
+		secret := call.Arguments[1].String()
+		mac := hmac.New(sha256.New, []byte(secret))
+		_, _ = mac.Write([]byte(payload))
+		return vm.ToValue(hex.EncodeToString(mac.Sum(nil)))
 	}
 }
 
@@ -1458,11 +1851,40 @@ func (s *JSRuntimeService) createGetTimestamp(vm *goja.Runtime) func(call goja.F
 func (s *JSRuntimeService) createGetPaymentMethodInfo(vm *goja.Runtime, pm *models.PaymentMethod) func(call goja.FunctionCall) goja.Value {
 	return func(call goja.FunctionCall) goja.Value {
 		return vm.ToValue(map[string]interface{}{
-			"id":          pm.ID,
-			"name":        pm.Name,
-			"description": pm.Description,
-			"type":        pm.Type,
-			"icon":        pm.Icon,
+			"id":                pm.ID,
+			"name":              pm.Name,
+			"description":       pm.Description,
+			"type":              pm.Type,
+			"icon":              pm.Icon,
+			"webhook_base_path": buildPaymentWebhookPath(pm.ID, ""),
+			"webhook_base_url":  s.buildPaymentWebhookURL(pm.ID, ""),
 		})
 	}
+}
+
+func (s *JSRuntimeService) createGetWebhookURL(vm *goja.Runtime, pm *models.PaymentMethod) func(call goja.FunctionCall) goja.Value {
+	return func(call goja.FunctionCall) goja.Value {
+		hook := ""
+		if len(call.Arguments) > 0 {
+			hook = call.Arguments[0].String()
+		}
+		return vm.ToValue(s.buildPaymentWebhookURL(pm.ID, hook))
+	}
+}
+
+func (s *JSRuntimeService) buildPaymentWebhookURL(paymentMethodID uint, hook string) string {
+	path := buildPaymentWebhookPath(paymentMethodID, hook)
+	if s == nil || s.publicBaseURL == "" {
+		return path
+	}
+	return s.publicBaseURL + path
+}
+
+func buildPaymentWebhookPath(paymentMethodID uint, hook string) string {
+	path := fmt.Sprintf("/api/payment-methods/%d/webhooks", paymentMethodID)
+	normalizedHook := strings.Trim(strings.TrimSpace(hook), "/")
+	if normalizedHook != "" {
+		path += "/" + normalizedHook
+	}
+	return path
 }

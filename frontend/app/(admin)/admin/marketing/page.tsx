@@ -36,6 +36,10 @@ import { useLocale } from '@/hooks/use-locale'
 import { getTranslations } from '@/lib/i18n'
 import { usePageTitle } from '@/hooks/use-page-title'
 import { usePermission } from '@/hooks/use-permission'
+import { resolveApiErrorMessage } from '@/lib/api-error'
+import { PluginExtensionList } from '@/components/plugins/plugin-extension-list'
+import { PluginSlot } from '@/components/plugins/plugin-slot'
+import { usePluginExtensionBatch } from '@/lib/plugin-extension-batch'
 
 type RecipientMode = 'all' | 'selected'
 type TriState = 'all' | 'true' | 'false'
@@ -54,11 +58,59 @@ interface AdminUserItem {
   sms_notify_marketing?: boolean
 }
 
+const EMPTY_MARKETING_USERS: AdminUserItem[] = []
+const EMPTY_MARKETING_BATCHES: MarketingBatchItem[] = []
+
 function formatDateTime(dateString?: string, locale?: string) {
   if (!dateString) return '-'
   const date = new Date(dateString)
   if (Number.isNaN(date.getTime())) return dateString
   return date.toLocaleString(locale === 'zh' ? 'zh-CN' : 'en-US', { hour12: false })
+}
+
+function buildAdminMarketingRecipientSummary(user: AdminUserItem) {
+  return {
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    phone: user.phone,
+    role: user.role,
+    is_active: user.is_active,
+    email_verified: user.email_verified,
+    locale: user.locale,
+    country: user.country,
+    email_notify_marketing: user.email_notify_marketing,
+    sms_notify_marketing: user.sms_notify_marketing,
+  }
+}
+
+function buildAdminMarketingBatchSummary(batch: MarketingBatchItem) {
+  return {
+    id: batch.id,
+    batch_no: batch.batch_no,
+    title: batch.title,
+    status: batch.status,
+    total_tasks: batch.total_tasks,
+    processed_tasks: batch.processed_tasks,
+    send_email: batch.send_email,
+    send_sms: batch.send_sms,
+    target_all: batch.target_all,
+    requested_user_count: batch.requested_user_count,
+    targeted_users: batch.targeted_users,
+    email_sent: batch.email_sent,
+    email_failed: batch.email_failed,
+    email_skipped: batch.email_skipped,
+    sms_sent: batch.sms_sent,
+    sms_failed: batch.sms_failed,
+    sms_skipped: batch.sms_skipped,
+    operator_id: batch.operator_id,
+    operator_name: batch.operator_name,
+    started_at: batch.started_at,
+    completed_at: batch.completed_at,
+    failed_reason: batch.failed_reason,
+    created_at: batch.created_at,
+    updated_at: batch.updated_at,
+  }
 }
 
 export default function AdminMarketingPage() {
@@ -69,8 +121,13 @@ export default function AdminMarketingPage() {
   const [permissionReady, setPermissionReady] = useState(false)
   const canViewMarketing = permissionReady && hasPermission('marketing.view')
   const canSendMarketing = permissionReady && hasPermission('marketing.send')
-  const canViewRecipientUsers = permissionReady && hasPermission('marketing.view') && hasPermission('user.view')
+  const canViewRecipientUsers =
+    permissionReady && hasPermission('marketing.view') && hasPermission('user.view')
   usePageTitle(t.pageTitle.adminMarketing)
+  const formatMarketingError = (error: unknown, fallback: string) => {
+    const detail = resolveApiErrorMessage(error, t, fallback)
+    return detail === fallback ? fallback : `${fallback}: ${detail}`
+  }
 
   useEffect(() => {
     setPermissionReady(true)
@@ -102,9 +159,8 @@ export default function AdminMarketingPage() {
     if (value === 'all') return undefined
     return value === 'true'
   }
-  const cleanFilterLabel = (label: string) => label
-    .replace(/^筛选[:：]\s*/u, '')
-    .replace(/^Filter:\s*/u, '')
+  const cleanFilterLabel = (label: string) =>
+    label.replace(/^筛选[:：]\s*/u, '').replace(/^Filter:\s*/u, '')
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -131,22 +187,33 @@ export default function AdminMarketingPage() {
   }, [permissionReady, canViewRecipientUsers, recipientMode])
 
   const usersQuery = useQuery({
-    queryKey: ['marketingUsers', userPage, search, userStatusFilter, userVerifiedFilter, userEmailMarketingFilter, userSmsMarketingFilter, userHasPhoneFilter, userLocaleFilter],
-    queryFn: () => getMarketingUsers({
-      page: userPage,
-      limit: 20,
-      search: search || undefined,
-      is_active: parseTriState(userStatusFilter),
-      email_verified: parseTriState(userVerifiedFilter),
-      email_notify_marketing: parseTriState(userEmailMarketingFilter),
-      sms_notify_marketing: parseTriState(userSmsMarketingFilter),
-      has_phone: parseTriState(userHasPhoneFilter),
-      locale: userLocaleFilter || undefined,
-    }),
+    queryKey: [
+      'marketingUsers',
+      userPage,
+      search,
+      userStatusFilter,
+      userVerifiedFilter,
+      userEmailMarketingFilter,
+      userSmsMarketingFilter,
+      userHasPhoneFilter,
+      userLocaleFilter,
+    ],
+    queryFn: () =>
+      getMarketingUsers({
+        page: userPage,
+        limit: 20,
+        search: search || undefined,
+        is_active: parseTriState(userStatusFilter),
+        email_verified: parseTriState(userVerifiedFilter),
+        email_notify_marketing: parseTriState(userEmailMarketingFilter),
+        sms_notify_marketing: parseTriState(userSmsMarketingFilter),
+        has_phone: parseTriState(userHasPhoneFilter),
+        locale: userLocaleFilter || undefined,
+      }),
     enabled: canViewRecipientUsers && recipientMode === 'selected',
   })
 
-  const users: AdminUserItem[] = usersQuery.data?.data?.items || []
+  const users: AdminUserItem[] = usersQuery.data?.data?.items ?? EMPTY_MARKETING_USERS
   const userPagination = usersQuery.data?.data?.pagination
   const totalUserPages = Math.max(userPagination?.total_pages || 1, 1)
 
@@ -166,14 +233,16 @@ export default function AdminMarketingPage() {
 
   const previewQuery = useQuery({
     queryKey: ['marketingPreview', previewTitle, previewContent, previewUserId],
-    queryFn: () => previewAdminMarketing({
-      title: previewTitle.trim(),
-      content: previewContent,
-      user_id: previewUserId,
-    }),
-    enabled: canSendMarketing
-      && contentTab === 'preview'
-      && (previewTitle.trim().length > 0 || previewContent.trim().length > 0),
+    queryFn: () =>
+      previewAdminMarketing({
+        title: previewTitle.trim(),
+        content: previewContent,
+        user_id: previewUserId,
+      }),
+    enabled:
+      canSendMarketing &&
+      contentTab === 'preview' &&
+      (previewTitle.trim().length > 0 || previewContent.trim().length > 0),
   })
 
   const previewData = previewQuery.data?.data as PreviewAdminMarketingResult | undefined
@@ -184,7 +253,7 @@ export default function AdminMarketingPage() {
     enabled: canViewMarketing,
   })
 
-  const batches: MarketingBatchItem[] = batchesQuery.data?.data?.items || []
+  const batches: MarketingBatchItem[] = batchesQuery.data?.data?.items ?? EMPTY_MARKETING_BATCHES
   const batchPagination = batchesQuery.data?.data?.pagination
   const totalBatchPages = batchPagination?.total_pages || 1
 
@@ -209,8 +278,9 @@ export default function AdminMarketingPage() {
     [users]
   )
   const selectedSet = useMemo(() => new Set(selectedUserIds), [selectedUserIds])
-  const allCurrentPageSelected = selectableCurrentPageIds.length > 0
-    && selectableCurrentPageIds.every((id) => selectedSet.has(id))
+  const allCurrentPageSelected =
+    selectableCurrentPageIds.length > 0 &&
+    selectableCurrentPageIds.every((id) => selectedSet.has(id))
 
   const sendMutation = useMutation({
     mutationFn: (payload: SendAdminMarketingData) => sendAdminMarketing(payload),
@@ -226,16 +296,119 @@ export default function AdminMarketingPage() {
       queryClient.invalidateQueries({ queryKey: ['marketingBatches'] })
       toast.success(t.admin.marketingQueuedSuccess || t.admin.marketingSentSuccess)
     },
-    onError: (error: Error) => {
-      toast.error(`${t.admin.marketingSendFailed}: ${error.message}`)
+    onError: (error: unknown) => {
+      toast.error(formatMarketingError(error, t.admin.marketingSendFailed))
     },
   })
 
-  const activeBatch = (batchDetailQuery.data?.data as MarketingBatchItem | undefined) || (lastResult as unknown as MarketingBatchItem | null)
+  const activeBatch =
+    (batchDetailQuery.data?.data as MarketingBatchItem | undefined) ||
+    (lastResult as unknown as MarketingBatchItem | null)
   const activeBatchStatus = activeBatch?.status
-  const activeBatchProgress = activeBatch && typeof activeBatch.total_tasks === 'number' && activeBatch.total_tasks > 0
-    ? `${activeBatch.processed_tasks}/${activeBatch.total_tasks}`
-    : '-'
+  const activeBatchProgress =
+    activeBatch && typeof activeBatch.total_tasks === 'number' && activeBatch.total_tasks > 0
+      ? `${activeBatch.processed_tasks}/${activeBatch.total_tasks}`
+      : '-'
+  const marketingActiveFilterCount =
+    Number(Boolean(search.trim())) +
+    Number(userStatusFilter !== 'all') +
+    Number(userVerifiedFilter !== 'all') +
+    Number(userEmailMarketingFilter !== 'all') +
+    Number(userSmsMarketingFilter !== 'all') +
+    Number(userHasPhoneFilter !== 'all') +
+    Number(Boolean(userLocaleFilter))
+  const adminMarketingPluginContext = {
+    view: 'admin_marketing',
+    permissions: {
+      can_view: canViewMarketing,
+      can_send: canSendMarketing,
+      can_view_recipient_users: canViewRecipientUsers,
+    },
+    message: {
+      title: title || undefined,
+      content_length: content.length,
+      send_email: sendEmail,
+      send_sms: sendSms,
+      recipient_mode: recipientMode,
+    },
+    filters: {
+      search: search || undefined,
+      is_active: parseTriState(userStatusFilter),
+      email_verified: parseTriState(userVerifiedFilter),
+      email_notify_marketing: parseTriState(userEmailMarketingFilter),
+      sms_notify_marketing: parseTriState(userSmsMarketingFilter),
+      has_phone: parseTriState(userHasPhoneFilter),
+      locale: userLocaleFilter || undefined,
+    },
+    pagination: {
+      user_page: userPage,
+      user_total_pages: totalUserPages,
+      batch_page: batchPage,
+      batch_total_pages: totalBatchPages,
+    },
+    selection: {
+      selected_user_count: selectedUserIds.length,
+      selected_user_ids: selectedUserIds.slice(0, 20),
+    },
+    batch: {
+      active_batch_id: lastBatchId || undefined,
+      active_batch_status: activeBatchStatus || undefined,
+      active_batch_progress: activeBatchProgress,
+    },
+    summary: {
+      active_filter_count: marketingActiveFilterCount,
+      preview_ready: Boolean(previewData),
+    },
+  }
+  const adminMarketingRecipientActionItems =
+    recipientMode === 'selected'
+      ? users.map((user, index) => ({
+          key: String(user.id),
+          slot: 'admin.marketing.recipient_row_actions',
+          path: '/admin/marketing',
+          hostContext: {
+            view: 'admin_marketing_recipient_row',
+            user: buildAdminMarketingRecipientSummary(user),
+            row: {
+              index: index + 1,
+              selected: selectedSet.has(user.id),
+              selectable: user.is_active !== false,
+            },
+            filters: adminMarketingPluginContext.filters,
+            selection: adminMarketingPluginContext.selection,
+            summary: adminMarketingPluginContext.summary,
+          },
+        }))
+      : []
+  const adminMarketingRecipientActionExtensions = usePluginExtensionBatch({
+    scope: 'admin',
+    path: '/admin/marketing',
+    items: adminMarketingRecipientActionItems,
+    enabled: adminMarketingRecipientActionItems.length > 0,
+  })
+  const adminMarketingBatchActionItems = batches.map((batch, index) => ({
+    key: String(batch.id),
+    slot: 'admin.marketing.batch_row_actions',
+    path: '/admin/marketing',
+    hostContext: {
+      view: 'admin_marketing_batch_row',
+      batch: buildAdminMarketingBatchSummary(batch),
+      row: {
+        index: index + 1,
+        selected: lastBatchId === batch.id,
+      },
+      summary: {
+        active_batch_id: lastBatchId || undefined,
+        active_batch_status: activeBatchStatus || undefined,
+      },
+    },
+  }))
+  const adminMarketingBatchActionExtensions = usePluginExtensionBatch({
+    scope: 'admin',
+    path: '/admin/marketing',
+    items: adminMarketingBatchActionItems,
+    enabled: adminMarketingBatchActionItems.length > 0,
+  })
 
   const getBatchStatusText = (status?: string) => {
     switch (status) {
@@ -317,8 +490,8 @@ export default function AdminMarketingPage() {
     return (
       <div className="space-y-6">
         <div>
-          <h1 className="text-2xl md:text-3xl font-bold">{t.admin.marketingManagement}</h1>
-          <p className="text-sm text-muted-foreground mt-1">{t.admin.marketingDescription}</p>
+          <h1 className="text-2xl font-bold md:text-3xl">{t.admin.marketingManagement}</h1>
+          <p className="mt-1 text-sm text-muted-foreground">{t.admin.marketingDescription}</p>
         </div>
         <Card className="h-fit self-start">
           <CardContent className="py-10 text-center text-sm text-muted-foreground">
@@ -333,8 +506,8 @@ export default function AdminMarketingPage() {
     return (
       <div className="space-y-6">
         <div>
-          <h1 className="text-2xl md:text-3xl font-bold">{t.admin.marketingManagement}</h1>
-          <p className="text-sm text-muted-foreground mt-1">{t.admin.marketingDescription}</p>
+          <h1 className="text-2xl font-bold md:text-3xl">{t.admin.marketingManagement}</h1>
+          <p className="mt-1 text-sm text-muted-foreground">{t.admin.marketingDescription}</p>
         </div>
         <Card>
           <CardContent className="py-10 text-center text-sm text-muted-foreground">
@@ -347,12 +520,13 @@ export default function AdminMarketingPage() {
 
   return (
     <div className="space-y-6">
+      <PluginSlot slot="admin.marketing.top" context={adminMarketingPluginContext} />
       <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
         <div>
-          <h1 className="text-2xl md:text-3xl font-bold">{t.admin.marketingManagement}</h1>
-          <p className="text-sm text-muted-foreground mt-1">{t.admin.marketingDescription}</p>
+          <h1 className="text-2xl font-bold md:text-3xl">{t.admin.marketingManagement}</h1>
+          <p className="mt-1 text-sm text-muted-foreground">{t.admin.marketingDescription}</p>
           {!canSendMarketing ? (
-            <p className="text-xs text-amber-600 mt-2">{t.admin.marketingNoSendPermission}</p>
+            <p className="mt-2 text-xs text-amber-600">{t.admin.marketingNoSendPermission}</p>
           ) : null}
         </div>
         <Button onClick={handleSend} disabled={sendMutation.isPending || !canSendMarketing}>
@@ -383,7 +557,10 @@ export default function AdminMarketingPage() {
             </div>
 
             <div className="space-y-2">
-              <Tabs value={contentTab} onValueChange={(value) => setContentTab(value as 'edit' | 'preview')}>
+              <Tabs
+                value={contentTab}
+                onValueChange={(value) => setContentTab(value as 'edit' | 'preview')}
+              >
                 <div className="flex items-center justify-between gap-3">
                   <Label>{t.admin.marketingContent}</Label>
                   <TabsList className="shrink-0">
@@ -403,15 +580,15 @@ export default function AdminMarketingPage() {
 
                 <TabsContent value="preview" className="mt-2 space-y-3">
                   {previewQuery.isLoading || previewQuery.isFetching ? (
-                    <div className="rounded-lg border p-6 text-sm text-muted-foreground flex items-center justify-center">
+                    <div className="flex items-center justify-center rounded-lg border p-6 text-sm text-muted-foreground">
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                       {t.admin.marketingPreviewLoading}
                     </div>
                   ) : previewData ? (
                     <>
                       {sendEmail ? (
-                        <div className="rounded-lg border overflow-hidden">
-                          <div className="px-3 py-2 border-b bg-muted/40 text-xs font-medium">
+                        <div className="overflow-hidden rounded-lg border">
+                          <div className="border-b bg-muted/40 px-3 py-2 text-xs font-medium">
                             {t.admin.marketingPreviewEmail}
                           </div>
                           <iframe
@@ -425,33 +602,39 @@ export default function AdminMarketingPage() {
                       ) : null}
 
                       {sendSms ? (
-                        <div className="rounded-lg border overflow-hidden">
-                          <div className="px-3 py-2 border-b bg-muted/40 text-xs font-medium">
+                        <div className="overflow-hidden rounded-lg border">
+                          <div className="border-b bg-muted/40 px-3 py-2 text-xs font-medium">
                             {t.admin.marketingPreviewSms}
                           </div>
-                          <pre className="m-0 whitespace-pre-wrap break-words px-3 py-3 text-sm leading-6 bg-background">
+                          <pre className="m-0 whitespace-pre-wrap break-words bg-background px-3 py-3 text-sm leading-6">
                             {previewData.sms_text || '-'}
                           </pre>
                         </div>
                       ) : null}
 
                       <div className="rounded-lg border border-dashed p-3">
-                        <p className="text-xs text-muted-foreground">{t.admin.marketingPlaceholderHint}</p>
-                        {previewData.supported_placeholders && previewData.supported_placeholders.length > 0 ? (
-                          <p className="mt-1 text-[11px] break-all text-muted-foreground">
+                        <p className="text-xs text-muted-foreground">
+                          {t.admin.marketingPlaceholderHint}
+                        </p>
+                        {previewData.supported_placeholders &&
+                        previewData.supported_placeholders.length > 0 ? (
+                          <p className="mt-1 break-all text-[11px] text-muted-foreground">
                             {previewData.supported_placeholders.join('  ')}
                           </p>
                         ) : null}
-                        <p className="mt-2 text-xs text-muted-foreground">{t.admin.marketingTemplateVariableHint}</p>
-                        {previewData.supported_template_variables && previewData.supported_template_variables.length > 0 ? (
-                          <p className="mt-1 text-[11px] break-all text-muted-foreground">
+                        <p className="mt-2 text-xs text-muted-foreground">
+                          {t.admin.marketingTemplateVariableHint}
+                        </p>
+                        {previewData.supported_template_variables &&
+                        previewData.supported_template_variables.length > 0 ? (
+                          <p className="mt-1 break-all text-[11px] text-muted-foreground">
                             {previewData.supported_template_variables.join('  ')}
                           </p>
                         ) : null}
                       </div>
                     </>
                   ) : (
-                    <div className="rounded-lg border p-6 text-sm text-muted-foreground text-center">
+                    <div className="rounded-lg border p-6 text-center text-sm text-muted-foreground">
                       {t.admin.marketingPreviewEmpty}
                     </div>
                   )}
@@ -464,9 +647,9 @@ export default function AdminMarketingPage() {
             <div className="space-y-3">
               <Label>{t.admin.marketingChannels}</Label>
               <div className="grid gap-3 sm:grid-cols-2">
-                <div className="rounded-lg border p-3 flex items-center justify-between gap-3">
-                  <div className="flex items-start gap-2 min-w-0">
-                    <Mail className="h-4 w-4 mt-0.5 shrink-0 text-muted-foreground" />
+                <div className="flex items-center justify-between gap-3 rounded-lg border p-3">
+                  <div className="flex min-w-0 items-start gap-2">
+                    <Mail className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
                     <div className="min-w-0">
                       <p className="text-sm font-medium">{t.announcement.sendEmail}</p>
                       <p className="text-xs text-muted-foreground">{t.admin.marketingEmailHint}</p>
@@ -475,9 +658,9 @@ export default function AdminMarketingPage() {
                   <Switch checked={sendEmail} onCheckedChange={setSendEmail} />
                 </div>
 
-                <div className="rounded-lg border p-3 flex items-center justify-between gap-3">
-                  <div className="flex items-start gap-2 min-w-0">
-                    <MessageSquare className="h-4 w-4 mt-0.5 shrink-0 text-muted-foreground" />
+                <div className="flex items-center justify-between gap-3 rounded-lg border p-3">
+                  <div className="flex min-w-0 items-start gap-2">
+                    <MessageSquare className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
                     <div className="min-w-0">
                       <p className="text-sm font-medium">{t.announcement.sendSms}</p>
                       <p className="text-xs text-muted-foreground">{t.admin.marketingSmsHint}</p>
@@ -525,8 +708,8 @@ export default function AdminMarketingPage() {
               <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
                 {t.admin.marketingTargetAllHint}
               </div>
-	            ) : (
-	              <div className="space-y-3">
+            ) : (
+              <div className="space-y-3">
                 <Card>
                   <CardContent className="space-y-3 pt-6">
                     <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
@@ -544,94 +727,144 @@ export default function AdminMarketingPage() {
                       </div>
 
                       <div className="space-y-2">
-                        <label className="text-sm font-medium">{cleanFilterLabel(t.admin.userFilterStatus)}</label>
-                        <Select value={userStatusFilter} onValueChange={(v) => { setUserStatusFilter(v as TriState); setUserPage(1) }}>
+                        <label className="text-sm font-medium">
+                          {cleanFilterLabel(t.admin.userFilterStatus)}
+                        </label>
+                        <Select
+                          value={userStatusFilter}
+                          onValueChange={(v) => {
+                            setUserStatusFilter(v as TriState)
+                            setUserPage(1)
+                          }}
+                        >
                           <SelectTrigger>
                             <SelectValue placeholder={cleanFilterLabel(t.admin.userFilterStatus)} />
                           </SelectTrigger>
                           <SelectContent>
                             <SelectItem value="all">{t.common.all}</SelectItem>
-	                            <SelectItem value="true">{t.admin.active}</SelectItem>
-	                            <SelectItem value="false">{t.admin.inactive}</SelectItem>
-	                          </SelectContent>
-	                        </Select>
+                            <SelectItem value="true">{t.admin.active}</SelectItem>
+                            <SelectItem value="false">{t.admin.inactive}</SelectItem>
+                          </SelectContent>
+                        </Select>
                       </div>
 
                       <div className="space-y-2">
-                        <label className="text-sm font-medium">{cleanFilterLabel(t.admin.userFilterEmailVerified)}</label>
-                        <Select value={userVerifiedFilter} onValueChange={(v) => { setUserVerifiedFilter(v as TriState); setUserPage(1) }}>
+                        <label className="text-sm font-medium">
+                          {cleanFilterLabel(t.admin.userFilterEmailVerified)}
+                        </label>
+                        <Select
+                          value={userVerifiedFilter}
+                          onValueChange={(v) => {
+                            setUserVerifiedFilter(v as TriState)
+                            setUserPage(1)
+                          }}
+                        >
                           <SelectTrigger>
-                            <SelectValue placeholder={cleanFilterLabel(t.admin.userFilterEmailVerified)} />
+                            <SelectValue
+                              placeholder={cleanFilterLabel(t.admin.userFilterEmailVerified)}
+                            />
                           </SelectTrigger>
                           <SelectContent>
                             <SelectItem value="all">{t.common.all}</SelectItem>
-	                            <SelectItem value="true">{t.admin.verified}</SelectItem>
-	                            <SelectItem value="false">{t.admin.unverified}</SelectItem>
-	                          </SelectContent>
-	                        </Select>
+                            <SelectItem value="true">{t.admin.verified}</SelectItem>
+                            <SelectItem value="false">{t.admin.unverified}</SelectItem>
+                          </SelectContent>
+                        </Select>
                       </div>
 
                       <div className="space-y-2">
-                        <label className="text-sm font-medium">{cleanFilterLabel(t.admin.userFilterHasPhone)}</label>
-                        <Select value={userHasPhoneFilter} onValueChange={(v) => { setUserHasPhoneFilter(v as TriState); setUserPage(1) }}>
+                        <label className="text-sm font-medium">
+                          {cleanFilterLabel(t.admin.userFilterHasPhone)}
+                        </label>
+                        <Select
+                          value={userHasPhoneFilter}
+                          onValueChange={(v) => {
+                            setUserHasPhoneFilter(v as TriState)
+                            setUserPage(1)
+                          }}
+                        >
                           <SelectTrigger>
-                            <SelectValue placeholder={cleanFilterLabel(t.admin.userFilterHasPhone)} />
+                            <SelectValue
+                              placeholder={cleanFilterLabel(t.admin.userFilterHasPhone)}
+                            />
                           </SelectTrigger>
                           <SelectContent>
                             <SelectItem value="all">{t.common.all}</SelectItem>
-	                            <SelectItem value="true">{t.admin.withPhone}</SelectItem>
-	                            <SelectItem value="false">{t.admin.withoutPhone}</SelectItem>
-	                          </SelectContent>
-	                        </Select>
+                            <SelectItem value="true">{t.admin.withPhone}</SelectItem>
+                            <SelectItem value="false">{t.admin.withoutPhone}</SelectItem>
+                          </SelectContent>
+                        </Select>
                       </div>
 
                       <div className="space-y-2">
-                        <label className="text-sm font-medium">{cleanFilterLabel(t.admin.userFilterEmailMarketing)}</label>
-                        <Select value={userEmailMarketingFilter} onValueChange={(v) => { setUserEmailMarketingFilter(v as TriState); setUserPage(1) }}>
+                        <label className="text-sm font-medium">
+                          {cleanFilterLabel(t.admin.userFilterEmailMarketing)}
+                        </label>
+                        <Select
+                          value={userEmailMarketingFilter}
+                          onValueChange={(v) => {
+                            setUserEmailMarketingFilter(v as TriState)
+                            setUserPage(1)
+                          }}
+                        >
                           <SelectTrigger>
-                            <SelectValue placeholder={cleanFilterLabel(t.admin.userFilterEmailMarketing)} />
+                            <SelectValue
+                              placeholder={cleanFilterLabel(t.admin.userFilterEmailMarketing)}
+                            />
                           </SelectTrigger>
                           <SelectContent>
                             <SelectItem value="all">{t.common.all}</SelectItem>
-	                            <SelectItem value="true">{t.admin.enabled}</SelectItem>
-	                            <SelectItem value="false">{t.admin.disabled}</SelectItem>
-	                          </SelectContent>
-	                        </Select>
+                            <SelectItem value="true">{t.admin.enabled}</SelectItem>
+                            <SelectItem value="false">{t.admin.disabled}</SelectItem>
+                          </SelectContent>
+                        </Select>
                       </div>
 
                       <div className="space-y-2">
-                        <label className="text-sm font-medium">{cleanFilterLabel(t.admin.userFilterSmsMarketing)}</label>
-                        <Select value={userSmsMarketingFilter} onValueChange={(v) => { setUserSmsMarketingFilter(v as TriState); setUserPage(1) }}>
+                        <label className="text-sm font-medium">
+                          {cleanFilterLabel(t.admin.userFilterSmsMarketing)}
+                        </label>
+                        <Select
+                          value={userSmsMarketingFilter}
+                          onValueChange={(v) => {
+                            setUserSmsMarketingFilter(v as TriState)
+                            setUserPage(1)
+                          }}
+                        >
                           <SelectTrigger>
-                            <SelectValue placeholder={cleanFilterLabel(t.admin.userFilterSmsMarketing)} />
+                            <SelectValue
+                              placeholder={cleanFilterLabel(t.admin.userFilterSmsMarketing)}
+                            />
                           </SelectTrigger>
                           <SelectContent>
                             <SelectItem value="all">{t.common.all}</SelectItem>
-	                            <SelectItem value="true">{t.admin.enabled}</SelectItem>
-	                            <SelectItem value="false">{t.admin.disabled}</SelectItem>
-	                          </SelectContent>
-	                        </Select>
+                            <SelectItem value="true">{t.admin.enabled}</SelectItem>
+                            <SelectItem value="false">{t.admin.disabled}</SelectItem>
+                          </SelectContent>
+                        </Select>
                       </div>
 
-	                      <div className="space-y-2">
-	                        <label className="text-sm font-medium">{cleanFilterLabel(t.admin.userFilterLocale)}</label>
-	                        <Select
-	                          value={userLocaleFilter || 'all'}
-	                          onValueChange={(value) => {
-	                            setUserLocaleFilter(value === 'all' ? '' : value)
-	                            setUserPage(1)
-	                          }}
-	                        >
-	                          <SelectTrigger>
-	                            <SelectValue placeholder={t.common.all} />
-	                          </SelectTrigger>
-	                          <SelectContent>
-	                            <SelectItem value="all">{t.common.all}</SelectItem>
-	                            <SelectItem value="zh">{t.language.zh}</SelectItem>
-	                            <SelectItem value="en">{t.language.en}</SelectItem>
-	                          </SelectContent>
-	                        </Select>
-	                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">
+                          {cleanFilterLabel(t.admin.userFilterLocale)}
+                        </label>
+                        <Select
+                          value={userLocaleFilter || 'all'}
+                          onValueChange={(value) => {
+                            setUserLocaleFilter(value === 'all' ? '' : value)
+                            setUserPage(1)
+                          }}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder={t.common.all} />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="all">{t.common.all}</SelectItem>
+                            <SelectItem value="zh">{t.language.zh}</SelectItem>
+                            <SelectItem value="en">{t.language.en}</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
                     </div>
                   </CardContent>
                 </Card>
@@ -639,7 +872,10 @@ export default function AdminMarketingPage() {
                 <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
                   <div className="flex items-center gap-2">
                     <Users className="h-3.5 w-3.5" />
-                    {t.admin.marketingSelectedCount.replace('{count}', String(selectedUserIds.length))}
+                    {t.admin.marketingSelectedCount.replace(
+                      '{count}',
+                      String(selectedUserIds.length)
+                    )}
                   </div>
                   <div className="flex items-center gap-2">
                     <Button
@@ -647,9 +883,15 @@ export default function AdminMarketingPage() {
                       variant="ghost"
                       size="sm"
                       onClick={handleToggleCurrentPage}
-                      disabled={usersQuery.isLoading || usersQuery.isFetching || selectableCurrentPageIds.length === 0}
+                      disabled={
+                        usersQuery.isLoading ||
+                        usersQuery.isFetching ||
+                        selectableCurrentPageIds.length === 0
+                      }
                     >
-                      {allCurrentPageSelected ? t.admin.marketingUnselectPage : t.admin.marketingSelectPage}
+                      {allCurrentPageSelected
+                        ? t.admin.marketingUnselectPage
+                        : t.admin.marketingSelectPage}
                     </Button>
                     <Button
                       type="button"
@@ -664,29 +906,36 @@ export default function AdminMarketingPage() {
                 </div>
 
                 <div className="rounded-lg border">
-                  <div className="max-h-[320px] overflow-y-auto p-2 space-y-1">
-                      {usersQuery.isLoading || usersQuery.isFetching ? (
-                        <div className="flex items-center justify-center py-8 text-muted-foreground">
-                          <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                          {t.common.loading}
-                        </div>
-                      ) : usersQuery.error ? (
-                        <div className="py-8 text-center text-sm text-destructive">
-                          {t.admin.marketingLoadUsersFailed}
-                        </div>
-                      ) : users.length === 0 ? (
-                        <div className="py-8 text-center text-sm text-muted-foreground">
-                          {t.admin.noData}
-                        </div>
-                      ) : (
-                        users.map((user) => {
-                          const isActive = user.is_active !== false
-                          const checked = selectedSet.has(user.id)
-                          return (
+                  <div className="max-h-[320px] space-y-1 overflow-y-auto p-2">
+                    {usersQuery.isLoading || usersQuery.isFetching ? (
+                      <div className="flex items-center justify-center py-8 text-muted-foreground">
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        {t.common.loading}
+                      </div>
+                    ) : usersQuery.error ? (
+                      <div className="py-8 text-center text-sm text-destructive">
+                        {t.admin.marketingLoadUsersFailed}
+                      </div>
+                    ) : users.length === 0 ? (
+                      <div className="py-8 text-center text-sm text-muted-foreground">
+                        {t.admin.noData}
+                      </div>
+                    ) : (
+                      users.map((user) => {
+                        const isActive = user.is_active !== false
+                        const checked = selectedSet.has(user.id)
+                        const rowExtensions =
+                          adminMarketingRecipientActionExtensions[String(user.id)] || []
+                        return (
+                          <div
+                            key={user.id}
+                            className={`rounded-md p-2 transition-colors ${
+                              isActive ? 'hover:bg-muted/60' : 'opacity-60'
+                            }`}
+                          >
                             <label
-                              key={user.id}
-                              className={`flex items-start gap-3 rounded-md p-2 transition-colors ${
-                                isActive ? 'hover:bg-muted/60 cursor-pointer' : 'opacity-60 cursor-not-allowed'
+                              className={`flex items-start gap-3 ${
+                                isActive ? 'cursor-pointer' : 'cursor-not-allowed'
                               }`}
                             >
                               <Checkbox
@@ -697,7 +946,7 @@ export default function AdminMarketingPage() {
                               />
                               <div className="min-w-0 flex-1">
                                 <div className="flex items-center gap-2">
-                                  <p className="text-sm font-medium truncate">
+                                  <p className="truncate text-sm font-medium">
                                     {user.name || user.email || `#${user.id}`}
                                   </p>
                                   <Badge variant="outline" className="text-[10px]">
@@ -709,13 +958,23 @@ export default function AdminMarketingPage() {
                                     </Badge>
                                   ) : null}
                                 </div>
-                                <p className="text-xs text-muted-foreground truncate">{user.email || '-'}</p>
-                                <p className="text-xs text-muted-foreground truncate">{user.phone || '-'}</p>
+                                <p className="truncate text-xs text-muted-foreground">
+                                  {user.email || '-'}
+                                </p>
+                                <p className="truncate text-xs text-muted-foreground">
+                                  {user.phone || '-'}
+                                </p>
                               </div>
                             </label>
-                          )
-                        })
-                      )}
+                            {rowExtensions.length > 0 ? (
+                              <div className="mt-2 pl-7">
+                                <PluginExtensionList extensions={rowExtensions} display="inline" />
+                              </div>
+                            ) : null}
+                          </div>
+                        )
+                      })
+                    )}
                   </div>
                 </div>
 
@@ -762,7 +1021,9 @@ export default function AdminMarketingPage() {
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-8">
               <div className="rounded-lg border p-3">
                 <p className="text-xs text-muted-foreground">{t.admin.marketingBatchNo}</p>
-                <p className="mt-1 text-sm font-semibold break-all">{activeBatch.batch_no || '-'}</p>
+                <p className="mt-1 break-all text-sm font-semibold">
+                  {activeBatch.batch_no || '-'}
+                </p>
               </div>
               <div className="rounded-lg border p-3">
                 <p className="text-xs text-muted-foreground">{t.admin.marketingOperator}</p>
@@ -773,9 +1034,13 @@ export default function AdminMarketingPage() {
               </div>
               <div className="rounded-lg border p-3">
                 <p className="text-xs text-muted-foreground">{t.admin.marketingStatus}</p>
-                <p className="mt-1 text-sm font-semibold">{getBatchStatusText(activeBatchStatus)}</p>
+                <p className="mt-1 text-sm font-semibold">
+                  {getBatchStatusText(activeBatchStatus)}
+                </p>
                 {activeBatch.failed_reason ? (
-                  <p className="mt-1 line-clamp-2 text-[11px] text-destructive">{activeBatch.failed_reason}</p>
+                  <p className="mt-1 line-clamp-2 text-[11px] text-destructive">
+                    {activeBatch.failed_reason}
+                  </p>
                 ) : null}
               </div>
               <div className="rounded-lg border p-3">
@@ -789,13 +1054,16 @@ export default function AdminMarketingPage() {
               <div className="rounded-lg border p-3">
                 <p className="text-xs text-muted-foreground">{t.admin.marketingEmailSummary}</p>
                 <p className="mt-1 text-sm">
-                  {t.admin.marketingSent}: {activeBatch.email_sent} / {t.admin.marketingFailed}: {activeBatch.email_failed} / {t.admin.marketingSkipped}: {activeBatch.email_skipped}
+                  {t.admin.marketingSent}: {activeBatch.email_sent} / {t.admin.marketingFailed}:{' '}
+                  {activeBatch.email_failed} / {t.admin.marketingSkipped}:{' '}
+                  {activeBatch.email_skipped}
                 </p>
               </div>
               <div className="rounded-lg border p-3">
                 <p className="text-xs text-muted-foreground">{t.admin.marketingSmsSummary}</p>
                 <p className="mt-1 text-sm">
-                  {t.admin.marketingSent}: {activeBatch.sms_sent} / {t.admin.marketingFailed}: {activeBatch.sms_failed} / {t.admin.marketingSkipped}: {activeBatch.sms_skipped}
+                  {t.admin.marketingSent}: {activeBatch.sms_sent} / {t.admin.marketingFailed}:{' '}
+                  {activeBatch.sms_failed} / {t.admin.marketingSkipped}: {activeBatch.sms_skipped}
                 </p>
               </div>
               <div className="rounded-lg border p-3">
@@ -821,37 +1089,57 @@ export default function AdminMarketingPage() {
           ) : batches.length === 0 ? (
             <div className="py-6 text-center text-sm text-muted-foreground">{t.admin.noData}</div>
           ) : (
-            batches.map((batch) => (
-              <div
-                key={batch.id}
-                className={`rounded-lg border p-3 transition-colors cursor-pointer ${
-                  lastBatchId === batch.id ? 'border-primary bg-primary/5' : 'hover:bg-muted/40'
-                }`}
-                onClick={() => setLastBatchId(batch.id)}
-              >
-                <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="min-w-0">
-                    <p className="text-sm font-semibold break-all">{batch.batch_no}</p>
-                    <p className="text-xs text-muted-foreground truncate">{batch.title}</p>
+            batches.map((batch) => {
+              const rowExtensions = adminMarketingBatchActionExtensions[String(batch.id)] || []
+              return (
+                <div
+                  key={batch.id}
+                  className={`cursor-pointer rounded-lg border p-3 transition-colors ${
+                    lastBatchId === batch.id ? 'border-primary bg-primary/5' : 'hover:bg-muted/40'
+                  }`}
+                  onClick={() => setLastBatchId(batch.id)}
+                >
+                  <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="min-w-0">
+                      <p className="break-all text-sm font-semibold">{batch.batch_no}</p>
+                      <p className="truncate text-xs text-muted-foreground">{batch.title}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-xs text-muted-foreground">
+                        {t.admin.marketingOperator}: {batch.operator_name || '-'}
+                      </p>
+                      <p className="text-xs font-medium">
+                        {t.admin.marketingStatus}: {getBatchStatusText(batch.status)}
+                      </p>
+                    </div>
                   </div>
-                  <div className="text-right">
-                    <p className="text-xs text-muted-foreground">
-                      {t.admin.marketingOperator}: {batch.operator_name || '-'}
-                    </p>
-                    <p className="text-xs font-medium">
-                      {t.admin.marketingStatus}: {getBatchStatusText(batch.status)}
-                    </p>
+                  <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                    <span>
+                      {t.admin.createdAt}: {formatDateTime(batch.created_at, locale)}
+                    </span>
+                    <span>
+                      {t.admin.marketingProgress}: {batch.processed_tasks}/{batch.total_tasks}
+                    </span>
+                    <span>
+                      {t.admin.marketingTargetedUsers}: {batch.targeted_users}
+                    </span>
+                    <span>
+                      {t.admin.marketingEmailSummary}: {batch.email_sent}/{batch.email_failed}/
+                      {batch.email_skipped}
+                    </span>
+                    <span>
+                      {t.admin.marketingSmsSummary}: {batch.sms_sent}/{batch.sms_failed}/
+                      {batch.sms_skipped}
+                    </span>
                   </div>
+                  {rowExtensions.length > 0 ? (
+                    <div className="mt-3" onClick={(event) => event.stopPropagation()}>
+                      <PluginExtensionList extensions={rowExtensions} display="inline" />
+                    </div>
+                  ) : null}
                 </div>
-                <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-                  <span>{t.admin.createdAt}: {formatDateTime(batch.created_at, locale)}</span>
-                  <span>{t.admin.marketingProgress}: {batch.processed_tasks}/{batch.total_tasks}</span>
-                  <span>{t.admin.marketingTargetedUsers}: {batch.targeted_users}</span>
-                  <span>{t.admin.marketingEmailSummary}: {batch.email_sent}/{batch.email_failed}/{batch.email_skipped}</span>
-                  <span>{t.admin.marketingSmsSummary}: {batch.sms_sent}/{batch.sms_failed}/{batch.sms_skipped}</span>
-                </div>
-              </div>
-            ))
+              )
+            })
           )}
 
           {totalBatchPages > 1 ? (

@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log"
 	"regexp"
 	"strings"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"auralogic/internal/database"
 	"auralogic/internal/middleware"
 	"auralogic/internal/models"
+	"auralogic/internal/pkg/authbiz"
 	"auralogic/internal/pkg/cache"
 	"auralogic/internal/pkg/logger"
 	"auralogic/internal/pkg/response"
@@ -27,15 +29,87 @@ type AuthHandler struct {
 	emailService   *service.EmailService
 	smsService     *service.SMSService
 	captchaService *service.CaptchaService
+	pluginManager  *service.PluginManagerService
 }
 
-func NewAuthHandler(authService *service.AuthService, emailService *service.EmailService, smsService *service.SMSService) *AuthHandler {
+func NewAuthHandler(authService *service.AuthService, emailService *service.EmailService, smsService *service.SMSService, pluginManager *service.PluginManagerService) *AuthHandler {
 	return &AuthHandler{
 		authService:    authService,
 		emailService:   emailService,
 		smsService:     smsService,
 		captchaService: service.NewCaptchaService(),
+		pluginManager:  pluginManager,
 	}
+}
+
+func (h *AuthHandler) buildAuthHookExecutionContext(c *gin.Context, userID *uint) *service.ExecutionContext {
+	if c == nil {
+		return nil
+	}
+
+	metadata := map[string]string{
+		"request_path":    c.Request.URL.Path,
+		"route":           c.FullPath(),
+		"method":          c.Request.Method,
+		"client_ip":       c.ClientIP(),
+		"user_agent":      c.GetHeader("User-Agent"),
+		"accept_language": c.GetHeader("Accept-Language"),
+		"operator_type":   "user",
+		"auth_scene":      "auth_api",
+	}
+	sessionID := strings.TrimSpace(c.GetHeader("X-Session-ID"))
+	return &service.ExecutionContext{
+		UserID:         userID,
+		SessionID:      sessionID,
+		Metadata:       metadata,
+		RequestContext: c.Request.Context(),
+	}
+}
+
+func cloneAuthExecutionContext(execCtx *service.ExecutionContext) *service.ExecutionContext {
+	if execCtx == nil {
+		return nil
+	}
+
+	cloned := &service.ExecutionContext{
+		SessionID:      execCtx.SessionID,
+		RequestContext: execCtx.RequestContext,
+	}
+	if execCtx.UserID != nil {
+		userID := *execCtx.UserID
+		cloned.UserID = &userID
+	}
+	if execCtx.OrderID != nil {
+		orderID := *execCtx.OrderID
+		cloned.OrderID = &orderID
+	}
+	if len(execCtx.Metadata) > 0 {
+		cloned.Metadata = make(map[string]string, len(execCtx.Metadata))
+		for key, value := range execCtx.Metadata {
+			cloned.Metadata[key] = value
+		}
+	}
+	return cloned
+}
+
+func loadEffectiveAdminPermissions(db *gorm.DB, userID uint, role string) []string {
+	if role != "admin" && role != "super_admin" {
+		return []string{}
+	}
+
+	permissions := middleware.EffectiveAdminPermissions(role, nil)
+	if db == nil {
+		return permissions
+	}
+
+	var perm models.AdminPermission
+	if err := db.Where("user_id = ?", userID).First(&perm).Error; err == nil {
+		return middleware.EffectiveAdminPermissions(role, perm.Permissions)
+	} else if err != gorm.ErrRecordNotFound {
+		return []string{}
+	}
+
+	return permissions
 }
 
 // LoginRequest 登录请求
@@ -57,12 +131,47 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	// 验证码校验
 	if h.captchaService.NeedCaptcha("login") {
 		if req.CaptchaToken == "" {
-			response.Error(c, 400, response.CodeParamMissing, "Captcha is required")
+			respondAuthBizError(c, authbiz.CaptchaRequired(), nil)
 			return
 		}
 		if err := h.captchaService.VerifyCaptcha(req.CaptchaToken, utils.GetRealIP(c)); err != nil {
-			response.Error(c, 400, response.CodeParamError, "Captcha verification failed")
+			respondAuthBizError(c, authbiz.CaptchaFailed(), nil)
 			return
+		}
+	}
+	hookExecCtx := h.buildAuthHookExecutionContext(c, nil)
+	if h.pluginManager != nil {
+		hookPayload := map[string]interface{}{
+			"auth_method":      "password",
+			"email":            req.Email,
+			"password_present": strings.TrimSpace(req.Password) != "",
+			"source":           "user_api",
+		}
+		hookResult, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+			Hook:    "auth.login.before",
+			Payload: hookPayload,
+		}, hookExecCtx)
+		if hookErr != nil {
+			log.Printf("auth.login.before hook execution failed: email=%s err=%v", req.Email, hookErr)
+		} else if hookResult != nil {
+			if hookResult.Blocked {
+				reason := strings.TrimSpace(hookResult.BlockReason)
+				if reason == "" {
+					reason = "Login rejected by plugin"
+				}
+				response.BadRequest(c, reason)
+				return
+			}
+			if hookResult.Payload != nil {
+				if rawEmail, exists := hookResult.Payload["email"]; exists {
+					email, convErr := authHookValueToOptionalString(rawEmail)
+					if convErr != nil {
+						log.Printf("auth.login.before payload email decode failed, keep original request: email=%s err=%v", req.Email, convErr)
+					} else {
+						req.Email = strings.ToLower(strings.TrimSpace(email))
+					}
+				}
+			}
 		}
 	}
 
@@ -70,19 +179,13 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	if err != nil {
 		db := database.GetDB()
 		logger.LogLoginAttempt(db, c, req.Email, false, nil)
-		if err.Error() == "EMAIL_NOT_VERIFIED" {
-			response.ErrorWithData(c, 403, response.CodeEmailNotVerified, "Please verify your email before logging in", gin.H{
-				"email": req.Email,
-			})
+		if respondAuthBizError(c, err, gin.H{
+			"email":           req.Email,
+			"allowed_methods": []string{"magic_link", "oauth"},
+		}) {
 			return
 		}
-		if err.Error() == "Password login is disabled, please use quick login or OAuth login" {
-			response.ErrorWithData(c, 403, response.CodePasswordDisabled, err.Error(), gin.H{
-				"allowed_methods": []string{"magic_link", "oauth"},
-			})
-			return
-		}
-		response.Unauthorized(c, err.Error())
+		response.InternalServerError(c, "Login failed", err)
 		return
 	}
 
@@ -96,6 +199,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 
 	// 构建响应数据
 	result := gin.H{
+		"id":                user.ID,
 		"user_id":           user.ID,
 		"uuid":              user.UUID,
 		"email":             user.Email,
@@ -109,20 +213,27 @@ func (h *AuthHandler) Login(c *gin.Context) {
 
 	// 如果是Admin，getPermission列表
 	if user.IsAdmin() {
-		db := database.GetDB()
-		var perm models.AdminPermission
-		if err := db.Where("user_id = ?", user.ID).First(&perm).Error; err == nil {
-			result["permissions"] = perm.Permissions
-		} else if err == gorm.ErrRecordNotFound {
-			// 超级Admin默认拥有所有Permission（除了特殊Permission）
-			if user.IsSuperAdmin() {
-				result["permissions"] = getAllPermissions()
-			} else {
-				result["permissions"] = []string{}
-			}
-		} else {
-			result["permissions"] = []string{}
+		result["permissions"] = loadEffectiveAdminPermissions(database.GetDB(), user.ID, user.Role)
+	}
+	if h.pluginManager != nil {
+		uid := user.ID
+		afterExecCtx := h.buildAuthHookExecutionContext(c, &uid)
+		afterPayload := map[string]interface{}{
+			"auth_method": "password",
+			"user_id":     user.ID,
+			"email":       user.Email,
+			"role":        user.Role,
+			"source":      "user_api",
 		}
+		go func(execCtx *service.ExecutionContext, payload map[string]interface{}, email string) {
+			_, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+				Hook:    "auth.login.after",
+				Payload: payload,
+			}, execCtx)
+			if hookErr != nil {
+				log.Printf("auth.login.after hook execution failed: email=%s err=%v", email, hookErr)
+			}
+		}(cloneAuthExecutionContext(afterExecCtx), afterPayload, user.Email)
 	}
 
 	response.Success(c, gin.H{
@@ -145,7 +256,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 	// 检查是否允许注册
 	cfg := config.GetConfig()
 	if !cfg.Security.Login.AllowRegistration {
-		response.ErrorWithData(c, 403, response.CodeForbidden, "Registration is disabled", nil)
+		respondAuthBizError(c, authbiz.RegistrationDisabled(), nil)
 		return
 	}
 
@@ -160,25 +271,67 @@ func (h *AuthHandler) Register(c *gin.Context) {
 	// 验证码校验
 	if h.captchaService.NeedCaptcha("register") {
 		if req.CaptchaToken == "" {
-			response.Error(c, 400, response.CodeParamMissing, "Captcha is required")
+			respondAuthBizError(c, authbiz.CaptchaRequired(), nil)
 			return
 		}
 		if err := h.captchaService.VerifyCaptcha(req.CaptchaToken, utils.GetRealIP(c)); err != nil {
-			response.Error(c, 400, response.CodeParamError, "Captcha verification failed")
+			respondAuthBizError(c, authbiz.CaptchaFailed(), nil)
 			return
+		}
+	}
+	hookExecCtx := h.buildAuthHookExecutionContext(c, nil)
+	if h.pluginManager != nil {
+		hookPayload := map[string]interface{}{
+			"auth_method":      "email",
+			"email":            req.Email,
+			"name":             req.Name,
+			"password_present": strings.TrimSpace(req.Password) != "",
+			"source":           "user_api",
+		}
+		hookResult, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+			Hook:    "auth.register.before",
+			Payload: hookPayload,
+		}, hookExecCtx)
+		if hookErr != nil {
+			log.Printf("auth.register.before hook execution failed: email=%s err=%v", req.Email, hookErr)
+		} else if hookResult != nil {
+			if hookResult.Blocked {
+				reason := strings.TrimSpace(hookResult.BlockReason)
+				if reason == "" {
+					reason = "Registration rejected by plugin"
+				}
+				response.BadRequest(c, reason)
+				return
+			}
+			if hookResult.Payload != nil {
+				if rawEmail, exists := hookResult.Payload["email"]; exists {
+					email, convErr := authHookValueToOptionalString(rawEmail)
+					if convErr != nil {
+						log.Printf("auth.register.before payload email decode failed, keep original request: email=%s err=%v", req.Email, convErr)
+					} else {
+						req.Email = strings.ToLower(strings.TrimSpace(email))
+					}
+				}
+				if rawName, exists := hookResult.Payload["name"]; exists {
+					name, convErr := authHookValueToOptionalString(rawName)
+					if convErr != nil {
+						log.Printf("auth.register.before payload name decode failed, keep original request: email=%s err=%v", req.Email, convErr)
+					} else {
+						req.Name = strings.TrimSpace(name)
+					}
+				}
+			}
 		}
 	}
 
 	user, err := h.authService.Register(req.Email, "", req.Name, req.Password)
 	if err != nil {
 		switch {
-		case errors.Is(err, service.ErrEmailAlreadyInUse), errors.Is(err, service.ErrPhoneAlreadyInUse):
-			response.Error(c, 409, response.CodeConflict, err.Error())
+		case respondAuthBizError(c, err, nil):
 		case errors.Is(err, service.ErrRegisterInternal):
 			response.InternalError(c, "Registration failed")
 		default:
-			// Password policy / validation errors are safe to show.
-			response.BadRequest(c, err.Error())
+			respondAuthValidationOrInternalError(c, err, "Registration failed")
 		}
 		return
 	}
@@ -197,6 +350,30 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		"name":        user.Name,
 		"register_ip": user.RegisterIP,
 	})
+	emitRegisterAfter := func(requireVerification bool) {
+		if h.pluginManager == nil {
+			return
+		}
+		uid := user.ID
+		afterPayload := map[string]interface{}{
+			"auth_method":          "email",
+			"user_id":              user.ID,
+			"email":                user.Email,
+			"name":                 user.Name,
+			"require_verification": requireVerification,
+			"email_verified":       user.EmailVerified,
+			"source":               "user_api",
+		}
+		go func(execCtx *service.ExecutionContext, payload map[string]interface{}, email string) {
+			_, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+				Hook:    "auth.register.after",
+				Payload: payload,
+			}, execCtx)
+			if hookErr != nil {
+				log.Printf("auth.register.after hook execution failed: email=%s err=%v", email, hookErr)
+			}
+		}(cloneAuthExecutionContext(h.buildAuthHookExecutionContext(c, &uid)), afterPayload, user.Email)
+	}
 
 	// 如果需要邮箱验证
 	if cfg.Security.Login.RequireEmailVerification && h.emailService != nil {
@@ -220,6 +397,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 
 		// 发送验证邮件
 		go h.emailService.SendVerificationEmail(user.Email, user.Name, token, user.Locale)
+		emitRegisterAfter(true)
 
 		response.Success(c, gin.H{
 			"require_verification": true,
@@ -251,11 +429,13 @@ func (h *AuthHandler) Register(c *gin.Context) {
 	if h.emailService != nil {
 		go h.emailService.SendRegistrationWelcomeEmail(user.Email, user.Name, user.Locale)
 	}
+	emitRegisterAfter(false)
 
 	response.Success(c, gin.H{
 		"token":      jwtToken,
 		"token_type": "Bearer",
 		"user": gin.H{
+			"id":                user.ID,
 			"user_id":           user.ID,
 			"uuid":              user.UUID,
 			"email":             user.Email,
@@ -286,6 +466,17 @@ func validatePhone(phone string) bool {
 	return phoneRegexp.MatchString(phone)
 }
 
+func authHookValueToOptionalString(value interface{}) (string, error) {
+	if value == nil {
+		return "", nil
+	}
+	str, ok := value.(string)
+	if !ok {
+		return "", errors.New("value must be string")
+	}
+	return str, nil
+}
+
 // GetMe getcurrentUserInfo
 func (h *AuthHandler) GetMe(c *gin.Context) {
 	userID := middleware.MustGetUserID(c)
@@ -298,6 +489,7 @@ func (h *AuthHandler) GetMe(c *gin.Context) {
 
 	// 构建响应数据
 	result := gin.H{
+		"id":                     user.ID,
 		"user_id":                user.ID,
 		"uuid":                   user.UUID,
 		"email":                  user.Email,
@@ -321,20 +513,7 @@ func (h *AuthHandler) GetMe(c *gin.Context) {
 
 	// 如果是Admin，getPermission列表
 	if user.IsAdmin() {
-		db := database.GetDB()
-		var perm models.AdminPermission
-		if err := db.Where("user_id = ?", userID).First(&perm).Error; err == nil {
-			result["permissions"] = perm.Permissions
-		} else if err == gorm.ErrRecordNotFound {
-			// 超级Admin默认拥有所有Permission
-			if user.IsSuperAdmin() {
-				result["permissions"] = getAllPermissions()
-			} else {
-				result["permissions"] = []string{}
-			}
-		} else {
-			result["permissions"] = []string{}
-		}
+		result["permissions"] = loadEffectiveAdminPermissions(database.GetDB(), userID, user.Role)
 	} else {
 		result["permissions"] = []string{}
 	}
@@ -364,10 +543,54 @@ func (h *AuthHandler) ChangePassword(c *gin.Context) {
 		response.BadRequest(c, "Invalid request parameters")
 		return
 	}
+	hookExecCtx := h.buildAuthHookExecutionContext(c, &userID)
+	if h.pluginManager != nil {
+		hookPayload := map[string]interface{}{
+			"user_id":              userID,
+			"old_password_present": strings.TrimSpace(req.OldPassword) != "",
+			"new_password_present": strings.TrimSpace(req.NewPassword) != "",
+			"source":               "user_api",
+		}
+		hookResult, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+			Hook:    "auth.password.change.before",
+			Payload: hookPayload,
+		}, hookExecCtx)
+		if hookErr != nil {
+			log.Printf("auth.password.change.before hook execution failed: user=%d err=%v", userID, hookErr)
+		} else if hookResult != nil {
+			if hookResult.Blocked {
+				reason := strings.TrimSpace(hookResult.BlockReason)
+				if reason == "" {
+					reason = "Password change rejected by plugin"
+				}
+				response.BadRequest(c, reason)
+				return
+			}
+		}
+	}
 
 	if err := h.authService.ChangePassword(userID, req.OldPassword, req.NewPassword); err != nil {
-		response.BadRequest(c, err.Error())
+		if respondAuthBizError(c, err, nil) {
+			return
+		}
+		respondAuthValidationOrInternalError(c, err, "Password change failed")
 		return
+	}
+	if h.pluginManager != nil {
+		afterPayload := map[string]interface{}{
+			"user_id": userID,
+			"source":  "user_api",
+			"success": true,
+		}
+		go func(execCtx *service.ExecutionContext, payload map[string]interface{}) {
+			_, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+				Hook:    "auth.password.change.after",
+				Payload: payload,
+			}, execCtx)
+			if hookErr != nil {
+				log.Printf("auth.password.change.after hook execution failed: user=%d err=%v", userID, hookErr)
+			}
+		}(cloneAuthExecutionContext(hookExecCtx), afterPayload)
 	}
 
 	response.Success(c, gin.H{
@@ -394,6 +617,39 @@ func (h *AuthHandler) UpdatePreferences(c *gin.Context) {
 		response.BadRequest(c, "Invalid request parameters")
 		return
 	}
+	hookExecCtx := h.buildAuthHookExecutionContext(c, &userID)
+	if h.pluginManager != nil {
+		originalReq := req
+		hookPayload, payloadErr := userHookStructToPayload(req)
+		if payloadErr != nil {
+			log.Printf("auth.preferences.update.before payload build failed: user=%d err=%v", userID, payloadErr)
+		} else {
+			hookPayload["user_id"] = userID
+			hookPayload["source"] = "user_api"
+			hookResult, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+				Hook:    "auth.preferences.update.before",
+				Payload: hookPayload,
+			}, hookExecCtx)
+			if hookErr != nil {
+				log.Printf("auth.preferences.update.before hook execution failed: user=%d err=%v", userID, hookErr)
+			} else if hookResult != nil {
+				if hookResult.Blocked {
+					reason := strings.TrimSpace(hookResult.BlockReason)
+					if reason == "" {
+						reason = "Preference update rejected by plugin"
+					}
+					response.BadRequest(c, reason)
+					return
+				}
+				if hookResult.Payload != nil {
+					if mergeErr := mergeUserHookStructPatch(&req, hookResult.Payload); mergeErr != nil {
+						log.Printf("auth.preferences.update.before payload apply failed, fallback to original request: user=%d err=%v", userID, mergeErr)
+						req = originalReq
+					}
+				}
+			}
+		}
+	}
 
 	if err := h.authService.UpdatePreferences(
 		userID,
@@ -404,8 +660,40 @@ func (h *AuthHandler) UpdatePreferences(c *gin.Context) {
 		req.EmailNotifyMarketing,
 		req.SMSNotifyMarketing,
 	); err != nil {
-		response.BadRequest(c, err.Error())
+		if respondAuthBizError(c, err, nil) {
+			return
+		}
+		response.InternalServerError(c, "Failed to update preferences", err)
 		return
+	}
+	if h.pluginManager != nil {
+		afterPayload := map[string]interface{}{
+			"user_id":                userID,
+			"locale":                 req.Locale,
+			"country":                req.Country,
+			"email_notify_order":     req.EmailNotifyOrder,
+			"email_notify_ticket":    req.EmailNotifyTicket,
+			"email_notify_marketing": req.EmailNotifyMarketing,
+			"sms_notify_marketing":   req.SMSNotifyMarketing,
+			"source":                 "user_api",
+		}
+		if user, lookupErr := h.authService.GetUserByID(userID); lookupErr == nil && user != nil {
+			afterPayload["locale"] = user.Locale
+			afterPayload["country"] = user.Country
+			afterPayload["email_notify_order"] = user.EmailNotifyOrder
+			afterPayload["email_notify_ticket"] = user.EmailNotifyTicket
+			afterPayload["email_notify_marketing"] = user.EmailNotifyMarketing
+			afterPayload["sms_notify_marketing"] = user.SMSNotifyMarketing
+		}
+		go func(execCtx *service.ExecutionContext, payload map[string]interface{}) {
+			_, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+				Hook:    "auth.preferences.update.after",
+				Payload: payload,
+			}, execCtx)
+			if hookErr != nil {
+				log.Printf("auth.preferences.update.after hook execution failed: user=%d err=%v", userID, hookErr)
+			}
+		}(cloneAuthExecutionContext(hookExecCtx), afterPayload)
 	}
 
 	response.Success(c, gin.H{
@@ -444,34 +732,6 @@ func (h *AuthHandler) GetCaptcha(c *gin.Context) {
 		"captcha_id": captchaID,
 		"image":      svg,
 	})
-}
-
-// getAllPermissions get所有Permission列表
-// 超级Admin默认拥有所有Permission（除了特殊Permission order.view_privacy）
-func getAllPermissions() []string {
-	return []string{
-		"order.view",
-		// "order.view_privacy", // 特殊Permission，need单独授予
-		"order.edit",
-		"order.delete",
-		"order.status_update",
-		"order.assign_tracking",
-		"order.request_resubmit",
-		"user.view",
-		"user.edit",
-		"user.permission",
-		"announcement.view",
-		"announcement.edit",
-		"marketing.view",
-		"marketing.send",
-		"admin.create",
-		"admin.edit",
-		"admin.delete",
-		"admin.permission",
-		"system.config",
-		"system.logs",
-		"api.manage",
-	}
 }
 
 // generateVerificationToken 生成邮箱验证 token
@@ -641,11 +901,11 @@ type SendLoginCodeRequest struct {
 func (h *AuthHandler) SendLoginCode(c *gin.Context) {
 	cfg := config.GetConfig()
 	if !cfg.SMTP.Enabled {
-		response.BadRequest(c, "Email login is not available")
+		respondAuthBizError(c, authbiz.EmailLoginUnavailable(), nil)
 		return
 	}
 	if !cfg.Security.Login.AllowEmailLogin {
-		response.BadRequest(c, "Email login is disabled")
+		respondAuthBizError(c, authbiz.EmailLoginDisabled(), nil)
 		return
 	}
 
@@ -672,11 +932,11 @@ func (h *AuthHandler) SendLoginCode(c *gin.Context) {
 	// 验证码校验
 	if h.captchaService.NeedCaptcha("login") {
 		if req.CaptchaToken == "" {
-			response.Error(c, 400, response.CodeParamMissing, "Captcha is required")
+			respondAuthBizError(c, authbiz.CaptchaRequired(), nil)
 			return
 		}
 		if err := h.captchaService.VerifyCaptcha(req.CaptchaToken, utils.GetRealIP(c)); err != nil {
-			response.Error(c, 400, response.CodeParamError, "Captcha verification failed")
+			respondAuthBizError(c, authbiz.CaptchaFailed(), nil)
 			return
 		}
 	}
@@ -717,11 +977,11 @@ type ForgotPasswordRequest struct {
 func (h *AuthHandler) ForgotPassword(c *gin.Context) {
 	cfg := config.GetConfig()
 	if !cfg.SMTP.Enabled {
-		response.BadRequest(c, "Email service is not available")
+		respondAuthBizError(c, authbiz.EmailLoginUnavailable(), nil)
 		return
 	}
 	if !cfg.Security.Login.AllowPasswordReset {
-		response.BadRequest(c, "Password reset is disabled")
+		respondAuthBizError(c, authbiz.PasswordResetDisabled(), nil)
 		return
 	}
 
@@ -731,6 +991,42 @@ func (h *AuthHandler) ForgotPassword(c *gin.Context) {
 		return
 	}
 	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
+	hookExecCtx := h.buildAuthHookExecutionContext(c, nil)
+	if h.pluginManager != nil {
+		originalReq := req
+		hookPayload := map[string]interface{}{
+			"auth_method": "email",
+			"email":       req.Email,
+			"source":      "user_api",
+		}
+		hookResult, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+			Hook:    "auth.password.reset.before",
+			Payload: hookPayload,
+		}, hookExecCtx)
+		if hookErr != nil {
+			log.Printf("auth.password.reset.before hook execution failed: email=%s err=%v", req.Email, hookErr)
+		} else if hookResult != nil {
+			if hookResult.Blocked {
+				reason := strings.TrimSpace(hookResult.BlockReason)
+				if reason == "" {
+					reason = "Password reset request rejected by plugin"
+				}
+				response.BadRequest(c, reason)
+				return
+			}
+			if hookResult.Payload != nil {
+				if rawEmail, exists := hookResult.Payload["email"]; exists {
+					email, convErr := authHookValueToOptionalString(rawEmail)
+					if convErr != nil {
+						log.Printf("auth.password.reset.before payload email decode failed, fallback to original request: email=%s err=%v", req.Email, convErr)
+						req = originalReq
+					} else {
+						req.Email = strings.ToLower(strings.TrimSpace(email))
+					}
+				}
+			}
+		}
+	}
 
 	// 冷却检查
 	ip := utils.GetRealIP(c)
@@ -748,11 +1044,11 @@ func (h *AuthHandler) ForgotPassword(c *gin.Context) {
 	// 验证码校验
 	if h.captchaService.NeedCaptcha("login") {
 		if req.CaptchaToken == "" {
-			response.Error(c, 400, response.CodeParamMissing, "Captcha is required")
+			respondAuthBizError(c, authbiz.CaptchaRequired(), nil)
 			return
 		}
 		if err := h.captchaService.VerifyCaptcha(req.CaptchaToken, ip); err != nil {
-			response.Error(c, 400, response.CodeParamError, "Captcha verification failed")
+			respondAuthBizError(c, authbiz.CaptchaFailed(), nil)
 			return
 		}
 	}
@@ -774,6 +1070,24 @@ func (h *AuthHandler) ForgotPassword(c *gin.Context) {
 		go h.emailService.SendPasswordResetEmail(req.Email, token, locale)
 	}
 
+	if h.pluginManager != nil {
+		afterPayload := map[string]interface{}{
+			"auth_method": "email",
+			"email":       req.Email,
+			"accepted":    true,
+			"source":      "user_api",
+		}
+		go func(execCtx *service.ExecutionContext, payload map[string]interface{}, email string) {
+			_, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+				Hook:    "auth.password.reset.after",
+				Payload: payload,
+			}, execCtx)
+			if hookErr != nil {
+				log.Printf("auth.password.reset.after hook execution failed: email=%s err=%v", email, hookErr)
+			}
+		}(cloneAuthExecutionContext(hookExecCtx), afterPayload, req.Email)
+	}
+
 	response.Success(c, gin.H{"message": "If the email is registered, a password reset link has been sent"})
 }
 
@@ -790,15 +1104,55 @@ func (h *AuthHandler) ResetPassword(c *gin.Context) {
 		response.BadRequest(c, "Invalid request parameters")
 		return
 	}
+	hookExecCtx := h.buildAuthHookExecutionContext(c, nil)
+	if h.pluginManager != nil {
+		hookPayload := map[string]interface{}{
+			"auth_method":          "email",
+			"token_present":        strings.TrimSpace(req.Token) != "",
+			"new_password_present": strings.TrimSpace(req.NewPassword) != "",
+			"source":               "user_api",
+		}
+		hookResult, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+			Hook:    "auth.password.reset.before",
+			Payload: hookPayload,
+		}, hookExecCtx)
+		if hookErr != nil {
+			log.Printf("auth.password.reset.before hook execution failed: err=%v", hookErr)
+		} else if hookResult != nil {
+			if hookResult.Blocked {
+				reason := strings.TrimSpace(hookResult.BlockReason)
+				if reason == "" {
+					reason = "Password reset rejected by plugin"
+				}
+				response.BadRequest(c, reason)
+				return
+			}
+		}
+	}
 
 	if err := h.authService.ResetPassword(req.Token, req.NewPassword); err != nil {
-		msg := err.Error()
-		if msg == "Reset token expired or invalid" {
-			response.BadRequest(c, msg)
+		if respondAuthBizError(c, err, nil) {
 			return
 		}
-		response.BadRequest(c, msg)
+		respondAuthValidationOrInternalError(c, err, "Failed to reset password")
 		return
+	}
+
+	if h.pluginManager != nil {
+		afterPayload := map[string]interface{}{
+			"auth_method": "email",
+			"success":     true,
+			"source":      "user_api",
+		}
+		go func(execCtx *service.ExecutionContext, payload map[string]interface{}) {
+			_, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+				Hook:    "auth.password.reset.after",
+				Payload: payload,
+			}, execCtx)
+			if hookErr != nil {
+				log.Printf("auth.password.reset.after hook execution failed: err=%v", hookErr)
+			}
+		}(cloneAuthExecutionContext(hookExecCtx), afterPayload)
 	}
 
 	response.Success(c, gin.H{"message": "Password reset successfully"})
@@ -818,12 +1172,52 @@ func (h *AuthHandler) LoginWithCode(c *gin.Context) {
 		return
 	}
 	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
+	hookExecCtx := h.buildAuthHookExecutionContext(c, nil)
+	if h.pluginManager != nil {
+		originalReq := req
+		hookPayload := map[string]interface{}{
+			"auth_method":  "email_code",
+			"email":        req.Email,
+			"code_present": strings.TrimSpace(req.Code) != "",
+			"source":       "user_api",
+		}
+		hookResult, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+			Hook:    "auth.login.before",
+			Payload: hookPayload,
+		}, hookExecCtx)
+		if hookErr != nil {
+			log.Printf("auth.login.before hook execution failed: email=%s method=email_code err=%v", req.Email, hookErr)
+		} else if hookResult != nil {
+			if hookResult.Blocked {
+				reason := strings.TrimSpace(hookResult.BlockReason)
+				if reason == "" {
+					reason = "Login rejected by plugin"
+				}
+				response.BadRequest(c, reason)
+				return
+			}
+			if hookResult.Payload != nil {
+				if rawEmail, exists := hookResult.Payload["email"]; exists {
+					email, convErr := authHookValueToOptionalString(rawEmail)
+					if convErr != nil {
+						log.Printf("auth.login.before payload email decode failed, fallback to original request: email=%s err=%v", req.Email, convErr)
+						req = originalReq
+					} else {
+						req.Email = strings.ToLower(strings.TrimSpace(email))
+					}
+				}
+			}
+		}
+	}
 
 	token, user, err := h.authService.LoginWithCode(req.Email, req.Code)
 	if err != nil {
 		db := database.GetDB()
 		logger.LogLoginAttempt(db, c, req.Email, false, nil)
-		response.Unauthorized(c, err.Error())
+		if respondAuthBizError(c, err, nil) {
+			return
+		}
+		response.InternalServerError(c, "Login failed", err)
 		return
 	}
 
@@ -834,6 +1228,7 @@ func (h *AuthHandler) LoginWithCode(c *gin.Context) {
 	logger.LogLoginAttempt(db, c, req.Email, true, &user.ID)
 
 	result := gin.H{
+		"id":                user.ID,
 		"user_id":           user.ID,
 		"uuid":              user.UUID,
 		"email":             user.Email,
@@ -846,18 +1241,27 @@ func (h *AuthHandler) LoginWithCode(c *gin.Context) {
 	}
 
 	if user.IsAdmin() {
-		var perm models.AdminPermission
-		if err := db.Where("user_id = ?", user.ID).First(&perm).Error; err == nil {
-			result["permissions"] = perm.Permissions
-		} else if err == gorm.ErrRecordNotFound {
-			if user.IsSuperAdmin() {
-				result["permissions"] = getAllPermissions()
-			} else {
-				result["permissions"] = []string{}
-			}
-		} else {
-			result["permissions"] = []string{}
+		result["permissions"] = loadEffectiveAdminPermissions(db, user.ID, user.Role)
+	}
+
+	if h.pluginManager != nil {
+		uid := user.ID
+		afterPayload := map[string]interface{}{
+			"auth_method": "email_code",
+			"user_id":     user.ID,
+			"email":       user.Email,
+			"role":        user.Role,
+			"source":      "user_api",
 		}
+		go func(execCtx *service.ExecutionContext, payload map[string]interface{}, email string) {
+			_, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+				Hook:    "auth.login.after",
+				Payload: payload,
+			}, execCtx)
+			if hookErr != nil {
+				log.Printf("auth.login.after hook execution failed: email=%s method=email_code err=%v", email, hookErr)
+			}
+		}(cloneAuthExecutionContext(h.buildAuthHookExecutionContext(c, &uid)), afterPayload, user.Email)
 	}
 
 	response.Success(c, gin.H{
@@ -871,11 +1275,11 @@ func (h *AuthHandler) LoginWithCode(c *gin.Context) {
 func (h *AuthHandler) SendPhoneLoginCode(c *gin.Context) {
 	cfg := config.GetConfig()
 	if !cfg.SMS.Enabled {
-		response.BadRequest(c, "SMS service is not available")
+		respondAuthBizError(c, authbiz.SMSServiceUnavailable(), nil)
 		return
 	}
 	if !cfg.Security.Login.AllowPhoneLogin {
-		response.BadRequest(c, "Phone login is disabled")
+		respondAuthBizError(c, authbiz.PhoneLoginDisabled(), nil)
 		return
 	}
 	var req struct {
@@ -890,7 +1294,7 @@ func (h *AuthHandler) SendPhoneLoginCode(c *gin.Context) {
 	req.Phone = strings.TrimSpace(req.Phone)
 	req.PhoneCode = strings.TrimSpace(req.PhoneCode)
 	if !validatePhone(req.Phone) {
-		response.BadRequest(c, "Invalid phone number format")
+		respondAuthBizError(c, authbiz.InvalidPhoneFormat(), nil)
 		return
 	}
 
@@ -907,11 +1311,11 @@ func (h *AuthHandler) SendPhoneLoginCode(c *gin.Context) {
 	}
 	if h.captchaService.NeedCaptcha("login") {
 		if req.CaptchaToken == "" {
-			response.Error(c, 400, response.CodeParamMissing, "Captcha is required")
+			respondAuthBizError(c, authbiz.CaptchaRequired(), nil)
 			return
 		}
 		if err := h.captchaService.VerifyCaptcha(req.CaptchaToken, ip); err != nil {
-			response.Error(c, 400, response.CodeParamError, "Captcha verification failed")
+			respondAuthBizError(c, authbiz.CaptchaFailed(), nil)
 			return
 		}
 	}
@@ -942,14 +1346,42 @@ func (h *AuthHandler) LoginWithPhoneCode(c *gin.Context) {
 	}
 	phone := strings.TrimSpace(req.Phone)
 	if !validatePhone(phone) {
-		response.BadRequest(c, "Invalid phone number format")
+		respondAuthBizError(c, authbiz.InvalidPhoneFormat(), nil)
 		return
+	}
+	hookExecCtx := h.buildAuthHookExecutionContext(c, nil)
+	if h.pluginManager != nil {
+		hookPayload := map[string]interface{}{
+			"auth_method":  "phone_code",
+			"phone":        phone,
+			"code_present": strings.TrimSpace(req.Code) != "",
+			"source":       "user_api",
+		}
+		hookResult, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+			Hook:    "auth.login.before",
+			Payload: hookPayload,
+		}, hookExecCtx)
+		if hookErr != nil {
+			log.Printf("auth.login.before hook execution failed: phone=%s method=phone_code err=%v", phone, hookErr)
+		} else if hookResult != nil {
+			if hookResult.Blocked {
+				reason := strings.TrimSpace(hookResult.BlockReason)
+				if reason == "" {
+					reason = "Login rejected by plugin"
+				}
+				response.BadRequest(c, reason)
+				return
+			}
+		}
 	}
 	token, user, err := h.authService.LoginWithPhoneCode(phone, req.Code)
 	if err != nil {
 		db := database.GetDB()
 		logger.LogLoginAttempt(db, c, phone, false, nil)
-		response.BadRequest(c, err.Error())
+		if respondAuthBizError(c, err, nil) {
+			return
+		}
+		response.InternalServerError(c, "Login failed", err)
 		return
 	}
 	user.LastLoginIP = utils.GetRealIP(c)
@@ -958,9 +1390,30 @@ func (h *AuthHandler) LoginWithPhoneCode(c *gin.Context) {
 	db := database.GetDB()
 	logger.LogLoginAttempt(db, c, phone, true, &user.ID)
 
+	if h.pluginManager != nil {
+		uid := user.ID
+		afterPayload := map[string]interface{}{
+			"auth_method": "phone_code",
+			"user_id":     user.ID,
+			"phone":       phone,
+			"role":        user.Role,
+			"source":      "user_api",
+		}
+		go func(execCtx *service.ExecutionContext, payload map[string]interface{}, p string) {
+			_, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+				Hook:    "auth.login.after",
+				Payload: payload,
+			}, execCtx)
+			if hookErr != nil {
+				log.Printf("auth.login.after hook execution failed: phone=%s method=phone_code err=%v", p, hookErr)
+			}
+		}(cloneAuthExecutionContext(h.buildAuthHookExecutionContext(c, &uid)), afterPayload, phone)
+	}
+
 	response.Success(c, gin.H{
 		"token": token, "token_type": "Bearer",
 		"user": gin.H{
+			"id":                user.ID,
 			"user_id":           user.ID,
 			"uuid":              user.UUID,
 			"email":             user.Email,
@@ -978,11 +1431,11 @@ func (h *AuthHandler) LoginWithPhoneCode(c *gin.Context) {
 func (h *AuthHandler) PhoneRegister(c *gin.Context) {
 	cfg := config.GetConfig()
 	if !cfg.Security.Login.AllowRegistration {
-		response.ErrorWithData(c, 403, response.CodeForbidden, "Registration is disabled", nil)
+		respondAuthBizError(c, authbiz.RegistrationDisabled(), nil)
 		return
 	}
 	if !cfg.SMS.Enabled || !cfg.Security.Login.AllowPhoneRegister {
-		response.BadRequest(c, "Phone registration is disabled")
+		respondAuthBizError(c, authbiz.PhoneRegistrationDisabled(), nil)
 		return
 	}
 	var req struct {
@@ -1000,7 +1453,58 @@ func (h *AuthHandler) PhoneRegister(c *gin.Context) {
 	req.Phone = strings.TrimSpace(req.Phone)
 	req.Name = strings.TrimSpace(req.Name)
 	if !validatePhone(req.Phone) {
-		response.BadRequest(c, "Invalid phone number format")
+		respondAuthBizError(c, authbiz.InvalidPhoneFormat(), nil)
+		return
+	}
+	hookExecCtx := h.buildAuthHookExecutionContext(c, nil)
+	if h.pluginManager != nil {
+		originalReq := req
+		hookPayload := map[string]interface{}{
+			"auth_method":      "phone",
+			"phone":            req.Phone,
+			"name":             req.Name,
+			"password_present": strings.TrimSpace(req.Password) != "",
+			"source":           "user_api",
+		}
+		hookResult, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+			Hook:    "auth.register.before",
+			Payload: hookPayload,
+		}, hookExecCtx)
+		if hookErr != nil {
+			log.Printf("auth.register.before hook execution failed: phone=%s err=%v", req.Phone, hookErr)
+		} else if hookResult != nil {
+			if hookResult.Blocked {
+				reason := strings.TrimSpace(hookResult.BlockReason)
+				if reason == "" {
+					reason = "Registration rejected by plugin"
+				}
+				response.BadRequest(c, reason)
+				return
+			}
+			if hookResult.Payload != nil {
+				if rawPhone, exists := hookResult.Payload["phone"]; exists {
+					phone, convErr := authHookValueToOptionalString(rawPhone)
+					if convErr != nil {
+						log.Printf("auth.register.before payload phone decode failed, fallback to original request: phone=%s err=%v", req.Phone, convErr)
+						req = originalReq
+					} else {
+						req.Phone = strings.TrimSpace(phone)
+					}
+				}
+				if rawName, exists := hookResult.Payload["name"]; exists {
+					name, convErr := authHookValueToOptionalString(rawName)
+					if convErr != nil {
+						log.Printf("auth.register.before payload name decode failed, fallback to original request: phone=%s err=%v", req.Phone, convErr)
+						req = originalReq
+					} else {
+						req.Name = strings.TrimSpace(name)
+					}
+				}
+			}
+		}
+	}
+	if !validatePhone(req.Phone) {
+		respondAuthBizError(c, authbiz.InvalidPhoneFormat(), nil)
 		return
 	}
 
@@ -1008,7 +1512,7 @@ func (h *AuthHandler) PhoneRegister(c *gin.Context) {
 	key := "phone_register_code:" + req.Phone
 	storedCode, err := cache.Get(key)
 	if err != nil || storedCode != req.Code {
-		response.BadRequest(c, "Invalid or expired verification code")
+		respondAuthBizError(c, authbiz.CodeExpired(), nil)
 		return
 	}
 	_ = cache.Del(key)
@@ -1016,12 +1520,11 @@ func (h *AuthHandler) PhoneRegister(c *gin.Context) {
 	user, err := h.authService.Register("", req.Phone, req.Name, req.Password)
 	if err != nil {
 		switch {
-		case errors.Is(err, service.ErrPhoneAlreadyInUse):
-			response.Error(c, 409, response.CodeConflict, err.Error())
+		case respondAuthBizError(c, err, nil):
 		case errors.Is(err, service.ErrRegisterInternal):
 			response.InternalError(c, "Registration failed")
 		default:
-			response.BadRequest(c, err.Error())
+			respondAuthValidationOrInternalError(c, err, "Registration failed")
 		}
 		return
 	}
@@ -1044,9 +1547,32 @@ func (h *AuthHandler) PhoneRegister(c *gin.Context) {
 		return
 	}
 
+	if h.pluginManager != nil {
+		uid := user.ID
+		afterPayload := map[string]interface{}{
+			"auth_method":          "phone",
+			"user_id":              user.ID,
+			"phone":                req.Phone,
+			"name":                 user.Name,
+			"require_verification": false,
+			"email_verified":       user.EmailVerified,
+			"source":               "user_api",
+		}
+		go func(execCtx *service.ExecutionContext, payload map[string]interface{}, phone string) {
+			_, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+				Hook:    "auth.register.after",
+				Payload: payload,
+			}, execCtx)
+			if hookErr != nil {
+				log.Printf("auth.register.after hook execution failed: phone=%s err=%v", phone, hookErr)
+			}
+		}(cloneAuthExecutionContext(h.buildAuthHookExecutionContext(c, &uid)), afterPayload, req.Phone)
+	}
+
 	response.Success(c, gin.H{
 		"token": jwtToken, "token_type": "Bearer",
 		"user": gin.H{
+			"id":                user.ID,
 			"user_id":           user.ID,
 			"uuid":              user.UUID,
 			"email":             user.Email,
@@ -1064,7 +1590,7 @@ func (h *AuthHandler) PhoneRegister(c *gin.Context) {
 func (h *AuthHandler) PhoneForgotPassword(c *gin.Context) {
 	cfg := config.GetConfig()
 	if !cfg.SMS.Enabled || !cfg.Security.Login.AllowPhonePasswordReset {
-		response.BadRequest(c, "Phone password reset is disabled")
+		respondAuthBizError(c, authbiz.PhonePasswordResetDisabled(), nil)
 		return
 	}
 	var req struct {
@@ -1079,7 +1605,47 @@ func (h *AuthHandler) PhoneForgotPassword(c *gin.Context) {
 	req.Phone = strings.TrimSpace(req.Phone)
 	req.PhoneCode = strings.TrimSpace(req.PhoneCode)
 	if !validatePhone(req.Phone) {
-		response.BadRequest(c, "Invalid phone number format")
+		respondAuthBizError(c, authbiz.InvalidPhoneFormat(), nil)
+		return
+	}
+	hookExecCtx := h.buildAuthHookExecutionContext(c, nil)
+	if h.pluginManager != nil {
+		originalReq := req
+		hookPayload := map[string]interface{}{
+			"auth_method": "phone",
+			"phone":       req.Phone,
+			"source":      "user_api",
+		}
+		hookResult, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+			Hook:    "auth.password.reset.before",
+			Payload: hookPayload,
+		}, hookExecCtx)
+		if hookErr != nil {
+			log.Printf("auth.password.reset.before hook execution failed: phone=%s err=%v", req.Phone, hookErr)
+		} else if hookResult != nil {
+			if hookResult.Blocked {
+				reason := strings.TrimSpace(hookResult.BlockReason)
+				if reason == "" {
+					reason = "Password reset request rejected by plugin"
+				}
+				response.BadRequest(c, reason)
+				return
+			}
+			if hookResult.Payload != nil {
+				if rawPhone, exists := hookResult.Payload["phone"]; exists {
+					phone, convErr := authHookValueToOptionalString(rawPhone)
+					if convErr != nil {
+						log.Printf("auth.password.reset.before payload phone decode failed, fallback to original request: phone=%s err=%v", req.Phone, convErr)
+						req = originalReq
+					} else {
+						req.Phone = strings.TrimSpace(phone)
+					}
+				}
+			}
+		}
+	}
+	if !validatePhone(req.Phone) {
+		respondAuthBizError(c, authbiz.InvalidPhoneFormat(), nil)
 		return
 	}
 	ip := utils.GetRealIP(c)
@@ -1095,11 +1661,11 @@ func (h *AuthHandler) PhoneForgotPassword(c *gin.Context) {
 	}
 	if h.captchaService.NeedCaptcha("login") {
 		if req.CaptchaToken == "" {
-			response.Error(c, 400, response.CodeParamMissing, "Captcha is required")
+			respondAuthBizError(c, authbiz.CaptchaRequired(), nil)
 			return
 		}
 		if err := h.captchaService.VerifyCaptcha(req.CaptchaToken, ip); err != nil {
-			response.Error(c, 400, response.CodeParamError, "Captcha verification failed")
+			respondAuthBizError(c, authbiz.CaptchaFailed(), nil)
 			return
 		}
 	}
@@ -1108,6 +1674,23 @@ func (h *AuthHandler) PhoneForgotPassword(c *gin.Context) {
 	code, err := h.authService.GeneratePhoneResetCode(req.Phone)
 	if err == nil && h.smsService != nil {
 		go h.smsService.SendVerificationCode(req.Phone, req.PhoneCode, code, "reset_password")
+	}
+	if h.pluginManager != nil {
+		afterPayload := map[string]interface{}{
+			"auth_method": "phone",
+			"phone":       req.Phone,
+			"accepted":    true,
+			"source":      "user_api",
+		}
+		go func(execCtx *service.ExecutionContext, payload map[string]interface{}, phone string) {
+			_, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+				Hook:    "auth.password.reset.after",
+				Payload: payload,
+			}, execCtx)
+			if hookErr != nil {
+				log.Printf("auth.password.reset.after hook execution failed: phone=%s err=%v", phone, hookErr)
+			}
+		}(cloneAuthExecutionContext(hookExecCtx), afterPayload, req.Phone)
 	}
 	response.Success(c, gin.H{"message": "If the phone is registered, a verification code has been sent"})
 }
@@ -1126,12 +1709,56 @@ func (h *AuthHandler) PhoneResetPassword(c *gin.Context) {
 	}
 	phone := strings.TrimSpace(req.Phone)
 	if !validatePhone(phone) {
-		response.BadRequest(c, "Invalid phone number format")
+		respondAuthBizError(c, authbiz.InvalidPhoneFormat(), nil)
 		return
 	}
+	hookExecCtx := h.buildAuthHookExecutionContext(c, nil)
+	if h.pluginManager != nil {
+		hookPayload := map[string]interface{}{
+			"auth_method":          "phone",
+			"phone":                phone,
+			"code_present":         strings.TrimSpace(req.Code) != "",
+			"new_password_present": strings.TrimSpace(req.NewPassword) != "",
+			"source":               "user_api",
+		}
+		hookResult, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+			Hook:    "auth.password.reset.before",
+			Payload: hookPayload,
+		}, hookExecCtx)
+		if hookErr != nil {
+			log.Printf("auth.password.reset.before hook execution failed: phone=%s err=%v", phone, hookErr)
+		} else if hookResult != nil && hookResult.Blocked {
+			reason := strings.TrimSpace(hookResult.BlockReason)
+			if reason == "" {
+				reason = "Password reset rejected by plugin"
+			}
+			response.BadRequest(c, reason)
+			return
+		}
+	}
 	if err := h.authService.ResetPasswordByPhone(phone, req.Code, req.NewPassword); err != nil {
-		response.BadRequest(c, err.Error())
+		if respondAuthBizError(c, err, nil) {
+			return
+		}
+		respondAuthValidationOrInternalError(c, err, "Failed to reset password")
 		return
+	}
+	if h.pluginManager != nil {
+		afterPayload := map[string]interface{}{
+			"auth_method": "phone",
+			"phone":       phone,
+			"success":     true,
+			"source":      "user_api",
+		}
+		go func(execCtx *service.ExecutionContext, payload map[string]interface{}, p string) {
+			_, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+				Hook:    "auth.password.reset.after",
+				Payload: payload,
+			}, execCtx)
+			if hookErr != nil {
+				log.Printf("auth.password.reset.after hook execution failed: phone=%s err=%v", p, hookErr)
+			}
+		}(cloneAuthExecutionContext(hookExecCtx), afterPayload, phone)
 	}
 	response.Success(c, gin.H{"message": "Password reset successfully"})
 }
@@ -1148,14 +1775,50 @@ func (h *AuthHandler) SendBindEmailCode(c *gin.Context) {
 		return
 	}
 	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
+	hookExecCtx := h.buildAuthHookExecutionContext(c, &userID)
+	if h.pluginManager != nil {
+		originalReq := req
+		hookPayload := map[string]interface{}{
+			"user_id": userID,
+			"email":   req.Email,
+			"source":  "user_api",
+		}
+		hookResult, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+			Hook:    "auth.bind_email.request.before",
+			Payload: hookPayload,
+		}, hookExecCtx)
+		if hookErr != nil {
+			log.Printf("auth.bind_email.request.before hook execution failed: user=%d email=%s err=%v", userID, req.Email, hookErr)
+		} else if hookResult != nil {
+			if hookResult.Blocked {
+				reason := strings.TrimSpace(hookResult.BlockReason)
+				if reason == "" {
+					reason = "Bind email request rejected by plugin"
+				}
+				response.BadRequest(c, reason)
+				return
+			}
+			if hookResult.Payload != nil {
+				if value, exists := hookResult.Payload["email"]; exists {
+					text, convErr := authHookValueToOptionalString(value)
+					if convErr != nil {
+						log.Printf("auth.bind_email.request.before payload email decode failed, fallback to original request: user=%d email=%s err=%v", userID, req.Email, convErr)
+						req = originalReq
+					} else {
+						req.Email = strings.ToLower(strings.TrimSpace(text))
+					}
+				}
+			}
+		}
+	}
 
 	if h.captchaService.NeedCaptcha("bind") {
 		if req.CaptchaToken == "" {
-			response.Error(c, 400, response.CodeParamMissing, "Captcha is required")
+			respondAuthBizError(c, authbiz.CaptchaRequired(), nil)
 			return
 		}
 		if err := h.captchaService.VerifyCaptcha(req.CaptchaToken, utils.GetRealIP(c)); err != nil {
-			response.Error(c, 400, response.CodeParamError, "Captcha verification failed")
+			respondAuthBizError(c, authbiz.CaptchaFailed(), nil)
 			return
 		}
 	}
@@ -1176,7 +1839,10 @@ func (h *AuthHandler) SendBindEmailCode(c *gin.Context) {
 
 	code, err := h.authService.SendBindEmailCode(userID, req.Email)
 	if err != nil {
-		response.BadRequest(c, err.Error())
+		if respondAuthBizError(c, err, nil) {
+			return
+		}
+		response.InternalServerError(c, "Failed to send verification code", err)
 		return
 	}
 
@@ -1187,6 +1853,23 @@ func (h *AuthHandler) SendBindEmailCode(c *gin.Context) {
 			locale = user.Locale
 		}
 		go h.emailService.SendLoginCodeEmail(req.Email, code, locale)
+	}
+	if h.pluginManager != nil {
+		afterPayload := map[string]interface{}{
+			"user_id":  userID,
+			"email":    req.Email,
+			"accepted": true,
+			"source":   "user_api",
+		}
+		go func(execCtx *service.ExecutionContext, payload map[string]interface{}, email string) {
+			_, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+				Hook:    "auth.bind_email.request.after",
+				Payload: payload,
+			}, execCtx)
+			if hookErr != nil {
+				log.Printf("auth.bind_email.request.after hook execution failed: user=%d email=%s err=%v", userID, email, hookErr)
+			}
+		}(cloneAuthExecutionContext(hookExecCtx), afterPayload, req.Email)
 	}
 	response.Success(c, gin.H{"message": "Verification code sent"})
 }
@@ -1202,9 +1885,67 @@ func (h *AuthHandler) BindEmail(c *gin.Context) {
 		response.BadRequest(c, "Invalid request parameters")
 		return
 	}
-	if err := h.authService.BindEmail(userID, strings.ToLower(strings.TrimSpace(req.Email)), req.Code); err != nil {
-		response.BadRequest(c, err.Error())
+	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
+	hookExecCtx := h.buildAuthHookExecutionContext(c, &userID)
+	if h.pluginManager != nil {
+		originalReq := req
+		hookPayload := map[string]interface{}{
+			"user_id":      userID,
+			"email":        req.Email,
+			"code_present": strings.TrimSpace(req.Code) != "",
+			"source":       "user_api",
+		}
+		hookResult, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+			Hook:    "auth.bind_email.confirm.before",
+			Payload: hookPayload,
+		}, hookExecCtx)
+		if hookErr != nil {
+			log.Printf("auth.bind_email.confirm.before hook execution failed: user=%d email=%s err=%v", userID, req.Email, hookErr)
+		} else if hookResult != nil {
+			if hookResult.Blocked {
+				reason := strings.TrimSpace(hookResult.BlockReason)
+				if reason == "" {
+					reason = "Bind email confirmation rejected by plugin"
+				}
+				response.BadRequest(c, reason)
+				return
+			}
+			if hookResult.Payload != nil {
+				if value, exists := hookResult.Payload["email"]; exists {
+					text, convErr := authHookValueToOptionalString(value)
+					if convErr != nil {
+						log.Printf("auth.bind_email.confirm.before payload email decode failed, fallback to original request: user=%d email=%s err=%v", userID, req.Email, convErr)
+						req = originalReq
+					} else {
+						req.Email = strings.ToLower(strings.TrimSpace(text))
+					}
+				}
+			}
+		}
+	}
+	if err := h.authService.BindEmail(userID, req.Email, req.Code); err != nil {
+		if respondAuthBizError(c, err, nil) {
+			return
+		}
+		response.InternalServerError(c, "Failed to bind email", err)
 		return
+	}
+	if h.pluginManager != nil {
+		afterPayload := map[string]interface{}{
+			"user_id": userID,
+			"email":   req.Email,
+			"source":  "user_api",
+			"success": true,
+		}
+		go func(execCtx *service.ExecutionContext, payload map[string]interface{}, email string) {
+			_, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+				Hook:    "auth.bind_email.confirm.after",
+				Payload: payload,
+			}, execCtx)
+			if hookErr != nil {
+				log.Printf("auth.bind_email.confirm.after hook execution failed: user=%d email=%s err=%v", userID, email, hookErr)
+			}
+		}(cloneAuthExecutionContext(hookExecCtx), afterPayload, req.Email)
 	}
 	response.Success(c, gin.H{"message": "Email bound successfully"})
 }
@@ -1222,18 +1963,65 @@ func (h *AuthHandler) SendBindPhoneCode(c *gin.Context) {
 		return
 	}
 	req.Phone = strings.TrimSpace(req.Phone)
+	req.PhoneCode = strings.TrimSpace(req.PhoneCode)
+	hookExecCtx := h.buildAuthHookExecutionContext(c, &userID)
+	if h.pluginManager != nil {
+		originalReq := req
+		hookPayload := map[string]interface{}{
+			"user_id":    userID,
+			"phone":      req.Phone,
+			"phone_code": req.PhoneCode,
+			"source":     "user_api",
+		}
+		hookResult, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+			Hook:    "auth.bind_phone.request.before",
+			Payload: hookPayload,
+		}, hookExecCtx)
+		if hookErr != nil {
+			log.Printf("auth.bind_phone.request.before hook execution failed: user=%d phone=%s err=%v", userID, req.Phone, hookErr)
+		} else if hookResult != nil {
+			if hookResult.Blocked {
+				reason := strings.TrimSpace(hookResult.BlockReason)
+				if reason == "" {
+					reason = "Bind phone request rejected by plugin"
+				}
+				response.BadRequest(c, reason)
+				return
+			}
+			if hookResult.Payload != nil {
+				if value, exists := hookResult.Payload["phone"]; exists {
+					text, convErr := authHookValueToOptionalString(value)
+					if convErr != nil {
+						log.Printf("auth.bind_phone.request.before payload phone decode failed, fallback to original request: user=%d phone=%s err=%v", userID, req.Phone, convErr)
+						req = originalReq
+					} else {
+						req.Phone = strings.TrimSpace(text)
+					}
+				}
+				if value, exists := hookResult.Payload["phone_code"]; exists {
+					text, convErr := authHookValueToOptionalString(value)
+					if convErr != nil {
+						log.Printf("auth.bind_phone.request.before payload phone_code decode failed, fallback to original request: user=%d phone=%s err=%v", userID, req.Phone, convErr)
+						req = originalReq
+					} else {
+						req.PhoneCode = strings.TrimSpace(text)
+					}
+				}
+			}
+		}
+	}
 	if !validatePhone(req.Phone) {
-		response.BadRequest(c, "Invalid phone number format")
+		respondAuthBizError(c, authbiz.InvalidPhoneFormat(), nil)
 		return
 	}
 
 	if h.captchaService.NeedCaptcha("bind") {
 		if req.CaptchaToken == "" {
-			response.Error(c, 400, response.CodeParamMissing, "Captcha is required")
+			respondAuthBizError(c, authbiz.CaptchaRequired(), nil)
 			return
 		}
 		if err := h.captchaService.VerifyCaptcha(req.CaptchaToken, utils.GetRealIP(c)); err != nil {
-			response.Error(c, 400, response.CodeParamError, "Captcha verification failed")
+			respondAuthBizError(c, authbiz.CaptchaFailed(), nil)
 			return
 		}
 	}
@@ -1254,11 +2042,32 @@ func (h *AuthHandler) SendBindPhoneCode(c *gin.Context) {
 
 	code, err := h.authService.SendBindPhoneCode(userID, req.Phone)
 	if err != nil {
-		response.BadRequest(c, err.Error())
+		if respondAuthBizError(c, err, nil) {
+			return
+		}
+		response.InternalServerError(c, "Failed to send verification code", err)
 		return
 	}
 	if h.smsService != nil {
 		go h.smsService.SendVerificationCode(req.Phone, req.PhoneCode, code, "bind_phone")
+	}
+	if h.pluginManager != nil {
+		afterPayload := map[string]interface{}{
+			"user_id":    userID,
+			"phone":      req.Phone,
+			"phone_code": req.PhoneCode,
+			"accepted":   true,
+			"source":     "user_api",
+		}
+		go func(execCtx *service.ExecutionContext, payload map[string]interface{}, phone string) {
+			_, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+				Hook:    "auth.bind_phone.request.after",
+				Payload: payload,
+			}, execCtx)
+			if hookErr != nil {
+				log.Printf("auth.bind_phone.request.after hook execution failed: user=%d phone=%s err=%v", userID, phone, hookErr)
+			}
+		}(cloneAuthExecutionContext(hookExecCtx), afterPayload, req.Phone)
 	}
 	response.Success(c, gin.H{"message": "Verification code sent"})
 }
@@ -1274,14 +2083,72 @@ func (h *AuthHandler) BindPhone(c *gin.Context) {
 		response.BadRequest(c, "Invalid request parameters")
 		return
 	}
+	req.Phone = strings.TrimSpace(req.Phone)
+	hookExecCtx := h.buildAuthHookExecutionContext(c, &userID)
+	if h.pluginManager != nil {
+		originalReq := req
+		hookPayload := map[string]interface{}{
+			"user_id":      userID,
+			"phone":        req.Phone,
+			"code_present": strings.TrimSpace(req.Code) != "",
+			"source":       "user_api",
+		}
+		hookResult, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+			Hook:    "auth.bind_phone.confirm.before",
+			Payload: hookPayload,
+		}, hookExecCtx)
+		if hookErr != nil {
+			log.Printf("auth.bind_phone.confirm.before hook execution failed: user=%d phone=%s err=%v", userID, req.Phone, hookErr)
+		} else if hookResult != nil {
+			if hookResult.Blocked {
+				reason := strings.TrimSpace(hookResult.BlockReason)
+				if reason == "" {
+					reason = "Bind phone confirmation rejected by plugin"
+				}
+				response.BadRequest(c, reason)
+				return
+			}
+			if hookResult.Payload != nil {
+				if value, exists := hookResult.Payload["phone"]; exists {
+					text, convErr := authHookValueToOptionalString(value)
+					if convErr != nil {
+						log.Printf("auth.bind_phone.confirm.before payload phone decode failed, fallback to original request: user=%d phone=%s err=%v", userID, req.Phone, convErr)
+						req = originalReq
+					} else {
+						req.Phone = strings.TrimSpace(text)
+					}
+				}
+			}
+		}
+	}
 	phone := strings.TrimSpace(req.Phone)
 	if !validatePhone(phone) {
-		response.BadRequest(c, "Invalid phone number format")
+		respondAuthBizError(c, authbiz.InvalidPhoneFormat(), nil)
 		return
 	}
 	if err := h.authService.BindPhone(userID, phone, req.Code); err != nil {
-		response.BadRequest(c, err.Error())
+		if respondAuthBizError(c, err, nil) {
+			return
+		}
+		response.InternalServerError(c, "Failed to bind phone", err)
 		return
+	}
+	if h.pluginManager != nil {
+		afterPayload := map[string]interface{}{
+			"user_id": userID,
+			"phone":   phone,
+			"source":  "user_api",
+			"success": true,
+		}
+		go func(execCtx *service.ExecutionContext, payload map[string]interface{}, boundPhone string) {
+			_, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+				Hook:    "auth.bind_phone.confirm.after",
+				Payload: payload,
+			}, execCtx)
+			if hookErr != nil {
+				log.Printf("auth.bind_phone.confirm.after hook execution failed: user=%d phone=%s err=%v", userID, boundPhone, hookErr)
+			}
+		}(cloneAuthExecutionContext(hookExecCtx), afterPayload, phone)
 	}
 	response.Success(c, gin.H{"message": "Phone bound successfully"})
 }
@@ -1290,7 +2157,7 @@ func (h *AuthHandler) BindPhone(c *gin.Context) {
 func (h *AuthHandler) SendPhoneRegisterCode(c *gin.Context) {
 	cfg := config.GetConfig()
 	if !cfg.SMS.Enabled || !cfg.Security.Login.AllowPhoneRegister {
-		response.BadRequest(c, "Phone registration is disabled")
+		respondAuthBizError(c, authbiz.PhoneRegistrationDisabled(), nil)
 		return
 	}
 	var req struct {
@@ -1305,7 +2172,7 @@ func (h *AuthHandler) SendPhoneRegisterCode(c *gin.Context) {
 	req.Phone = strings.TrimSpace(req.Phone)
 	req.PhoneCode = strings.TrimSpace(req.PhoneCode)
 	if !validatePhone(req.Phone) {
-		response.BadRequest(c, "Invalid phone number format")
+		respondAuthBizError(c, authbiz.InvalidPhoneFormat(), nil)
 		return
 	}
 
@@ -1322,11 +2189,11 @@ func (h *AuthHandler) SendPhoneRegisterCode(c *gin.Context) {
 	}
 	if h.captchaService.NeedCaptcha("register") {
 		if req.CaptchaToken == "" {
-			response.Error(c, 400, response.CodeParamMissing, "Captcha is required")
+			respondAuthBizError(c, authbiz.CaptchaRequired(), nil)
 			return
 		}
 		if err := h.captchaService.VerifyCaptcha(req.CaptchaToken, ip); err != nil {
-			response.Error(c, 400, response.CodeParamError, "Captcha verification failed")
+			respondAuthBizError(c, authbiz.CaptchaFailed(), nil)
 			return
 		}
 	}

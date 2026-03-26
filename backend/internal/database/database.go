@@ -3,6 +3,7 @@ package database
 import (
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"auralogic/internal/config"
@@ -11,6 +12,7 @@ import (
 	"gorm.io/driver/postgres"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 	"gorm.io/gorm/logger"
 )
 
@@ -124,11 +126,13 @@ func AutoMigrate() error {
 		&models.User{},
 		&models.AdminPermission{},
 		&models.Order{},
+		&models.UserPurchaseStat{},
 		&models.Product{},
 		&models.Inventory{},
 		&models.InventoryLog{},
 		&models.ProductInventoryBinding{},
 		&models.ProductSerial{},
+		&models.SerialGenerationTask{},
 		&models.MagicToken{},
 		&models.APIKey{},
 		&models.OperationLog{},
@@ -141,6 +145,7 @@ func AutoMigrate() error {
 		&models.ProductVirtualInventoryBinding{},
 		&models.CartItem{},
 		&models.PaymentMethod{},
+		&models.PaymentMethodVersion{},
 		&models.PaymentMethodStorageEntry{},
 		&models.VirtualInventoryStorageEntry{},
 		&models.OrderPaymentMethod{},
@@ -155,7 +160,14 @@ func AutoMigrate() error {
 		&models.AnnouncementRead{},
 		&models.EmailVerificationToken{},
 		&models.LandingPage{},
+		&models.TemplateVersion{},
 		&models.PageView{},
+		&models.Plugin{},
+		&models.PluginVersion{},
+		&models.PluginExecution{},
+		&models.PluginDeployment{},
+		&models.PluginStorageEntry{},
+		&models.PluginSecretEntry{},
 	); err != nil {
 		return fmt.Errorf("failed to migrate database: %w", err)
 	}
@@ -188,6 +200,77 @@ func AutoMigrate() error {
 	// Migration: backfill user consumption statistics from historical orders.
 	if err := migrateUserConsumptionStats(); err != nil {
 		log.Printf("Warning: failed to migrate user consumption stats: %v", err)
+	}
+	if err := migrateUserPurchaseStats(); err != nil {
+		log.Printf("Warning: failed to migrate user purchase stats: %v", err)
+	}
+	// Migration: backfill product serial cursor to avoid hot-path MAX(sequence_number) scans.
+	if err := migrateProductLastSerialSequence(); err != nil {
+		log.Printf("Warning: failed to migrate product last serial sequence: %v", err)
+	}
+	if err := migrateOrderSerialGenerationStatus(); err != nil {
+		log.Printf("Warning: failed to migrate order serial generation status: %v", err)
+	}
+
+	// Migration: backfill plugin runtime/runtime_params defaults for legacy rows.
+	if err := migratePluginRuntimeDefaults(); err != nil {
+		log.Printf("Warning: failed to migrate plugin runtime defaults: %v", err)
+	}
+	// Migration: backfill plugin execution observability fields used by diagnostics/observability queries.
+	if err := migratePluginExecutionObservabilityFields(); err != nil {
+		log.Printf("Warning: failed to backfill plugin execution observability fields: %v", err)
+	}
+	if err := migratePluginHotReloadDefaults(); err != nil {
+		log.Printf("Warning: failed to backfill plugin hot reload defaults: %v", err)
+	}
+
+	return nil
+}
+
+func migratePluginRuntimeDefaults() error {
+	if err := DB.Exec(`
+UPDATE plugins
+SET runtime = 'grpc'
+WHERE runtime IS NULL OR runtime = ''`).Error; err != nil {
+		return err
+	}
+
+	if err := DB.Exec(`
+UPDATE plugins
+SET runtime_params = '{}'
+WHERE runtime_params IS NULL OR runtime_params = ''`).Error; err != nil {
+		return err
+	}
+
+	if err := DB.Exec(`
+UPDATE plugin_versions
+SET runtime = 'grpc'
+WHERE runtime IS NULL OR runtime = ''`).Error; err != nil {
+		return err
+	}
+
+	if err := DB.Exec(`
+UPDATE plugin_versions
+SET runtime_params = '{}'
+WHERE runtime_params IS NULL OR runtime_params = ''`).Error; err != nil {
+		return err
+	}
+	return nil
+}
+
+func migratePluginHotReloadDefaults() error {
+	if err := DB.Exec(`
+UPDATE plugins
+SET desired_generation = 1
+WHERE desired_generation IS NULL OR desired_generation < 1`).Error; err != nil {
+		return err
+	}
+
+	if err := DB.Exec(`
+UPDATE plugins
+SET applied_generation = desired_generation
+WHERE applied_generation IS NULL OR applied_generation < 1`).Error; err != nil {
+		return err
 	}
 
 	return nil
@@ -481,6 +564,196 @@ CREATE TABLE IF NOT EXISTS system_migrations (
 	})
 }
 
+func migrateUserPurchaseStats() error {
+	if DB == nil {
+		return nil
+	}
+
+	if err := DB.Exec(`
+CREATE TABLE IF NOT EXISTS system_migrations (
+	name VARCHAR(100) PRIMARY KEY,
+	executed_at TIMESTAMP
+)`).Error; err != nil {
+		return err
+	}
+
+	const migrationName = "user_purchase_stats_v1"
+	var count int64
+	if err := DB.Table("system_migrations").Where("name = ?", migrationName).Count(&count).Error; err != nil {
+		return err
+	}
+	if count > 0 {
+		return nil
+	}
+
+	return DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Exec("DELETE FROM user_purchase_stats").Error; err != nil {
+			return err
+		}
+
+		const batchSize = 200
+		var lastID uint
+
+		for {
+			var orders []models.Order
+			if err := tx.Select("id", "user_id", "status", "items").
+				Where("id > ? AND user_id IS NOT NULL AND status != ?", lastID, models.OrderStatusCancelled).
+				Order("id ASC").
+				Limit(batchSize).
+				Find(&orders).Error; err != nil {
+				return err
+			}
+			if len(orders) == 0 {
+				break
+			}
+
+			aggregated := make(map[string]models.UserPurchaseStat)
+			for _, order := range orders {
+				if order.UserID == nil || *order.UserID == 0 {
+					continue
+				}
+				for _, item := range order.Items {
+					sku := strings.TrimSpace(item.SKU)
+					if sku == "" || item.Quantity <= 0 {
+						continue
+					}
+					key := fmt.Sprintf("%d\x00%s", *order.UserID, sku)
+					current := aggregated[key]
+					current.UserID = *order.UserID
+					current.SKU = sku
+					current.Quantity += int64(item.Quantity)
+					aggregated[key] = current
+				}
+			}
+
+			for _, stat := range aggregated {
+				if stat.Quantity <= 0 {
+					continue
+				}
+				currentStat := stat
+				if err := tx.Clauses(clause.OnConflict{
+					Columns: []clause.Column{
+						{Name: "user_id"},
+						{Name: "sku"},
+					},
+					DoUpdates: clause.Assignments(map[string]interface{}{
+						"quantity":   gorm.Expr("quantity + ?", currentStat.Quantity),
+						"updated_at": models.NowFunc(),
+					}),
+				}).Create(&currentStat).Error; err != nil {
+					return err
+				}
+			}
+
+			lastID = orders[len(orders)-1].ID
+		}
+
+		if err := tx.Exec(
+			"INSERT INTO system_migrations(name, executed_at) VALUES(?, ?)",
+			migrationName, time.Now().UTC(),
+		).Error; err != nil {
+			return err
+		}
+		return nil
+	})
+}
+
+func migrateProductLastSerialSequence() error {
+	if DB == nil {
+		return nil
+	}
+
+	if err := DB.Exec(`
+CREATE TABLE IF NOT EXISTS system_migrations (
+	name VARCHAR(100) PRIMARY KEY,
+	executed_at TIMESTAMP
+)`).Error; err != nil {
+		return err
+	}
+
+	const migrationName = "product_last_serial_sequence_v1"
+	var count int64
+	if err := DB.Table("system_migrations").Where("name = ?", migrationName).Count(&count).Error; err != nil {
+		return err
+	}
+	if count > 0 {
+		return nil
+	}
+
+	return DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Exec(`
+UPDATE products
+SET last_serial_sequence = COALESCE((
+	SELECT MAX(sequence_number)
+	FROM product_serials
+	WHERE product_serials.product_id = products.id
+), 0)
+WHERE COALESCE(last_serial_sequence, 0) <= 0`).Error; err != nil {
+			return err
+		}
+
+		if err := tx.Exec(
+			"INSERT INTO system_migrations(name, executed_at) VALUES(?, ?)",
+			migrationName, time.Now().UTC(),
+		).Error; err != nil {
+			return err
+		}
+		return nil
+	})
+}
+
+func migrateOrderSerialGenerationStatus() error {
+	if DB == nil {
+		return nil
+	}
+
+	if err := DB.Exec(`
+CREATE TABLE IF NOT EXISTS system_migrations (
+	name VARCHAR(100) PRIMARY KEY,
+	executed_at TIMESTAMP
+)`).Error; err != nil {
+		return err
+	}
+
+	const migrationName = "order_serial_generation_status_v1"
+	var count int64
+	if err := DB.Table("system_migrations").Where("name = ?", migrationName).Count(&count).Error; err != nil {
+		return err
+	}
+	if count > 0 {
+		return nil
+	}
+
+	return DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Exec(`
+UPDATE orders
+SET
+	serial_generation_status = 'completed',
+	serial_generation_error = '',
+	serial_generated_at = COALESCE(serial_generated_at, (
+		SELECT MAX(created_at)
+		FROM product_serials
+		WHERE product_serials.order_id = orders.id
+	))
+WHERE COALESCE(serial_generation_status, '') = ''
+	AND EXISTS (
+		SELECT 1
+		FROM product_serials
+		WHERE product_serials.order_id = orders.id
+	)`).Error; err != nil {
+			return err
+		}
+
+		if err := tx.Exec(
+			"INSERT INTO system_migrations(name, executed_at) VALUES(?, ?)",
+			migrationName, time.Now().UTC(),
+		).Error; err != nil {
+			return err
+		}
+		return nil
+	})
+}
+
 func orderTotalAmountSumExprForDialect(dialect string) string {
 	switch dialect {
 	case "postgres":
@@ -525,6 +798,11 @@ var defaultLandingPageHTML string
 // SetDefaultLandingPageHTML 设置默认落地页 HTML（应在 AutoMigrate 之前调用）
 func SetDefaultLandingPageHTML(html string) {
 	defaultLandingPageHTML = html
+}
+
+// GetDefaultLandingPageHTML 返回当前注入的默认落地页 HTML。
+func GetDefaultLandingPageHTML() string {
+	return defaultLandingPageHTML
 }
 
 // seedDefaultLandingPage 创建默认落地页

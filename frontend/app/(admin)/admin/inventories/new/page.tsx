@@ -15,6 +15,8 @@ import { useToast } from '@/hooks/use-toast'
 import { useLocale } from '@/hooks/use-locale'
 import { getTranslations } from '@/lib/i18n'
 import { usePageTitle } from '@/hooks/use-page-title'
+import { resolveApiErrorMessage } from '@/lib/api-error'
+import { PluginSlot } from '@/components/plugins/plugin-slot'
 
 export default function CreateInventoryPage() {
   const router = useRouter()
@@ -33,6 +35,23 @@ export default function CreateInventoryPage() {
   const [safetyStock, setSafetyStock] = useState<string>('0')
   const [alertEmail, setAlertEmail] = useState<string>('')
   const [notes, setNotes] = useState<string>('')
+  const validAttributeCount = attributes.filter((attr) => attr.key && attr.value).length
+  const adminInventoryNewPluginContext = {
+    view: 'admin_inventory_new',
+    form: {
+      name: name || undefined,
+      sku: sku || undefined,
+      stock: Number.parseInt(stock, 10) || 0,
+      available_quantity: Number.parseInt(availableQuantity, 10) || 0,
+      safety_stock: Number.parseInt(safetyStock, 10) || 0,
+      alert_email: alertEmail || undefined,
+      notes_length: notes.length,
+    },
+    summary: {
+      attribute_count: attributes.length,
+      valid_attribute_count: validAttributeCount,
+    },
+  }
 
   const createMutation = useMutation({
     mutationFn: createInventory,
@@ -40,8 +59,8 @@ export default function CreateInventoryPage() {
       toast.success(t.admin.inventoryCreated)
       router.push('/admin/inventories')
     },
-    onError: (error: Error) => {
-      toast.error(error.message || t.admin.inventoryCreateFailed)
+    onError: (error: unknown) => {
+      toast.error(resolveApiErrorMessage(error, t, t.admin.inventoryCreateFailed))
     },
   })
 
@@ -106,6 +125,7 @@ export default function CreateInventoryPage() {
 
   return (
     <div className="space-y-6">
+      <PluginSlot slot="admin.inventory_new.top" context={adminInventoryNewPluginContext} />
       {/* 页面标题 */}
       <div className="flex items-center gap-4">
         <Button variant="outline" size="sm" asChild>

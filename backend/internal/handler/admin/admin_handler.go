@@ -7,6 +7,7 @@ import (
 	"auralogic/internal/config"
 	"auralogic/internal/middleware"
 	"auralogic/internal/models"
+	"auralogic/internal/pkg/bizerr"
 	"auralogic/internal/pkg/logger"
 	"auralogic/internal/pkg/password"
 	"auralogic/internal/pkg/response"
@@ -63,13 +64,28 @@ func (h *AdminHandler) ListAdmins(c *gin.Context) {
 		Permissions []string `json:"permissions"`
 	}
 
+	permissionMap := make(map[uint][]string, len(admins))
+	if len(admins) > 0 {
+		adminIDs := make([]uint, 0, len(admins))
+		for _, admin := range admins {
+			adminIDs = append(adminIDs, admin.ID)
+		}
+
+		var permissions []models.AdminPermission
+		if err := h.db.Where("user_id IN ?", adminIDs).Find(&permissions).Error; err != nil {
+			response.InternalError(c, "Query failed")
+			return
+		}
+		for _, perm := range permissions {
+			permissionMap[perm.UserID] = append([]string(nil), perm.Permissions...)
+		}
+	}
+
 	result := make([]AdminWithPermissions, 0, len(admins))
 	for _, admin := range admins {
 		awp := AdminWithPermissions{User: admin}
-
-		var perm models.AdminPermission
-		if err := h.db.Where("user_id = ?", admin.ID).First(&perm).Error; err == nil {
-			awp.Permissions = perm.Permissions
+		if permissions, exists := permissionMap[admin.ID]; exists {
+			awp.Permissions = permissions
 		} else {
 			awp.Permissions = []string{}
 		}
@@ -90,12 +106,12 @@ func (h *AdminHandler) GetAdmin(c *gin.Context) {
 
 	admin, err := h.userRepo.FindByID(uint(adminID))
 	if err != nil {
-		response.NotFound(c, "Admindoes not exist")
+		respondAdminBizError(c, newAdminNotFoundError())
 		return
 	}
 
 	if !admin.IsAdmin() {
-		response.NotFound(c, "This user is not an admin")
+		respondAdminBizError(c, newAdminUserNotAdminError())
 		return
 	}
 
@@ -129,6 +145,26 @@ type CreateAdminRequest struct {
 	Permissions []string `json:"permissions"`
 }
 
+func newAdminEmailAlreadyInUseError() error {
+	return bizerr.New("admin.emailAlreadyInUse", "Email already in use")
+}
+
+func newAdminNotFoundError() error {
+	return bizerr.New("admin.notFound", "Admin does not exist")
+}
+
+func newAdminUserNotAdminError() error {
+	return bizerr.New("admin.userNotAdmin", "This user is not an admin")
+}
+
+func newAdminCannotModifySelfRoleOrStatusError() error {
+	return bizerr.New("admin.cannotModifySelfRoleOrStatus", "Cannot modify your own role or status")
+}
+
+func newAdminCannotDeleteSelfError() error {
+	return bizerr.New("admin.cannotDeleteSelf", "Cannot delete yourself")
+}
+
 // CreateAdmin CreateAdmin
 func (h *AdminHandler) CreateAdmin(c *gin.Context) {
 	var req CreateAdminRequest
@@ -143,7 +179,7 @@ func (h *AdminHandler) CreateAdmin(c *gin.Context) {
 
 	// Check if email already exists
 	if _, err := h.userRepo.FindByEmail(req.Email); err == nil {
-		response.BadRequest(c, "Email already in use")
+		respondAdminBizError(c, newAdminEmailAlreadyInUseError())
 		return
 	} else if err != nil && err != gorm.ErrRecordNotFound {
 		response.InternalError(c, "Query failed")
@@ -154,6 +190,9 @@ func (h *AdminHandler) CreateAdmin(c *gin.Context) {
 	policy := h.cfg.Security.PasswordPolicy
 	if err := password.ValidatePasswordPolicy(req.Password, policy.MinLength, policy.RequireUppercase,
 		policy.RequireLowercase, policy.RequireNumber, policy.RequireSpecial); err != nil {
+		if respondAdminPasswordPolicyBizError(c, err) {
+			return
+		}
 		response.BadRequest(c, err.Error())
 		return
 	}
@@ -257,12 +296,12 @@ func (h *AdminHandler) UpdateAdmin(c *gin.Context) {
 
 	admin, err := h.userRepo.FindByID(uint(adminID))
 	if err != nil {
-		response.NotFound(c, "Admindoes not exist")
+		respondAdminBizError(c, newAdminNotFoundError())
 		return
 	}
 
 	if !admin.IsAdmin() {
-		response.BadRequest(c, "This user is not an admin")
+		respondAdminBizError(c, newAdminUserNotAdminError())
 		return
 	}
 
@@ -270,7 +309,7 @@ func (h *AdminHandler) UpdateAdmin(c *gin.Context) {
 	currentUserID := middleware.MustGetUserID(c)
 	if admin.ID == currentUserID {
 		if req.Role != "" || req.IsActive != nil {
-			response.BadRequest(c, "Cannot modify your own role or status")
+			respondAdminBizError(c, newAdminCannotModifySelfRoleOrStatusError())
 			return
 		}
 	}
@@ -283,6 +322,9 @@ func (h *AdminHandler) UpdateAdmin(c *gin.Context) {
 			policy := h.cfg.Security.PasswordPolicy
 			if err := password.ValidatePasswordPolicy(newPwd, policy.MinLength, policy.RequireUppercase,
 				policy.RequireLowercase, policy.RequireNumber, policy.RequireSpecial); err != nil {
+				if respondAdminPasswordPolicyBizError(c, err) {
+					return
+				}
 				response.BadRequest(c, err.Error())
 				return
 			}
@@ -385,18 +427,18 @@ func (h *AdminHandler) DeleteAdmin(c *gin.Context) {
 
 	// Cannot delete yourself
 	if uint(adminID) == currentUserID {
-		response.BadRequest(c, "Cannot delete yourself")
+		respondAdminBizError(c, newAdminCannotDeleteSelfError())
 		return
 	}
 
 	admin, err := h.userRepo.FindByID(uint(adminID))
 	if err != nil {
-		response.NotFound(c, "Admindoes not exist")
+		respondAdminBizError(c, newAdminNotFoundError())
 		return
 	}
 
 	if !admin.IsAdmin() {
-		response.BadRequest(c, "This user is not an admin")
+		respondAdminBizError(c, newAdminUserNotAdminError())
 		return
 	}
 

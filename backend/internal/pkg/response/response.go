@@ -53,8 +53,9 @@ const (
 	CodeConflict           = 40901
 	CodeOrderDuplicate     = 40902
 	CodeTooManyRequests    = 42901
-	CodeCooldown          = 42902
+	CodeCooldown           = 42902
 	CodeBusinessError      = 40010 // 业务逻辑错误（限购、库存不足等）
+	CodeServiceUnavailable = 50301
 	CodeInternalError      = 50001
 	CodeDatabaseError      = 50002
 	CodeCacheError         = 50003
@@ -210,4 +211,3 @@ func Conflict(c *gin.Context, message string) {
 	}
 	Error(c, http.StatusConflict, CodeConflict, message)
 }
-

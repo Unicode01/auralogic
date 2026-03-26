@@ -1,12 +1,26 @@
 'use client'
 
-import { use, useState } from 'react'
+import { use, useCallback, useEffect, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useRouter } from 'next/navigation'
 import { useLocale } from '@/hooks/use-locale'
-import { getTranslations, translateBizError } from '@/lib/i18n'
+import { getTranslations } from '@/lib/i18n'
 import { usePageTitle } from '@/hooks/use-page-title'
-import { getAdminOrderDetail, assignTracking, adminCompleteOrder, adminCancelOrder, adminDeleteOrder, updateOrderShippingInfo, requestOrderResubmit, getCountries, adminMarkOrderAsPaid, updateOrderPrice, adminDeliverVirtualStock, adminRefundOrder } from '@/lib/api'
+import {
+  getAdminOrderDetail,
+  assignTracking,
+  adminCompleteOrder,
+  adminCancelOrder,
+  adminDeleteOrder,
+  updateOrderShippingInfo,
+  requestOrderResubmit,
+  getCountries,
+  adminMarkOrderAsPaid,
+  updateOrderPrice,
+  adminDeliverVirtualStock,
+  adminRefundOrder,
+} from '@/lib/api'
+import { resolveApiErrorMessage } from '@/lib/api-error'
 import { OrderDetail } from '@/components/orders/order-detail'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -32,15 +46,47 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { Label } from '@/components/ui/label'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { ArrowLeft, Truck, CheckCircle, XCircle, Trash2, Edit, RotateCcw, CreditCard, Wallet, Clock, Coins, DollarSign, Key, Undo2 } from 'lucide-react'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import {
+  ArrowLeft,
+  Truck,
+  CheckCircle,
+  ChevronDown,
+  XCircle,
+  Trash2,
+  Edit,
+  RotateCcw,
+  CreditCard,
+  Wallet,
+  Clock,
+  Coins,
+  DollarSign,
+  Key,
+  Undo2,
+} from 'lucide-react'
 import * as LucideIcons from 'lucide-react'
 import Link from 'next/link'
 import { useToast } from '@/hooks/use-toast'
-import { useEffect } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { PluginSlot } from '@/components/plugins/plugin-slot'
 import { formatDate, formatCurrency, minorToMajor, parseMajorToMinor } from '@/lib/utils'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { Badge } from '@/components/ui/badge'
+import { OrderStatusBadge } from '@/components/orders/order-status-badge'
 
 export default function AdminOrderDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
@@ -58,6 +104,7 @@ export default function AdminOrderDetailPage({ params }: { params: Promise<{ id:
   const [openComplete, setOpenComplete] = useState(false)
   const [openCancel, setOpenCancel] = useState(false)
   const [openRefund, setOpenRefund] = useState(false)
+  const [openDelete, setOpenDelete] = useState(false)
   const [openEdit, setOpenEdit] = useState(false)
   const [openResubmit, setOpenResubmit] = useState(false)
   const [openDeliverVirtual, setOpenDeliverVirtual] = useState(false)
@@ -84,12 +131,24 @@ export default function AdminOrderDetailPage({ params }: { params: Promise<{ id:
   const queryClient = useQueryClient()
   const toast = useToast()
 
+  const showOrderError = useCallback(
+    (error: unknown, fallback: string) => {
+      toast.error(resolveApiErrorMessage(error, t, fallback))
+    },
+    [t, toast]
+  )
+
   const { data, isLoading } = useQuery({
     queryKey: ['adminOrderDetail', orderId],
     queryFn: () => getAdminOrderDetail(orderId),
     enabled: !!orderId,
     staleTime: 0,
   })
+  const orderWarnings: string[] = Array.isArray(data?.data?.warnings)
+    ? data.data.warnings.filter(
+        (item: unknown): item is string => typeof item === 'string' && item.trim() !== ''
+      )
+    : []
 
   const assignMutation = useMutation({
     mutationFn: () => assignTracking(orderId, { tracking_no: trackingNo }),
@@ -100,11 +159,7 @@ export default function AdminOrderDetailPage({ params }: { params: Promise<{ id:
       setTrackingNo('')
     },
     onError: (error: any) => {
-      if (error.code === 40010 && error.data?.error_key) {
-        toast.error(translateBizError(t, error.data.error_key, error.data.params, error.message))
-      } else {
-        toast.error(error.message || t.order.assignFailed)
-      }
+      showOrderError(error, t.order.assignFailed)
     },
   })
 
@@ -117,11 +172,7 @@ export default function AdminOrderDetailPage({ params }: { params: Promise<{ id:
       setAdminRemark('')
     },
     onError: (error: any) => {
-      if (error.code === 40010 && error.data?.error_key) {
-        toast.error(translateBizError(t, error.data.error_key, error.data.params, error.message))
-      } else {
-        toast.error(error.message || t.order.operationFailed)
-      }
+      showOrderError(error, t.order.operationFailed)
     },
   })
 
@@ -134,11 +185,7 @@ export default function AdminOrderDetailPage({ params }: { params: Promise<{ id:
       setCancelReason('')
     },
     onError: (error: any) => {
-      if (error.code === 40010 && error.data?.error_key) {
-        toast.error(translateBizError(t, error.data.error_key, error.data.params, error.message))
-      } else {
-        toast.error(error.message || t.order.cancelFailed)
-      }
+      showOrderError(error, t.order.cancelFailed)
     },
   })
 
@@ -151,11 +198,7 @@ export default function AdminOrderDetailPage({ params }: { params: Promise<{ id:
       setRefundReason('')
     },
     onError: (error: any) => {
-      if (error.code === 40010 && error.data?.error_key) {
-        toast.error(translateBizError(t, error.data.error_key, error.data.params, error.message))
-      } else {
-        toast.error(error.message || t.order.refundFailed)
-      }
+      showOrderError(error, t.order.refundFailed)
     },
   })
 
@@ -166,11 +209,7 @@ export default function AdminOrderDetailPage({ params }: { params: Promise<{ id:
       router.push('/admin/orders')
     },
     onError: (error: any) => {
-      if (error.code === 40010 && error.data?.error_key) {
-        toast.error(translateBizError(t, error.data.error_key, error.data.params, error.message))
-      } else {
-        toast.error(error.message || t.order.deleteFailed)
-      }
+      showOrderError(error, t.order.deleteFailed)
     },
   })
 
@@ -182,11 +221,7 @@ export default function AdminOrderDetailPage({ params }: { params: Promise<{ id:
       setOpenEdit(false)
     },
     onError: (error: any) => {
-      if (error.code === 40010 && error.data?.error_key) {
-        toast.error(translateBizError(t, error.data.error_key, error.data.params, error.message))
-      } else {
-        toast.error(error.message || t.order.updateFailed)
-      }
+      showOrderError(error, t.order.updateFailed)
     },
   })
 
@@ -199,11 +234,7 @@ export default function AdminOrderDetailPage({ params }: { params: Promise<{ id:
       setResubmitReason('')
     },
     onError: (error: any) => {
-      if (error.code === 40010 && error.data?.error_key) {
-        toast.error(translateBizError(t, error.data.error_key, error.data.params, error.message))
-      } else {
-        toast.error(error.message || t.order.operationFailed)
-      }
+      showOrderError(error, t.order.operationFailed)
     },
   })
 
@@ -214,11 +245,7 @@ export default function AdminOrderDetailPage({ params }: { params: Promise<{ id:
       queryClient.invalidateQueries({ queryKey: ['adminOrderDetail', orderId] })
     },
     onError: (error: any) => {
-      if (error.code === 40010 && error.data?.error_key) {
-        toast.error(translateBizError(t, error.data.error_key, error.data.params, error.message))
-      } else {
-        toast.error(error.message || t.order.operationFailed)
-      }
+      showOrderError(error, t.order.operationFailed)
     },
   })
 
@@ -231,11 +258,7 @@ export default function AdminOrderDetailPage({ params }: { params: Promise<{ id:
       setNewPrice('')
     },
     onError: (error: any) => {
-      if (error.code === 40010 && error.data?.error_key) {
-        toast.error(translateBizError(t, error.data.error_key, error.data.params, error.message))
-      } else {
-        toast.error(error.message || t.order.updateFailed)
-      }
+      showOrderError(error, t.order.updateFailed)
     },
   })
 
@@ -243,17 +266,16 @@ export default function AdminOrderDetailPage({ params }: { params: Promise<{ id:
     mutationFn: (onlyMarkShipped: boolean) =>
       adminDeliverVirtualStock(orderId, { mark_only_shipped: onlyMarkShipped }),
     onSuccess: (response: any, onlyMarkShipped) => {
-      toast.success(response?.data?.message || (onlyMarkShipped ? t.order.virtualMarkedCompleteOnly : t.order.virtualDelivered))
+      toast.success(
+        response?.data?.message ||
+          (onlyMarkShipped ? t.order.virtualMarkedCompleteOnly : t.order.virtualDelivered)
+      )
       queryClient.invalidateQueries({ queryKey: ['adminOrderDetail', orderId] })
       setOpenDeliverVirtual(false)
       setMarkOnlyShipped(false)
     },
     onError: (error: any) => {
-      if (error.code === 40010 && error.data?.error_key) {
-        toast.error(translateBizError(t, error.data.error_key, error.data.params, error.message))
-      } else {
-        toast.error(error.message || t.order.deliverFailed)
-      }
+      showOrderError(error, t.order.deliverFailed)
     },
   })
 
@@ -263,26 +285,30 @@ export default function AdminOrderDetailPage({ params }: { params: Promise<{ id:
       .then((response: any) => {
         setCountries(response.data || [])
       })
-      .catch(err => {
-        console.error('获取国家列表失败:', err)
+      .catch((err) => {
+        showOrderError(err, t.common.failed)
+        console.error('Failed to load countries:', err)
       })
-  }, [])
+  }, [showOrderError, t.common.failed])
 
   // 辅助函数：检查字段是否被打码
-  const isMaskedValue = (value: string | undefined) => {
+  const isMaskedValue = useCallback((value: string | undefined) => {
     if (!value) return false
     // 检查是否为打码标记
     return value === '***' || value.includes('****')
-  }
+  }, [])
 
   // 辅助函数：处理可能被打码的字段
-  const handleMaskedField = (value: string | undefined, defaultValue: string = '') => {
-    if (!value) return defaultValue
-    // 如果是打码值，返回空字符串（让管理员重新填写）
-    if (isMaskedValue(value)) return ''
-    // 否则返回原值
-    return value
-  }
+  const handleMaskedField = useCallback(
+    (value: string | undefined, defaultValue: string = '') => {
+      if (!value) return defaultValue
+      // 如果是打码值，返回空字符串（让管理员重新填写）
+      if (isMaskedValue(value)) return ''
+      // 否则返回原值
+      return value
+    },
+    [isMaskedValue]
+  )
 
   // 当订单数据加载后，初始化编辑表单
   useEffect(() => {
@@ -305,14 +331,14 @@ export default function AdminOrderDetailPage({ params }: { params: Promise<{ id:
       const amountMinor = order.total_amount_minor ?? 0
       setNewPrice(minorToMajor(amountMinor).toString())
     }
-  }, [data])
+  }, [data, handleMaskedField])
 
   if (isLoading) {
-    return <div className="text-center py-12">{t.common.loading}</div>
+    return <div className="py-12 text-center">{t.common.loading}</div>
   }
 
   if (!data?.data) {
-    return <div className="text-center py-12">{t.order.orderNotFound}</div>
+    return <div className="py-12 text-center">{t.order.orderNotFound}</div>
   }
 
   // 处理新的数据结构：{order, serials, virtual_stocks} 或 旧结构直接是order
@@ -320,11 +346,67 @@ export default function AdminOrderDetailPage({ params }: { params: Promise<{ id:
   const serials = data.data.serials || []
   const virtualStocks = data.data.virtual_stocks || []
   const paymentInfo = data.data.payment_info
+  const orderNumber = order.orderNo || order.order_no
+  const hasTracking = Boolean(order.trackingNo || order.tracking_no)
 
   // 判断是否为纯虚拟商品订单
-  const isVirtualOnly = order.items?.every((item: any) =>
-    (item.product_type || item.productType) === 'virtual'
-  ) ?? false
+  const isVirtualOnly =
+    order.items?.every((item: any) => (item.product_type || item.productType) === 'virtual') ??
+    false
+  const canMarkPaid = order.status === 'pending_payment'
+  const canUpdatePrice = canMarkPaid
+  const canDeliverVirtual =
+    order.status === 'pending' && isVirtualOnly && virtualStocks.length === 0
+  const canEditShipping =
+    (order.status === 'pending' || order.status === 'need_resubmit') && !isVirtualOnly
+  const canRequestResubmit = order.status === 'pending' && !isVirtualOnly
+  const canAssignTracking = order.status === 'pending' && !isVirtualOnly && !hasTracking
+  const canMarkComplete = order.status === 'shipped'
+  const canCancel =
+    order.status === 'pending_payment' ||
+    order.status === 'draft' ||
+    order.status === 'pending' ||
+    order.status === 'need_resubmit'
+  const canRefund =
+    order.status === 'draft' ||
+    order.status === 'pending' ||
+    order.status === 'need_resubmit' ||
+    order.status === 'shipped' ||
+    order.status === 'completed'
+  const canDelete =
+    order.status === 'pending_payment' ||
+    order.status === 'draft' ||
+    order.status === 'cancelled' ||
+    order.status === 'refunded'
+  const secondaryActionCount = Number(canCancel) + Number(canRefund) + Number(canDelete)
+  const adminOrderDetailPluginContext = {
+    view: 'admin_order_detail',
+    order: {
+      id: order.id,
+      order_no: orderNumber,
+      status: order.status,
+      serial_generation_status: order.serial_generation_status || order.serialGenerationStatus,
+      user_id: order.user_id ?? order.userId,
+      external_user_id: order.external_user_id ?? order.externalUserID,
+      external_user_name: order.external_user_name || order.externalUserName,
+      total_amount_minor: order.total_amount_minor,
+      currency: order.currency,
+      tracking_no: order.tracking_no || order.trackingNo,
+      receiver_country: order.receiver_country || order.receiverCountry,
+      privacy_protected: Boolean(order.privacy_protected || order.privacyProtected),
+      item_count: Array.isArray(order.items) ? order.items.length : 0,
+    },
+    flags: {
+      is_virtual_only: isVirtualOnly,
+      has_tracking: Boolean(order.tracking_no || order.trackingNo),
+      has_payment_info: Boolean(paymentInfo),
+      has_serials: serials.length > 0,
+      serial_generation_pending: ['queued', 'processing'].includes(
+        String(order.serial_generation_status || order.serialGenerationStatus || '')
+      ),
+      has_virtual_stocks: virtualStocks.length > 0,
+    },
+  }
 
   // 解析付款数据
   const parsePaymentData = () => {
@@ -365,20 +447,24 @@ export default function AdminOrderDetailPage({ params }: { params: Promise<{ id:
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="flex items-center gap-3">
-          <div className="flex items-center justify-center h-10 w-10 rounded-full bg-primary/10">
+          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10">
             {getPaymentIcon()}
           </div>
           <div>
-            <p className="font-medium">{paymentInfo.payment_method?.name || t.order.unknownPaymentMethod}</p>
+            <p className="font-medium">
+              {paymentInfo.payment_method?.name || t.order.unknownPaymentMethod}
+            </p>
             <p className="text-sm text-muted-foreground">
-              {paymentInfo.payment_method?.type === 'custom' ? t.order.customPaymentMethod : t.order.builtinPaymentMethod}
+              {paymentInfo.payment_method?.type === 'custom'
+                ? t.order.customPaymentMethod
+                : t.order.builtinPaymentMethod}
             </p>
           </div>
         </div>
 
         <div className="grid grid-cols-2 gap-4 text-sm">
           <div>
-            <dt className="text-muted-foreground flex items-center gap-1">
+            <dt className="flex items-center gap-1 text-muted-foreground">
               <Clock className="h-3.5 w-3.5" />
               {t.order.selectedAt}
             </dt>
@@ -386,7 +472,7 @@ export default function AdminOrderDetailPage({ params }: { params: Promise<{ id:
           </div>
           {paymentData?.paid_at && (
             <div>
-              <dt className="text-muted-foreground flex items-center gap-1">
+              <dt className="flex items-center gap-1 text-muted-foreground">
                 <CheckCircle className="h-3.5 w-3.5" />
                 {t.order.paidAt}
               </dt>
@@ -396,7 +482,7 @@ export default function AdminOrderDetailPage({ params }: { params: Promise<{ id:
           {paymentData?.transaction_id && (
             <div className="col-span-2">
               <dt className="text-muted-foreground">{t.order.transactionId}</dt>
-              <dd className="font-mono text-xs break-all">{paymentData.transaction_id}</dd>
+              <dd className="break-all font-mono text-xs">{paymentData.transaction_id}</dd>
             </div>
           )}
         </div>
@@ -406,7 +492,18 @@ export default function AdminOrderDetailPage({ params }: { params: Promise<{ id:
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <PluginSlot slot="admin.order_detail.top" context={adminOrderDetailPluginContext} />
+      {orderWarnings.length > 0 && (
+        <Alert className="border-amber-300 bg-amber-50/70 text-amber-900 dark:border-amber-500/40 dark:bg-amber-950/30 dark:text-amber-200">
+          <AlertTitle>{t.common.warning}</AlertTitle>
+          <AlertDescription className="space-y-1">
+            {orderWarnings.map((warning, index) => (
+              <p key={`${warning}-${index}`}>{warning}</p>
+            ))}
+          </AlertDescription>
+        </Alert>
+      )}
+      <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
         <div className="flex items-center gap-4">
           <Button asChild variant="outline" size="sm">
             <Link href="/admin/orders">
@@ -414,411 +511,456 @@ export default function AdminOrderDetailPage({ params }: { params: Promise<{ id:
               <span className="hidden md:inline">{t.order.backToListShort}</span>
             </Link>
           </Button>
-          <h1 className="text-lg md:text-xl font-bold">{t.order.orderDetail}</h1>
+          <h1 className="text-lg font-bold md:text-xl">{t.order.orderDetail}</h1>
         </div>
 
-        <div className="flex gap-2">
-          {/* 标记已付款 */}
-          {order.status === 'pending_payment' && (
-            <AlertDialog>
-              <AlertDialogTrigger asChild>
-                <Button
-                  disabled={markPaidMutation.isPending}
-                >
-                  <CreditCard className="mr-2 h-4 w-4" />
-                  {markPaidMutation.isPending ? t.admin.processing : t.order.markPaid}
-                </Button>
-              </AlertDialogTrigger>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>{t.order.confirmMarkPaidTitle}</AlertDialogTitle>
-                  <AlertDialogDescription>
-                    {t.order.confirmMarkPaidDesc}
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>{t.common.cancel}</AlertDialogCancel>
-                  <AlertDialogAction
-                    onClick={() => markPaidMutation.mutate()}
-                    disabled={markPaidMutation.isPending}
-                  >
+        <div className="xl:max-w-[60%]">
+          <div className="flex flex-wrap gap-2 xl:justify-end">
+            <PluginSlot
+              slot="admin.order_detail.actions"
+              context={adminOrderDetailPluginContext}
+              display="inline"
+            />
+            {/* 标记已付款 */}
+            {canMarkPaid && (
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button disabled={markPaidMutation.isPending}>
+                    <CreditCard className="mr-2 h-4 w-4" />
                     {markPaidMutation.isPending ? t.admin.processing : t.order.markPaid}
-                  </AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
-          )}
-
-          {/* 修改订单价格 */}
-          {order.status === 'pending_payment' && (
-            <Dialog open={openUpdatePrice} onOpenChange={setOpenUpdatePrice}>
-              <DialogTrigger asChild>
-                <Button variant="outline">
-                  <DollarSign className="mr-2 h-4 w-4" />
-                  {t.order.updatePrice}
-                </Button>
-              </DialogTrigger>
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>{t.order.updatePriceTitle}</DialogTitle>
-                  <DialogDescription>
-                    {t.order.updatePriceDesc}
-                  </DialogDescription>
-                </DialogHeader>
-                <div className="space-y-4 py-4">
-                  <div className="space-y-2">
-                    <Label>{t.order.currentAmount}</Label>
-                    <div className="text-lg font-semibold">
-                      {formatCurrency(order.total_amount_minor ?? 0, order.currency || 'CNY')}
-                    </div>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>{t.order.newAmount} *</Label>
-                    <Input
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      placeholder={t.order.newAmountPlaceholder}
-                      value={newPrice}
-                      onChange={(e) => setNewPrice(e.target.value)}
-                    />
-                  </div>
-                </div>
-                <DialogFooter>
-                  <Button variant="outline" onClick={() => setOpenUpdatePrice(false)}>
-                    {t.common.cancel}
                   </Button>
-                  <Button
-                    onClick={() => {
-                      const nextPriceMinor = parseMajorToMinor(newPrice)
-                      if (nextPriceMinor === null || nextPriceMinor < 0) {
-                        toast.error(t.order.invalidPrice)
-                        return
-                      }
-                      updatePriceMutation.mutate(nextPriceMinor)
-                    }}
-                    disabled={!newPrice || updatePriceMutation.isPending}
-                  >
-                    {updatePriceMutation.isPending ? t.admin.saving : t.order.confirmUpdate}
-                  </Button>
-                </DialogFooter>
-              </DialogContent>
-            </Dialog>
-          )}
-
-          {/* 发货虚拟商品 */}
-          {order.status === 'pending' && isVirtualOnly && virtualStocks.length === 0 && (
-            <Dialog
-              open={openDeliverVirtual}
-              onOpenChange={(open) => {
-                setOpenDeliverVirtual(open)
-                if (!open) {
-                  setMarkOnlyShipped(false)
-                }
-              }}
-            >
-              <DialogTrigger asChild>
-                <Button>
-                  <Key className="mr-2 h-4 w-4" />
-                  {t.order.deliverVirtual}
-                </Button>
-              </DialogTrigger>
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>{t.order.deliverVirtualTitle}</DialogTitle>
-                  <DialogDescription>
-                    {t.order.deliverVirtualDesc}
-                  </DialogDescription>
-                </DialogHeader>
-                <div className="py-2">
-                  <div className="flex items-start space-x-2 rounded-md border p-3">
-                    <Checkbox
-                      id="mark-only-shipped"
-                      checked={markOnlyShipped}
-                      onCheckedChange={(checked) => setMarkOnlyShipped(checked === true)}
-                    />
-                    <div className="space-y-1">
-                      <Label htmlFor="mark-only-shipped" className="cursor-pointer">
-                        {t.order.markOnlyCompleteLabel}
-                      </Label>
-                      <p className="text-xs text-muted-foreground">
-                        {t.order.markOnlyCompleteDesc}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-                <DialogFooter>
-                  <Button variant="outline" onClick={() => setOpenDeliverVirtual(false)}>
-                    {t.common.cancel}
-                  </Button>
-                  <Button
-                    onClick={() => deliverVirtualMutation.mutate(markOnlyShipped)}
-                    disabled={deliverVirtualMutation.isPending}
-                  >
-                    {deliverVirtualMutation.isPending ? t.order.delivering : t.order.confirmDeliver}
-                  </Button>
-                </DialogFooter>
-              </DialogContent>
-            </Dialog>
-          )}
-
-          {/* 编辑收货信息 - 虚拟商品不显示 */}
-          {(order.status === 'pending' || order.status === 'need_resubmit') && !isVirtualOnly && (
-            <Dialog open={openEdit} onOpenChange={setOpenEdit}>
-              <DialogTrigger asChild>
-                <Button variant="outline">
-                  <Edit className="mr-2 h-4 w-4" />
-                  {t.order.editShippingInfo}
-                </Button>
-              </DialogTrigger>
-              <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
-                <DialogHeader>
-                  <DialogTitle>{t.order.editShippingInfo}</DialogTitle>
-                </DialogHeader>
-                <div className="space-y-4 py-4">
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label>{t.order.receiverNameLabel} *</Label>
-                      <Input
-                        value={editForm.receiver_name}
-                        onChange={(e) => setEditForm({ ...editForm, receiver_name: e.target.value })}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>{t.order.emailLabel} *</Label>
-                      <Input
-                        type="email"
-                        value={editForm.receiver_email}
-                        onChange={(e) => setEditForm({ ...editForm, receiver_email: e.target.value })}
-                      />
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-[120px_1fr] gap-2">
-                    <div className="space-y-2">
-                      <Label>{t.order.areaCode} *</Label>
-                      <Input
-                        value={editForm.phone_code}
-                        onChange={(e) => setEditForm({ ...editForm, phone_code: e.target.value })}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>{t.order.phoneLabel} *</Label>
-                      <Input
-                        value={editForm.receiver_phone}
-                        onChange={(e) => setEditForm({ ...editForm, receiver_phone: e.target.value })}
-                      />
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label>{t.order.countryRegion} *</Label>
-                    <Select
-                      value={editForm.receiver_country}
-                      onValueChange={(value) => setEditForm({ ...editForm, receiver_country: value })}
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>{t.order.confirmMarkPaidTitle}</AlertDialogTitle>
+                    <AlertDialogDescription>{t.order.confirmMarkPaidDesc}</AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>{t.common.cancel}</AlertDialogCancel>
+                    <AlertDialogAction
+                      onClick={() => markPaidMutation.mutate()}
+                      disabled={markPaidMutation.isPending}
                     >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent className="max-h-[300px]">
-                        {countries.map((country) => (
-                          <SelectItem key={country.code} value={country.code}>
-                            {country.name_zh}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
+                      {markPaidMutation.isPending ? t.admin.processing : t.order.markPaid}
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            )}
 
-                  <div className="grid grid-cols-3 gap-4">
+            {/* 修改订单价格 */}
+            {canUpdatePrice && (
+              <Dialog open={openUpdatePrice} onOpenChange={setOpenUpdatePrice}>
+                <DialogTrigger asChild>
+                  <Button variant="outline">
+                    <DollarSign className="mr-2 h-4 w-4" />
+                    {t.order.updatePrice}
+                  </Button>
+                </DialogTrigger>
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>{t.order.updatePriceTitle}</DialogTitle>
+                    <DialogDescription>{t.order.updatePriceDesc}</DialogDescription>
+                  </DialogHeader>
+                  <div className="space-y-4 py-4">
                     <div className="space-y-2">
-                      <Label>{t.order.province}</Label>
-                      <Input
-                        value={editForm.receiver_province}
-                        onChange={(e) => setEditForm({ ...editForm, receiver_province: e.target.value })}
-                      />
+                      <Label>{t.order.currentAmount}</Label>
+                      <div className="text-lg font-semibold">
+                        {formatCurrency(order.total_amount_minor ?? 0, order.currency || 'CNY')}
+                      </div>
                     </div>
                     <div className="space-y-2">
-                      <Label>{t.order.city}</Label>
+                      <Label>{t.order.newAmount} *</Label>
                       <Input
-                        value={editForm.receiver_city}
-                        onChange={(e) => setEditForm({ ...editForm, receiver_city: e.target.value })}
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        placeholder={t.order.newAmountPlaceholder}
+                        value={newPrice}
+                        onChange={(e) => setNewPrice(e.target.value)}
                       />
                     </div>
+                  </div>
+                  <DialogFooter>
+                    <Button variant="outline" onClick={() => setOpenUpdatePrice(false)}>
+                      {t.common.cancel}
+                    </Button>
+                    <Button
+                      onClick={() => {
+                        const nextPriceMinor = parseMajorToMinor(newPrice)
+                        if (nextPriceMinor === null || nextPriceMinor < 0) {
+                          toast.error(t.order.invalidPrice)
+                          return
+                        }
+                        updatePriceMutation.mutate(nextPriceMinor)
+                      }}
+                      disabled={!newPrice || updatePriceMutation.isPending}
+                    >
+                      {updatePriceMutation.isPending ? t.admin.saving : t.order.confirmUpdate}
+                    </Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
+            )}
+
+            {/* 发货虚拟商品 */}
+            {canDeliverVirtual && (
+              <Dialog
+                open={openDeliverVirtual}
+                onOpenChange={(open) => {
+                  setOpenDeliverVirtual(open)
+                  if (!open) {
+                    setMarkOnlyShipped(false)
+                  }
+                }}
+              >
+                <DialogTrigger asChild>
+                  <Button>
+                    <Key className="mr-2 h-4 w-4" />
+                    {t.order.deliverVirtual}
+                  </Button>
+                </DialogTrigger>
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>{t.order.deliverVirtualTitle}</DialogTitle>
+                    <DialogDescription>{t.order.deliverVirtualDesc}</DialogDescription>
+                  </DialogHeader>
+                  <div className="py-2">
+                    <div className="flex items-start space-x-2 rounded-md border p-3">
+                      <Checkbox
+                        id="mark-only-shipped"
+                        checked={markOnlyShipped}
+                        onCheckedChange={(checked) => setMarkOnlyShipped(checked === true)}
+                      />
+                      <div className="space-y-1">
+                        <Label htmlFor="mark-only-shipped" className="cursor-pointer">
+                          {t.order.markOnlyCompleteLabel}
+                        </Label>
+                        <p className="text-xs text-muted-foreground">
+                          {t.order.markOnlyCompleteDesc}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                  <DialogFooter>
+                    <Button variant="outline" onClick={() => setOpenDeliverVirtual(false)}>
+                      {t.common.cancel}
+                    </Button>
+                    <Button
+                      onClick={() => deliverVirtualMutation.mutate(markOnlyShipped)}
+                      disabled={deliverVirtualMutation.isPending}
+                    >
+                      {deliverVirtualMutation.isPending
+                        ? t.order.delivering
+                        : t.order.confirmDeliver}
+                    </Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
+            )}
+
+            {/* 编辑收货信息 - 虚拟商品不显示 */}
+            {canEditShipping && (
+              <Dialog open={openEdit} onOpenChange={setOpenEdit}>
+                <DialogTrigger asChild>
+                  <Button variant="outline">
+                    <Edit className="mr-2 h-4 w-4" />
+                    {t.order.editShippingInfo}
+                  </Button>
+                </DialogTrigger>
+                <DialogContent className="max-h-[80vh] max-w-2xl overflow-y-auto">
+                  <DialogHeader>
+                    <DialogTitle>{t.order.editShippingInfo}</DialogTitle>
+                  </DialogHeader>
+                  <div className="space-y-4 py-4">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label>{t.order.receiverNameLabel} *</Label>
+                        <Input
+                          value={editForm.receiver_name}
+                          onChange={(e) =>
+                            setEditForm({ ...editForm, receiver_name: e.target.value })
+                          }
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>{t.order.emailLabel} *</Label>
+                        <Input
+                          type="email"
+                          value={editForm.receiver_email}
+                          onChange={(e) =>
+                            setEditForm({ ...editForm, receiver_email: e.target.value })
+                          }
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-[120px_1fr] gap-2">
+                      <div className="space-y-2">
+                        <Label>{t.order.areaCode} *</Label>
+                        <Input
+                          value={editForm.phone_code}
+                          onChange={(e) => setEditForm({ ...editForm, phone_code: e.target.value })}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>{t.order.phoneLabel} *</Label>
+                        <Input
+                          value={editForm.receiver_phone}
+                          onChange={(e) =>
+                            setEditForm({ ...editForm, receiver_phone: e.target.value })
+                          }
+                        />
+                      </div>
+                    </div>
+
                     <div className="space-y-2">
-                      <Label>{t.order.district}</Label>
+                      <Label>{t.order.countryRegion} *</Label>
+                      <Select
+                        value={editForm.receiver_country}
+                        onValueChange={(value) =>
+                          setEditForm({ ...editForm, receiver_country: value })
+                        }
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent className="max-h-[300px]">
+                          {countries.map((country) => (
+                            <SelectItem key={country.code} value={country.code}>
+                              {country.name_zh}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-4">
+                      <div className="space-y-2">
+                        <Label>{t.order.province}</Label>
+                        <Input
+                          value={editForm.receiver_province}
+                          onChange={(e) =>
+                            setEditForm({ ...editForm, receiver_province: e.target.value })
+                          }
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>{t.order.city}</Label>
+                        <Input
+                          value={editForm.receiver_city}
+                          onChange={(e) =>
+                            setEditForm({ ...editForm, receiver_city: e.target.value })
+                          }
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>{t.order.district}</Label>
+                        <Input
+                          value={editForm.receiver_district}
+                          onChange={(e) =>
+                            setEditForm({ ...editForm, receiver_district: e.target.value })
+                          }
+                        />
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label>{t.order.detailAddress} *</Label>
+                      <Textarea
+                        value={editForm.receiver_address}
+                        onChange={(e) =>
+                          setEditForm({ ...editForm, receiver_address: e.target.value })
+                        }
+                        rows={3}
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label>{t.order.postalCode}</Label>
                       <Input
-                        value={editForm.receiver_district}
-                        onChange={(e) => setEditForm({ ...editForm, receiver_district: e.target.value })}
+                        value={editForm.receiver_postcode}
+                        onChange={(e) =>
+                          setEditForm({ ...editForm, receiver_postcode: e.target.value })
+                        }
                       />
                     </div>
                   </div>
+                  <DialogFooter>
+                    <Button variant="outline" onClick={() => setOpenEdit(false)}>
+                      {t.common.cancel}
+                    </Button>
+                    <Button onClick={() => editMutation.mutate()} disabled={editMutation.isPending}>
+                      {editMutation.isPending ? t.admin.saving : t.order.save}
+                    </Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
+            )}
 
-                  <div className="space-y-2">
-                    <Label>{t.order.detailAddress} *</Label>
-                    <Textarea
-                      value={editForm.receiver_address}
-                      onChange={(e) => setEditForm({ ...editForm, receiver_address: e.target.value })}
-                      rows={3}
-                    />
+            {/* 要求重填 - 虚拟商品不显示 */}
+            {canRequestResubmit && (
+              <Dialog open={openResubmit} onOpenChange={setOpenResubmit}>
+                <DialogTrigger asChild>
+                  <Button variant="outline">
+                    <RotateCcw className="mr-2 h-4 w-4" />
+                    {t.order.requestResubmit}
+                  </Button>
+                </DialogTrigger>
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>{t.order.requestResubmitTitle}</DialogTitle>
+                    <DialogDescription>{t.order.requestResubmitDesc}</DialogDescription>
+                  </DialogHeader>
+                  <div className="space-y-4 py-4">
+                    <div className="space-y-2">
+                      <Label>{t.order.reasonLabel} *</Label>
+                      <Textarea
+                        placeholder={t.order.reasonPlaceholder}
+                        value={resubmitReason}
+                        onChange={(e) => setResubmitReason(e.target.value)}
+                        rows={4}
+                      />
+                    </div>
                   </div>
+                  <DialogFooter>
+                    <Button variant="outline" onClick={() => setOpenResubmit(false)}>
+                      {t.common.cancel}
+                    </Button>
+                    <Button
+                      onClick={() => resubmitMutation.mutate()}
+                      disabled={!resubmitReason || resubmitMutation.isPending}
+                    >
+                      {resubmitMutation.isPending ? t.admin.processing : t.order.confirmResubmit}
+                    </Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
+            )}
 
-                  <div className="space-y-2">
-                    <Label>{t.order.postalCode}</Label>
-                    <Input
-                      value={editForm.receiver_postcode}
-                      onChange={(e) => setEditForm({ ...editForm, receiver_postcode: e.target.value })}
-                    />
+            {/* 分配物流单号 - 虚拟商品不显示 */}
+            {canAssignTracking && (
+              <Dialog open={openTracking} onOpenChange={setOpenTracking}>
+                <DialogTrigger asChild>
+                  <Button>
+                    <Truck className="mr-2 h-4 w-4" />
+                    {t.order.assignTracking}
+                  </Button>
+                </DialogTrigger>
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>{t.order.assignTracking}</DialogTitle>
+                  </DialogHeader>
+                  <div className="space-y-4 py-4">
+                    <div className="space-y-2">
+                      <Label>{t.order.trackingNoLabel}</Label>
+                      <Input
+                        placeholder={t.order.trackingNoPlaceholder}
+                        value={trackingNo}
+                        onChange={(e) => setTrackingNo(e.target.value)}
+                      />
+                    </div>
                   </div>
-                </div>
-                <DialogFooter>
-                  <Button variant="outline" onClick={() => setOpenEdit(false)}>
-                    {t.common.cancel}
-                  </Button>
-                  <Button
-                    onClick={() => editMutation.mutate()}
-                    disabled={editMutation.isPending}
-                  >
-                    {editMutation.isPending ? t.admin.saving : t.order.save}
-                  </Button>
-                </DialogFooter>
-              </DialogContent>
-            </Dialog>
-          )}
+                  <DialogFooter>
+                    <Button variant="outline" onClick={() => setOpenTracking(false)}>
+                      {t.common.cancel}
+                    </Button>
+                    <Button
+                      onClick={() => assignMutation.mutate()}
+                      disabled={!trackingNo || assignMutation.isPending}
+                    >
+                      {assignMutation.isPending ? t.order.assigning : t.order.confirmAssign}
+                    </Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
+            )}
 
-          {/* 要求重填 - 虚拟商品不显示 */}
-          {order.status === 'pending' && !isVirtualOnly && (
-            <Dialog open={openResubmit} onOpenChange={setOpenResubmit}>
-              <DialogTrigger asChild>
-                <Button variant="outline">
-                  <RotateCcw className="mr-2 h-4 w-4" />
-                  {t.order.requestResubmit}
-                </Button>
-              </DialogTrigger>
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>{t.order.requestResubmitTitle}</DialogTitle>
-                  <DialogDescription>
-                    {t.order.requestResubmitDesc}
-                  </DialogDescription>
-                </DialogHeader>
-                <div className="space-y-4 py-4">
-                  <div className="space-y-2">
-                    <Label>{t.order.reasonLabel} *</Label>
-                    <Textarea
-                      placeholder={t.order.reasonPlaceholder}
-                      value={resubmitReason}
-                      onChange={(e) => setResubmitReason(e.target.value)}
-                      rows={4}
-                    />
+            {/* 标记完成 */}
+            {canMarkComplete && (
+              <Dialog open={openComplete} onOpenChange={setOpenComplete}>
+                <DialogTrigger asChild>
+                  <Button variant="default">
+                    <CheckCircle className="mr-2 h-4 w-4" />
+                    {t.order.markComplete}
+                  </Button>
+                </DialogTrigger>
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>{t.order.markCompleteTitle}</DialogTitle>
+                  </DialogHeader>
+                  <div className="space-y-4 py-4">
+                    <div className="space-y-2">
+                      <Label>{t.order.remarkOptional}</Label>
+                      <Input
+                        placeholder={t.order.remarkPlaceholder}
+                        value={adminRemark}
+                        onChange={(e) => setAdminRemark(e.target.value)}
+                      />
+                    </div>
                   </div>
-                </div>
-                <DialogFooter>
-                  <Button variant="outline" onClick={() => setOpenResubmit(false)}>
-                    {t.common.cancel}
+                  <DialogFooter>
+                    <Button variant="outline" onClick={() => setOpenComplete(false)}>
+                      {t.common.cancel}
+                    </Button>
+                    <Button
+                      onClick={() => completeMutation.mutate()}
+                      disabled={completeMutation.isPending}
+                    >
+                      {completeMutation.isPending ? t.admin.processing : t.order.confirmComplete}
+                    </Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
+            )}
+            {secondaryActionCount > 0 ? (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" className="gap-2">
+                    {t.common.more}
+                    <ChevronDown className="h-4 w-4" />
                   </Button>
-                  <Button
-                    onClick={() => resubmitMutation.mutate()}
-                    disabled={!resubmitReason || resubmitMutation.isPending}
-                  >
-                    {resubmitMutation.isPending ? t.admin.processing : t.order.confirmResubmit}
-                  </Button>
-                </DialogFooter>
-              </DialogContent>
-            </Dialog>
-          )}
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-52">
+                  {canCancel && (
+                    <DropdownMenuItem
+                      className="cursor-pointer gap-2"
+                      onSelect={() => setOpenCancel(true)}
+                    >
+                      <XCircle className="h-4 w-4" />
+                      {t.order.cancelOrder}
+                    </DropdownMenuItem>
+                  )}
+                  {canRefund && (
+                    <DropdownMenuItem
+                      className="cursor-pointer gap-2"
+                      onSelect={() => setOpenRefund(true)}
+                    >
+                      <Undo2 className="h-4 w-4" />
+                      {t.order.refundOrder}
+                    </DropdownMenuItem>
+                  )}
+                  {canDelete && (canCancel || canRefund) ? <DropdownMenuSeparator /> : null}
+                  {canDelete && (
+                    <DropdownMenuItem
+                      className="cursor-pointer gap-2 text-destructive focus:bg-destructive/10 focus:text-destructive"
+                      onSelect={() => setOpenDelete(true)}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                      {t.order.delete}
+                    </DropdownMenuItem>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : null}
+          </div>
 
-          {/* 分配物流单号 - 虚拟商品不显示 */}
-          {order.status === 'pending' && !isVirtualOnly && !order.trackingNo && !order.tracking_no && (
-            <Dialog open={openTracking} onOpenChange={setOpenTracking}>
-              <DialogTrigger asChild>
-                <Button>
-                  <Truck className="mr-2 h-4 w-4" />
-                  {t.order.assignTracking}
-                </Button>
-              </DialogTrigger>
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>{t.order.assignTracking}</DialogTitle>
-                </DialogHeader>
-                <div className="space-y-4 py-4">
-                  <div className="space-y-2">
-                    <Label>{t.order.trackingNoLabel}</Label>
-                    <Input
-                      placeholder={t.order.trackingNoPlaceholder}
-                      value={trackingNo}
-                      onChange={(e) => setTrackingNo(e.target.value)}
-                    />
-                  </div>
-                </div>
-                <DialogFooter>
-                  <Button variant="outline" onClick={() => setOpenTracking(false)}>
-                    {t.common.cancel}
-                  </Button>
-                  <Button
-                    onClick={() => assignMutation.mutate()}
-                    disabled={!trackingNo || assignMutation.isPending}
-                  >
-                    {assignMutation.isPending ? t.order.assigning : t.order.confirmAssign}
-                  </Button>
-                </DialogFooter>
-              </DialogContent>
-            </Dialog>
-          )}
-
-          {/* 标记完成 */}
-          {order.status === 'shipped' && (
-            <Dialog open={openComplete} onOpenChange={setOpenComplete}>
-              <DialogTrigger asChild>
-                <Button variant="default">
-                  <CheckCircle className="mr-2 h-4 w-4" />
-                  {t.order.markComplete}
-                </Button>
-              </DialogTrigger>
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>{t.order.markCompleteTitle}</DialogTitle>
-                </DialogHeader>
-                <div className="space-y-4 py-4">
-                  <div className="space-y-2">
-                    <Label>{t.order.remarkOptional}</Label>
-                    <Input
-                      placeholder={t.order.remarkPlaceholder}
-                      value={adminRemark}
-                      onChange={(e) => setAdminRemark(e.target.value)}
-                    />
-                  </div>
-                </div>
-                <DialogFooter>
-                  <Button variant="outline" onClick={() => setOpenComplete(false)}>
-                    {t.common.cancel}
-                  </Button>
-                  <Button
-                    onClick={() => completeMutation.mutate()}
-                    disabled={completeMutation.isPending}
-                  >
-                    {completeMutation.isPending ? t.admin.processing : t.order.confirmComplete}
-                  </Button>
-                </DialogFooter>
-              </DialogContent>
-            </Dialog>
-          )}
-
-          {/* 取消订单 */}
-          {(order.status === 'pending_payment' || order.status === 'draft' || order.status === 'pending' || order.status === 'need_resubmit') && (
+          {canCancel && (
             <Dialog open={openCancel} onOpenChange={setOpenCancel}>
-              <DialogTrigger asChild>
-                <Button variant="outline">
-                  <XCircle className="mr-2 h-4 w-4" />
-                  {t.order.cancelOrder}
-                </Button>
-              </DialogTrigger>
               <DialogContent>
                 <DialogHeader>
                   <DialogTitle>{t.order.cancelOrderTitle}</DialogTitle>
-                  <DialogDescription>
-                    {t.order.cancelOrderDesc}
-                  </DialogDescription>
+                  <DialogDescription>{t.order.cancelOrderDesc}</DialogDescription>
                 </DialogHeader>
                 <div className="space-y-4 py-4">
                   <div className="space-y-2">
@@ -847,21 +989,12 @@ export default function AdminOrderDetailPage({ params }: { params: Promise<{ id:
             </Dialog>
           )}
 
-          {/* 退款 */}
-          {(order.status === 'draft' || order.status === 'pending' || order.status === 'need_resubmit' || order.status === 'shipped' || order.status === 'completed') && (
+          {canRefund && (
             <Dialog open={openRefund} onOpenChange={setOpenRefund}>
-              <DialogTrigger asChild>
-                <Button variant="outline">
-                  <Undo2 className="mr-2 h-4 w-4" />
-                  {t.order.refundOrder}
-                </Button>
-              </DialogTrigger>
               <DialogContent>
                 <DialogHeader>
                   <DialogTitle>{t.order.refundOrderTitle}</DialogTitle>
-                  <DialogDescription>
-                    {t.order.refundOrderDesc}
-                  </DialogDescription>
+                  <DialogDescription>{t.order.refundOrderDesc}</DialogDescription>
                 </DialogHeader>
                 <div className="space-y-4 py-4">
                   <div className="space-y-2">
@@ -890,27 +1023,36 @@ export default function AdminOrderDetailPage({ params }: { params: Promise<{ id:
             </Dialog>
           )}
 
-          {/* 删除订单 */}
-          {(order.status === 'pending_payment' || order.status === 'draft' || order.status === 'cancelled' || order.status === 'refunded') && (
-            <AlertDialog>
-              <AlertDialogTrigger asChild>
-                <Button variant="destructive">
-                  <Trash2 className="mr-2 h-4 w-4" />
-                  {t.order.delete}
-                </Button>
-              </AlertDialogTrigger>
-              <AlertDialogContent>
+          {canDelete && (
+            <AlertDialog open={openDelete} onOpenChange={setOpenDelete}>
+              <AlertDialogContent className="max-w-lg">
                 <AlertDialogHeader>
                   <AlertDialogTitle>{t.order.confirmDeleteOrder}</AlertDialogTitle>
-                  <AlertDialogDescription>
-                    {t.order.confirmDeleteOrderDesc}
-                  </AlertDialogDescription>
+                  <AlertDialogDescription>{t.order.confirmDeleteOrderDesc}</AlertDialogDescription>
                 </AlertDialogHeader>
+                <div className="space-y-3">
+                  <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <OrderStatusBadge status={order.status} />
+                      <p className="text-xs text-muted-foreground">
+                        {[t.common.delete, orderNumber].join(' · ')}
+                      </p>
+                    </div>
+                    <p className="mt-2 font-medium">
+                      {formatCurrency(order.total_amount_minor ?? 0, order.currency || 'CNY')}
+                    </p>
+                  </div>
+                  <div className="rounded-md border border-input/60 bg-muted/10 p-3 text-sm">
+                    <p className="text-xs text-muted-foreground">{t.order.createdAt}</p>
+                    <p className="mt-1">{formatDate(order.createdAt || order.created_at || '')}</p>
+                  </div>
+                </div>
                 <AlertDialogFooter>
                   <AlertDialogCancel>{t.order.cancel}</AlertDialogCancel>
                   <AlertDialogAction
                     onClick={() => deleteMutation.mutate()}
                     className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                    disabled={deleteMutation.isPending}
                   >
                     {deleteMutation.isPending ? t.order.deleting : t.order.confirmDeleteBtn}
                   </AlertDialogAction>
@@ -928,7 +1070,11 @@ export default function AdminOrderDetailPage({ params }: { params: Promise<{ id:
         isVirtualOnly={isVirtualOnly}
         paymentCard={paymentCard}
         showVirtualStockRemark
+        pluginSlotNamespace="admin.order_detail"
+        pluginSlotContext={adminOrderDetailPluginContext}
+        pluginSlotPath={`/admin/orders/${orderId}`}
       />
+      <PluginSlot slot="admin.order_detail.bottom" context={adminOrderDetailPluginContext} />
     </div>
   )
 }

@@ -162,7 +162,14 @@
             "low_stock_threshold": 10,
             "high_stock_threshold": 50
         },
-        "virtual_delivery_order": "random"
+        "virtual_delivery_order": "random",
+        "high_concurrency_protection": {
+            "enabled": false,
+            "mode": "auto",
+            "max_inflight": 8,
+            "wait_timeout_ms": 5000,
+            "redis_lease_ms": 30000
+        }
     },
     "magic_link": {
         "expire_minutes": 15,
@@ -221,6 +228,13 @@
         "ticket_admin_reply": true,
         "ticket_user_reply": true,
         "ticket_resolved": true
+    },
+    "plugin": {
+        "enabled": true,
+        "frontend": {
+            "force_sanitize_html": false,
+            "slot_animations_enabled": true
+        }
     },
     "analytics": {
         "enabled": true
