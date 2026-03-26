@@ -16,18 +16,23 @@ const (
 
 // PaymentMethod 付款方式模型
 type PaymentMethod struct {
-	ID           uint              `gorm:"primaryKey" json:"id"`
-	Name         string            `gorm:"size:100;not null" json:"name"`                     // 付款方式名称
-	Description  string            `gorm:"size:500" json:"description"`                       // 描述
-	Type         PaymentMethodType `gorm:"size:20;not null;default:builtin" json:"type"`      // 类型: builtin/custom
-	Enabled      bool              `gorm:"default:true" json:"enabled"`                       // 是否启用
-	Script       string            `gorm:"type:text" json:"script"`                           // JS脚本代码(custom类型)
-	Config       string            `gorm:"type:text" json:"config"`                           // 配置JSON(如API密钥等)
-	Icon         string            `gorm:"size:100" json:"icon"`                              // 图标(lucide图标名或URL)
-	SortOrder    int               `gorm:"default:0" json:"sort_order"`                       // 排序顺序
-	PollInterval int               `gorm:"default:30" json:"poll_interval"`                   // 轮询检查间隔(秒)，默认30秒
-	CreatedAt    time.Time         `json:"created_at"`
-	UpdatedAt    time.Time         `json:"updated_at"`
+	ID              uint              `gorm:"primaryKey" json:"id"`
+	Name            string            `gorm:"size:100;not null" json:"name"`                // 付款方式名称
+	Description     string            `gorm:"size:500" json:"description"`                  // 描述
+	Type            PaymentMethodType `gorm:"size:20;not null;default:builtin" json:"type"` // 类型: builtin/custom
+	Enabled         bool              `gorm:"default:true" json:"enabled"`                  // 是否启用
+	Script          string            `gorm:"type:text" json:"script"`                      // JS脚本代码(custom类型)
+	Config          string            `gorm:"type:text" json:"config"`                      // 配置JSON(如API密钥等)
+	Icon            string            `gorm:"size:100" json:"icon"`                         // 图标(lucide图标名或URL)
+	Version         string            `gorm:"size:50" json:"version"`                       // 导入包版本号
+	PackageName     string            `gorm:"size:255" json:"package_name"`                 // 导入包文件名
+	PackageEntry    string            `gorm:"size:255" json:"package_entry"`                // 导入包入口脚本
+	PackageChecksum string            `gorm:"size:64" json:"package_checksum"`              // 导入包SHA256
+	Manifest        string            `gorm:"type:text" json:"manifest"`                    // 导入包 manifest.json 原文
+	SortOrder       int               `gorm:"default:0" json:"sort_order"`                  // 排序顺序
+	PollInterval    int               `gorm:"default:30" json:"poll_interval"`              // 轮询检查间隔(秒)，默认30秒
+	CreatedAt       time.Time         `json:"created_at"`
+	UpdatedAt       time.Time         `json:"updated_at"`
 }
 
 // TableName 指定表名
@@ -50,14 +55,14 @@ func (pm *PaymentMethod) BeforeUpdate(tx *gorm.DB) error {
 
 // OrderPaymentMethod 订单选择的付款方式
 type OrderPaymentMethod struct {
-	ID               uint      `gorm:"primaryKey" json:"id"`
-	OrderID          uint      `gorm:"not null;uniqueIndex" json:"order_id"`        // 订单ID
-	PaymentMethodID  uint      `gorm:"not null;index" json:"payment_method_id"`     // 付款方式ID
-	PaymentData      string    `gorm:"type:text" json:"payment_data"`               // 支付相关数据(如交易号等)
-	PaymentCardCache string    `gorm:"type:text" json:"payment_card_cache"`         // 付款卡片缓存(JSON格式)
-	CacheExpiresAt   *time.Time `gorm:"index" json:"cache_expires_at"`              // 缓存过期时间
-	CreatedAt        time.Time `json:"created_at"`
-	UpdatedAt        time.Time `json:"updated_at"`
+	ID               uint       `gorm:"primaryKey" json:"id"`
+	OrderID          uint       `gorm:"not null;uniqueIndex" json:"order_id"`    // 订单ID
+	PaymentMethodID  uint       `gorm:"not null;index" json:"payment_method_id"` // 付款方式ID
+	PaymentData      string     `gorm:"type:text" json:"payment_data"`           // 支付相关数据(如交易号等)
+	PaymentCardCache string     `gorm:"type:text" json:"payment_card_cache"`     // 付款卡片缓存(JSON格式)
+	CacheExpiresAt   *time.Time `gorm:"index" json:"cache_expires_at"`           // 缓存过期时间
+	CreatedAt        time.Time  `json:"created_at"`
+	UpdatedAt        time.Time  `json:"updated_at"`
 }
 
 // TableName 指定表名

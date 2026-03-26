@@ -57,6 +57,8 @@ import { VirtualProductStock, VirtualStockStats, VirtualStockStatus } from '@/ty
 import { useLocale } from '@/hooks/use-locale'
 import { getTranslations } from '@/lib/i18n'
 import { usePageTitle } from '@/hooks/use-page-title'
+import { resolveApiErrorMessage } from '@/lib/api-error'
+import { PluginSlot } from '@/components/plugins/plugin-slot'
 
 const statusConfig: Record<VirtualStockStatus, { color: string; icon: React.ReactNode }> = {
   available: { color: 'bg-green-100 text-green-800 dark:bg-green-900/50 dark:text-green-300', icon: <CheckCircle className="w-3 h-3" /> },
@@ -85,6 +87,11 @@ export default function VirtualStockPage() {
   const [deleteId, setDeleteId] = useState<number | null>(null)
   const [deleteBatchNo, setDeleteBatchNo] = useState<string | null>(null)
   const [showContent, setShowContent] = useState<Record<number, boolean>>({})
+  const formatDeleteError = (error: unknown) =>
+    t.virtualStock.deleteFailed.replace(
+      '{msg}',
+      resolveApiErrorMessage(error, t, t.common.failed)
+    )
 
   // 获取商品信息
   const { data: productData, isLoading: productLoading } = useQuery({
@@ -130,8 +137,8 @@ export default function VirtualStockPage() {
       refetchStocks()
       refetchStats()
     },
-    onError: (error: Error) => {
-      toast.error(t.virtualStock.deleteFailed.replace('{msg}', error.message))
+    onError: (error: unknown) => {
+      toast.error(formatDeleteError(error))
     },
   })
 
@@ -144,8 +151,8 @@ export default function VirtualStockPage() {
       refetchStocks()
       refetchStats()
     },
-    onError: (error: Error) => {
-      toast.error(t.virtualStock.deleteFailed.replace('{msg}', error.message))
+    onError: (error: unknown) => {
+      toast.error(formatDeleteError(error))
     },
   })
 
@@ -166,6 +173,30 @@ export default function VirtualStockPage() {
 
   // 获取所有批次号
   const batchNos = [...new Set(stocks.filter(s => s.batch_no).map(s => s.batch_no!))]
+  const adminProductVirtualStockPluginContext = {
+    view: 'admin_product_virtual_stock',
+    product: product
+      ? {
+          id: product.id,
+          name: product.name,
+          sku: product.sku,
+          product_type: product.product_type,
+        }
+      : undefined,
+    filters: {
+      status: statusFilter === 'all' ? undefined : statusFilter,
+      page,
+    },
+    summary: {
+      total,
+      total_pages: totalPages,
+      batch_count: batchNos.length,
+      is_all_script: isAllScript,
+      available: stats.available,
+      reserved: stats.reserved,
+      sold: stats.sold,
+    },
+  }
 
   if (productLoading) {
     return (
@@ -199,6 +230,10 @@ export default function VirtualStockPage() {
 
   return (
     <div className="space-y-6">
+      <PluginSlot
+        slot="admin.product_virtual_stock.top"
+        context={adminProductVirtualStockPluginContext}
+      />
       {/* 头部 */}
       <div className="flex items-center gap-4">
         <Button variant="outline" size="sm" onClick={() => router.push('/admin/products')}>

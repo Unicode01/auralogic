@@ -84,19 +84,40 @@ func getPermCached(userID uint) (*permCacheEntry, error) {
 
 // RequirePermission Permission检查中间件
 func RequirePermission(permission string) gin.HandlerFunc {
+	return RequireAllPermissions(permission)
+}
+
+// RequireAnyPermission 任一权限检查中间件
+func RequireAnyPermission(permissions ...string) gin.HandlerFunc {
+	return requirePermissions(permissionMatchAny, permissions...)
+}
+
+// RequireAllPermissions 全部权限检查中间件
+func RequireAllPermissions(permissions ...string) gin.HandlerFunc {
+	return requirePermissions(permissionMatchAll, permissions...)
+}
+
+type permissionMatchMode int
+
+const (
+	permissionMatchAny permissionMatchMode = iota
+	permissionMatchAll
+)
+
+func requirePermissions(mode permissionMatchMode, permissions ...string) gin.HandlerFunc {
+	requiredPermissions := uniqueNormalizedPermissions(permissions)
 	return func(c *gin.Context) {
+		if len(requiredPermissions) == 0 {
+			response.Forbidden(c, "No permission")
+			c.Abort()
+			return
+		}
+
 		// API Key 认证：检查 scopes
 		if IsAPIKeyAuth(c) {
-			scopes, exists := c.Get("api_scopes")
-			if exists {
-				if scopeList, ok := scopes.([]string); ok {
-					for _, s := range scopeList {
-						if s == permission {
-							c.Next()
-							return
-						}
-					}
-				}
+			if apiKeyHasPermissions(c, requiredPermissions, mode) {
+				c.Next()
+				return
 			}
 			response.Forbidden(c, "No permission")
 			c.Abort()
@@ -118,25 +139,99 @@ func RequirePermission(permission string) gin.HandlerFunc {
 			return
 		}
 
-		// 超级Admin拥有所有Permission（除非是需要特殊授权的Permission）
-		if entry.Role == "super_admin" {
-			if !IsSpecialPermission(permission) {
-				c.Next()
-				return
-			}
-		}
-
-		// 检查Permission
-		for _, p := range entry.Permissions {
-			if p == permission {
-				c.Next()
-				return
-			}
+		if jwtHasPermissions(entry, requiredPermissions, mode) {
+			c.Next()
+			return
 		}
 
 		response.Forbidden(c, "No permission")
 		c.Abort()
 	}
+}
+
+func apiKeyHasPermissions(c *gin.Context, requiredPermissions []string, mode permissionMatchMode) bool {
+	if c == nil {
+		return false
+	}
+
+	scopes, exists := c.Get("api_scopes")
+	if !exists {
+		return false
+	}
+
+	scopeList, ok := scopes.([]string)
+	if !ok {
+		return false
+	}
+
+	return permissionSetMatches(buildPermissionSet(scopeList), requiredPermissions, mode)
+}
+
+func jwtHasPermissions(entry *permCacheEntry, requiredPermissions []string, mode permissionMatchMode) bool {
+	if entry == nil {
+		return false
+	}
+
+	if entry.Role == "super_admin" {
+		switch mode {
+		case permissionMatchAny:
+			for _, permission := range requiredPermissions {
+				if !IsSpecialPermission(permission) {
+					return true
+				}
+			}
+		case permissionMatchAll:
+			requiredPermissions = filterSpecialPermissions(requiredPermissions)
+			if len(requiredPermissions) == 0 {
+				return true
+			}
+		}
+	}
+
+	return permissionSetMatches(buildPermissionSet(entry.Permissions), requiredPermissions, mode)
+}
+
+func buildPermissionSet(permissions []string) map[string]struct{} {
+	set := make(map[string]struct{}, len(permissions))
+	for _, permission := range permissions {
+		normalized := permission
+		if normalized == "" {
+			continue
+		}
+		set[normalized] = struct{}{}
+	}
+	return set
+}
+
+func permissionSetMatches(permissionSet map[string]struct{}, requiredPermissions []string, mode permissionMatchMode) bool {
+	switch mode {
+	case permissionMatchAny:
+		for _, permission := range requiredPermissions {
+			if _, exists := permissionSet[permission]; exists {
+				return true
+			}
+		}
+		return false
+	case permissionMatchAll:
+		for _, permission := range requiredPermissions {
+			if _, exists := permissionSet[permission]; !exists {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
+}
+
+func filterSpecialPermissions(permissions []string) []string {
+	filtered := make([]string, 0, len(permissions))
+	for _, permission := range permissions {
+		if IsSpecialPermission(permission) {
+			filtered = append(filtered, permission)
+		}
+	}
+	return filtered
 }
 
 // RequireRole 角色检查中间件

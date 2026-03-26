@@ -1,10 +1,14 @@
 package service
 
 import (
+	"errors"
 	"fmt"
+	"strings"
 
 	"auralogic/internal/models"
+	"auralogic/internal/pkg/bizerr"
 	"auralogic/internal/repository"
+	"gorm.io/gorm"
 )
 
 type InventoryService struct {
@@ -21,9 +25,12 @@ func NewInventoryService(inventoryRepo *repository.InventoryRepository, productR
 
 // CreateInventory 创建Inventory配置（独立创建，不依赖Product）
 func (s *InventoryService) CreateInventory(name, sku string, attrs map[string]string, stock, availableQuantity, safetyStock int) (*models.Inventory, error) {
+	name = strings.TrimSpace(name)
+	sku = strings.TrimSpace(sku)
+
 	// 1. 验证Inventory名称不能为空
 	if name == "" {
-		return nil, fmt.Errorf("Inventory name cannot be empty")
+		return nil, bizerr.New("inventory.nameRequired", "Inventory name cannot be empty")
 	}
 
 	// 2. 检查SKU是否已存在（如果提供了SKU，则检查是否已存在）
@@ -31,7 +38,10 @@ func (s *InventoryService) CreateInventory(name, sku string, attrs map[string]st
 		var existing models.Inventory
 		err := s.inventoryRepo.FindBySKU(sku, &existing)
 		if err == nil && existing.ID > 0 {
-			return nil, fmt.Errorf("SKU already exists")
+			return nil, bizerr.New("inventory.skuAlreadyExists", "SKU already exists")
+		}
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, err
 		}
 	}
 
@@ -47,7 +57,8 @@ func (s *InventoryService) CreateInventory(name, sku string, attrs map[string]st
 
 	// 设置规格组合并计算哈希
 	if err := inventory.SetAttributes(attrs); err != nil {
-		return nil, fmt.Errorf("Failed to set attributes: %w", err)
+		return nil, bizerr.New("inventory.attributesInvalid", "Inventory attributes are invalid").
+			WithParams(map[string]interface{}{"cause": err.Error()})
 	}
 
 	if err := s.inventoryRepo.Create(inventory); err != nil {
@@ -61,7 +72,7 @@ func (s *InventoryService) CreateInventory(name, sku string, attrs map[string]st
 func (s *InventoryService) UpdateInventory(id uint, stock, availableQuantity, safetyStock int, isActive bool) error {
 	inventory, err := s.inventoryRepo.FindByID(id)
 	if err != nil {
-		return fmt.Errorf("Inventory record does not exist: %w", err)
+		return translateInventoryLookupError(err)
 	}
 
 	inventory.Stock = stock
@@ -93,12 +104,12 @@ func (s *InventoryService) ListInventories(page, limit int, filters map[string]i
 func (s *InventoryService) DeleteInventory(id uint) error {
 	inventory, err := s.inventoryRepo.FindByID(id)
 	if err != nil {
-		return fmt.Errorf("Inventory record does not exist: %w", err)
+		return translateInventoryLookupError(err)
 	}
 
 	// 检查是否有已售或预留库存
 	if inventory.SoldQuantity > 0 || inventory.ReservedQuantity > 0 {
-		return fmt.Errorf("This inventory record has sales or reservations, cannot delete")
+		return bizerr.New("inventory.hasSalesOrReservations", "This inventory record has sales or reservations, cannot delete")
 	}
 
 	return s.inventoryRepo.Delete(id)
@@ -109,12 +120,12 @@ func (s *InventoryService) CheckAndReserve(inventoryID uint, quantity int, order
 	// 1. 查找Inventory记录
 	inventory, err := s.inventoryRepo.FindByID(inventoryID)
 	if err != nil {
-		return nil, fmt.Errorf("Inventory record does not exist")
+		return nil, translateInventoryLookupError(err)
 	}
 
 	// 2. 检查是否可以购买
-	if canPurchase, msg := inventory.CanPurchase(quantity); !canPurchase {
-		return nil, fmt.Errorf("%s", msg)
+	if canPurchase, _ := inventory.CanPurchase(quantity); !canPurchase {
+		return nil, buildInventoryPurchaseError(inventory, quantity)
 	}
 
 	// 3. 预留Inventory
@@ -144,7 +155,9 @@ func (s *InventoryService) AdjustStock(id uint, newStock, newAvailable int, oper
 
 // AdjustStockByDelta 通过增量调整库存（推荐使用，避免并发问题）
 func (s *InventoryService) AdjustStockByDelta(id uint, stockDelta, availableDelta int, operator, reason string) error {
-	return s.inventoryRepo.AdjustByDelta(id, stockDelta, availableDelta, operator, reason)
+	return translateInventoryAdjustError(
+		s.inventoryRepo.AdjustByDelta(id, stockDelta, availableDelta, operator, reason),
+	)
 }
 
 // GetLowStockList get低Inventory列表
@@ -176,4 +189,64 @@ func (s *InventoryService) BatchCheckStock(items []struct {
 	}
 
 	return result, errors
+}
+
+func translateInventoryLookupError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return bizerr.New("inventory.notFound", "Inventory record does not exist")
+	}
+	return err
+}
+
+func translateInventoryAdjustError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if translated := translateInventoryLookupError(err); translated != err {
+		return translated
+	}
+
+	switch strings.TrimSpace(err.Error()) {
+	case "Adjusted inventory cannot be negative":
+		return bizerr.New("inventory.adjustedStockNegative", "Adjusted inventory cannot be negative")
+	case "Adjusted available quantity cannot be negative":
+		return bizerr.New("inventory.adjustedAvailableNegative", "Adjusted available quantity cannot be negative")
+	case "Available quantity cannot exceed total stock":
+		return bizerr.New("inventory.availableExceedsStock", "Available quantity cannot exceed total stock")
+	default:
+		return err
+	}
+}
+
+func buildInventoryPurchaseError(inventory *models.Inventory, quantity int) error {
+	if inventory == nil {
+		return bizerr.New("inventory.purchaseBlocked", "Inventory purchase is blocked")
+	}
+	if !inventory.IsActive {
+		return bizerr.New("inventory.specUnavailable", "This specification is unavailable")
+	}
+
+	availableStock := inventory.GetAvailableStock()
+	if quantity > availableStock {
+		if availableStock <= 0 {
+			return bizerr.New("inventory.soldOut", "This specification is sold out")
+		}
+		return bizerr.Newf("inventory.stockInsufficient", "Insufficient stock, available quantity: %d", availableStock).
+			WithParams(map[string]interface{}{"available": availableStock})
+	}
+
+	remainingStock := inventory.GetRemainingStock()
+	if quantity > remainingStock {
+		available := remainingStock
+		if available < 0 {
+			available = 0
+		}
+		return bizerr.New("inventory.stockInsufficient", "Insufficient stock").
+			WithParams(map[string]interface{}{"available": available})
+	}
+
+	return bizerr.New("inventory.purchaseBlocked", "Inventory purchase is blocked")
 }

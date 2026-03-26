@@ -4,7 +4,6 @@ import { useState, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { getInventories } from '@/lib/api'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -24,8 +23,9 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { Package, Sparkles, Plus, Trash2 } from 'lucide-react'
-import toast from 'react-hot-toast'
+import { Package, Sparkles } from 'lucide-react'
+import { useLocale } from '@/hooks/use-locale'
+import { getTranslations } from '@/lib/i18n'
 
 interface ProductAttribute {
   name: string
@@ -33,7 +33,7 @@ interface ProductAttribute {
 }
 
 interface VariantConfig {
-  attributes: Record<string, string> // 组合，如 {颜色: "蓝色", 尺寸: "M"}
+  attributes: Record<string, string> // Combination, e.g. { color: blue, size: M }
   inventory_id: number | null
   is_random: boolean
   priority: number
@@ -54,6 +54,8 @@ export function ProductInventoryConfig({
   variantConfigs,
   onVariantConfigsChange,
 }: ProductInventoryConfigProps) {
+  const { locale } = useLocale()
+  const t = getTranslations(locale)
   const [localMode, setLocalMode] = useState(inventoryMode)
   const [selectKey, setSelectKey] = useState(0)
 
@@ -77,7 +79,7 @@ export function ProductInventoryConfig({
 
   // Helper: 属性转字符串
   const attrToString = (attrs: Record<string, string>) => {
-    if (Object.keys(attrs).length === 0) return '默认（无规格）'
+    if (Object.keys(attrs).length === 0) return t.admin.defaultVariant
     return Object.entries(attrs)
       .map(([k, v]) => `${k}:${v}`)
       .join(', ')
@@ -163,27 +165,12 @@ export function ProductInventoryConfig({
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="flex items-center justify-between">
-          <span>库存配置</span>
-          <Badge variant={inventoryMode === 'random' ? 'default' : 'secondary'}>
-            {inventoryMode === 'random' ? (
-              <>
-                <Sparkles className="h-3 w-3 mr-1" />
-                盲盒模式
-              </>
-            ) : (
-              <>
-                <Package className="h-3 w-3 mr-1" />
-                固定模式
-              </>
-            )}
-          </Badge>
-        </CardTitle>
+        <CardTitle>{t.admin.inventoryConfig}</CardTitle>
       </CardHeader>
       <CardContent className="space-y-6">
         {/* 库存模式选择 */}
         <div className="space-y-2">
-          <Label>库存模式</Label>
+          <Label>{t.admin.inventoryModeLabel}</Label>
           <Select key={selectKey} value={localMode} onValueChange={handleModeChange}>
             <SelectTrigger className="w-64">
               <SelectValue />
@@ -192,50 +179,50 @@ export function ProductInventoryConfig({
               <SelectItem value="fixed">
                 <div className="flex items-center gap-2">
                   <Package className="h-4 w-4" />
-                  固定模式 - 用户选择属性
+                  {t.admin.inventoryModeFixedWithDesc}
                 </div>
               </SelectItem>
               <SelectItem value="random">
                 <div className="flex items-center gap-2">
                   <Sparkles className="h-4 w-4" />
-                  盲盒模式 - 系统随机分配
+                  {t.admin.inventoryModeRandomWithDesc}
                 </div>
               </SelectItem>
             </SelectContent>
           </Select>
           <p className="text-sm text-muted-foreground">
             {localMode === 'random'
-              ? '盲盒模式：购买时系统会根据权重随机分配库存属性'
-              : '固定模式：用户选择具体属性，系统匹配对应库存'}
+              ? t.admin.inventoryModeRandomHint
+              : t.admin.inventoryModeFixedHint}
           </p>
         </div>
 
         {/* 规格组合配置表 */}
         <div className="space-y-3">
           <div className="flex items-center justify-between">
-            <Label>规格库存配置</Label>
+            <Label>{t.admin.variantInventoryConfig}</Label>
             <span className="text-sm text-muted-foreground">
-              共 {variants.length} 个规格组合
+              {t.admin.variantInventoryCount.replace('{count}', String(variants.length))}
             </span>
           </div>
 
           {variants.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground border-2 border-dashed rounded-lg">
-              请先在"商品规格"区域添加规格属性，系统会自动生成规格组合
+              {t.admin.noSpecs}
             </div>
           ) : (
             <div className="border rounded-lg overflow-hidden">
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="w-[200px]">规格组合</TableHead>
-                    <TableHead className="w-[300px]">库存配置</TableHead>
-                    <TableHead className="w-[120px]">剩余库存</TableHead>
+                    <TableHead className="w-[200px]">{t.admin.variantCombo}</TableHead>
+                    <TableHead className="w-[300px]">{t.admin.inventoryConfig}</TableHead>
+                    <TableHead className="w-[120px]">{t.admin.remainingStockCol}</TableHead>
                     {localMode === 'random' && (
                       <>
-                        <TableHead className="w-[100px]">参与随机</TableHead>
-                        <TableHead className="w-[100px]">权重</TableHead>
-                        <TableHead className="w-[100px]">概率</TableHead>
+                        <TableHead className="w-[100px]">{t.admin.randomParticipationCol}</TableHead>
+                        <TableHead className="w-[100px]">{t.admin.weight}</TableHead>
+                        <TableHead className="w-[100px]">{t.admin.probability}</TableHead>
                       </>
                     )}
                   </TableRow>
@@ -258,7 +245,7 @@ export function ProductInventoryConfig({
                               </Badge>
                             ))}
                             {Object.keys(config.attributes).length === 0 && (
-                              <span className="text-sm text-muted-foreground">默认</span>
+                              <span className="text-sm text-muted-foreground">{t.admin.defaultVariant}</span>
                             )}
                           </div>
                         </TableCell>
@@ -270,12 +257,12 @@ export function ProductInventoryConfig({
                             }
                           >
                             <SelectTrigger className="w-full">
-                              <SelectValue placeholder="选择库存配置" />
+                              <SelectValue placeholder={t.admin.selectInventory} />
                             </SelectTrigger>
                             <SelectContent>
                               {inventories.map((inv: any) => (
                                 <SelectItem key={inv.id} value={inv.id.toString()}>
-                                  {inv.name} (剩余: {inv.stock - inv.sold_quantity - inv.reserved_quantity})
+                                  {inv.name} ({t.admin.inventoryRemainingInline.replace('{count}', String(inv.stock - inv.sold_quantity - inv.reserved_quantity))})
                                 </SelectItem>
                               ))}
                             </SelectContent>
@@ -284,7 +271,7 @@ export function ProductInventoryConfig({
                             <div className="mt-1 text-xs text-muted-foreground">
                               {Object.entries(inventory.attributes || {}).map(
                                 ([k, v]) => `${k}:${v}`
-                              ).join(', ') || '无属性'}
+                              ).join(', ') || t.common.noData}
                             </div>
                           )}
                         </TableCell>
@@ -334,7 +321,7 @@ export function ProductInventoryConfig({
                               {config.is_random && config.inventory_id ? (
                                 <span className="text-sm font-medium">{probability}%</span>
                               ) : (
-                                <span className="text-muted-foreground">-</span>
+                                <span className="text-muted-foreground">{t.common.noData}</span>
                               )}
                             </TableCell>
                           </>
@@ -349,10 +336,9 @@ export function ProductInventoryConfig({
 
           {variants.length > 0 && (
             <div className="flex items-center gap-2 text-sm text-muted-foreground p-3 bg-muted rounded-lg">
-              <span>💡 提示：</span>
+              <span>💡 {t.common.info}:</span>
               <span>
-                系统已根据规格自动生成 {variants.length} 个组合，
-                请为每个组合选择对应的库存配置
+                {t.admin.variantConfigAutoGeneratedTip.replace('{count}', String(variants.length))}
               </span>
             </div>
           )}
@@ -363,7 +349,7 @@ export function ProductInventoryConfig({
           <div className="p-4 bg-blue-50 dark:bg-blue-950 border border-blue-200 dark:border-blue-800 rounded-lg">
             <h4 className="font-medium text-blue-900 dark:text-blue-200 mb-2 flex items-center gap-2">
               <Sparkles className="h-4 w-4" />
-              盲盒随机分配概率
+              {t.admin.blindBoxRules}
             </h4>
             <div className="text-sm text-blue-800 dark:text-blue-200 space-y-1">
               {variantConfigs
@@ -377,7 +363,7 @@ export function ProductInventoryConfig({
                   return (
                     <div key={idx}>
                       • {attrToString(config.attributes)}: {probability}%
-                      (库存: {inventory?.name})
+                      ({t.admin.inventoryNameCol}: {inventory?.name || t.common.noData})
                     </div>
                   )
                 })}

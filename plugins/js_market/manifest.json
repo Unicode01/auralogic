@@ -1,0 +1,261 @@
+{
+  "name": "js-market",
+  "display_name": "AuraLogic Market",
+  "description": "官方市场插件，用于浏览可信源、预览版本、安装插件包、导入支付包，以及导入宿主管理的模板与页面规则制品。",
+  "type": "custom",
+  "runtime": "js_worker",
+  "entry": "index.js",
+  "version": "0.1.34",
+  "manifest_version": "1.0.0",
+  "protocol_version": "1.0.0",
+  "min_host_protocol_version": "1.0.0",
+  "max_host_protocol_version": "1.0.0",
+  "activate": true,
+  "auto_start": true,
+  "config": {
+    "source_id": "official",
+    "source_base_url": "https://market.auralogic.org",
+    "source_public_key": "",
+    "default_channel": "stable",
+    "allowed_kinds": [
+      "plugin_package",
+      "payment_package",
+      "email_template",
+      "landing_page_template",
+      "invoice_template",
+      "auth_branding_template",
+      "page_rule_pack"
+    ]
+  },
+  "config_schema": {
+    "title": "市场源配置",
+    "description": "配置当前市场插件允许访问的可信源。",
+    "fields": [
+      {
+        "key": "source_id",
+        "label": "源 ID",
+        "description": "宿主 host.market.* 动作使用的可信源标识。",
+        "type": "string",
+        "default": "official",
+        "required": true
+      },
+      {
+        "key": "source_base_url",
+        "label": "源基础 URL",
+        "description": "源服务的基础 URL。官方源默认为 https://market.auralogic.org。",
+        "type": "string",
+        "default": "https://market.auralogic.org",
+        "required": true
+      },
+      {
+        "key": "source_public_key",
+        "label": "源公钥",
+        "description": "可选。用于来源签名校验或可信源完整性验证。",
+        "type": "string",
+        "default": "",
+        "required": false
+      },
+      {
+        "key": "default_channel",
+        "label": "默认渠道",
+        "description": "市场页默认使用的目录渠道。",
+        "type": "select",
+        "default": "stable",
+        "options": [
+          {
+            "label": "stable",
+            "value": "stable"
+          },
+          {
+            "label": "beta",
+            "value": "beta"
+          },
+          {
+            "label": "alpha",
+            "value": "alpha"
+          }
+        ]
+      },
+      {
+        "key": "allowed_kinds",
+        "label": "允许制品类型",
+        "description": "可选。限制该市场源允许浏览和导入的制品类型列表。",
+        "type": "json",
+        "default": [
+          "plugin_package",
+          "payment_package",
+          "email_template",
+          "landing_page_template",
+          "invoice_template",
+          "auth_branding_template",
+          "page_rule_pack"
+        ],
+        "required": false
+      }
+    ]
+  },
+  "permissions": [
+    {
+      "key": "hook.execute",
+      "reason": "通过 frontend.bootstrap 注册市场管理页并处理页面动作。"
+    },
+    {
+      "key": "frontend.extensions",
+      "reason": "向管理端暴露市场路由和菜单入口。"
+    },
+    {
+      "key": "frontend.html_trusted",
+      "reason": "在宿主支持且未强制 sanitize 时，以 trusted HTML 渲染市场混合工作台。"
+    },
+    {
+      "key": "api.execute",
+      "reason": "允许市场页执行浏览、预览、安装、导入、任务查询和回滚动作。"
+    },
+    {
+      "key": "host.market.source.read",
+      "reason": "读取并查看可信市场源。"
+    },
+    {
+      "key": "host.market.catalog.read",
+      "reason": "浏览市场目录项和版本元数据。"
+    },
+    {
+      "key": "host.market.install.preview",
+      "reason": "在执行前预览插件包安装结果。"
+    },
+    {
+      "key": "host.market.install.execute",
+      "reason": "通过宿主桥执行可信市场安装，包括插件包和宿主管理模板。"
+    },
+    {
+      "key": "host.market.install.read",
+      "reason": "读取市场资源对应的宿主安装任务与安装历史。"
+    },
+    {
+      "key": "host.market.install.rollback",
+      "reason": "触发已安装市场资源的宿主管理回滚。"
+    },
+    {
+      "key": "host.email_template.read",
+      "reason": "在导入市场模板版本前读取原生邮件模板目标。"
+    },
+    {
+      "key": "host.email_template.write",
+      "reason": "导入市场模板版本后保存原生邮件模板。"
+    },
+    {
+      "key": "host.landing_page.read",
+      "reason": "在导入市场落地页版本前读取原生落地页内容。"
+    },
+    {
+      "key": "host.landing_page.write",
+      "reason": "导入市场落地页版本后保存原生落地页内容。"
+    },
+    {
+      "key": "host.invoice_template.read",
+      "reason": "在导入市场账单模板版本前读取原生账单模板。"
+    },
+    {
+      "key": "host.invoice_template.write",
+      "reason": "导入市场账单模板版本后保存或重置原生账单模板。"
+    },
+    {
+      "key": "host.auth_branding.read",
+      "reason": "在导入市场认证页品牌模板版本前读取原生认证页品牌内容。"
+    },
+    {
+      "key": "host.auth_branding.write",
+      "reason": "导入市场认证页品牌模板版本后保存或重置原生认证页品牌内容。"
+    },
+    {
+      "key": "host.page_rule_pack.read",
+      "reason": "在导入市场页面规则包前读取原生页面规则内容。"
+    },
+    {
+      "key": "host.page_rule_pack.write",
+      "reason": "导入市场页面规则包后保存或重置原生页面规则内容。"
+    }
+  ],
+  "frontend": {
+    "admin_page": {
+      "path": "/admin/plugin-pages/market",
+      "title": "AuraLogic 市场"
+    }
+  },
+  "capabilities": {
+    "hooks": [
+      "frontend.bootstrap"
+    ],
+    "disabled_hooks": [],
+    "requested_permissions": [
+      "hook.execute",
+      "frontend.extensions",
+      "frontend.html_trusted",
+      "api.execute",
+      "host.market.source.read",
+      "host.market.catalog.read",
+      "host.market.install.preview",
+      "host.market.install.execute",
+      "host.market.install.read",
+      "host.market.install.rollback",
+      "host.email_template.read",
+      "host.email_template.write",
+      "host.landing_page.read",
+      "host.landing_page.write",
+      "host.invoice_template.read",
+      "host.invoice_template.write",
+      "host.auth_branding.read",
+      "host.auth_branding.write",
+      "host.page_rule_pack.read",
+      "host.page_rule_pack.write"
+    ],
+    "granted_permissions": [
+      "hook.execute",
+      "frontend.extensions",
+      "frontend.html_trusted",
+      "api.execute",
+      "host.market.source.read",
+      "host.market.catalog.read",
+      "host.market.install.preview",
+      "host.market.install.execute",
+      "host.market.install.read",
+      "host.market.install.rollback",
+      "host.email_template.read",
+      "host.email_template.write",
+      "host.landing_page.read",
+      "host.landing_page.write",
+      "host.invoice_template.read",
+      "host.invoice_template.write",
+      "host.auth_branding.read",
+      "host.auth_branding.write",
+      "host.page_rule_pack.read",
+      "host.page_rule_pack.write"
+    ],
+    "execute_action_storage": {
+      "market.console.load": "read",
+      "market.catalog.query": "read",
+      "market.release.preview": "read",
+      "market.install.execute": "write",
+      "market.install.task.get": "read",
+      "market.install.task.list": "read",
+      "market.install.history.list": "read",
+      "market.install.rollback": "write",
+      "hook.execute": "read"
+    },
+    "allow_frontend_extensions": true,
+    "frontend_html_mode": "trusted",
+    "frontend_min_scope": "authenticated",
+    "frontend_allowed_areas": [
+      "admin"
+    ],
+    "frontend_required_permissions": [
+      "market.view"
+    ],
+    "allowed_frontend_slots": [
+      "admin.plugin_page.top",
+      "admin.plugin_page.bottom"
+    ],
+    "allow_execute_api": true,
+    "allow_file_system": true
+  }
+}

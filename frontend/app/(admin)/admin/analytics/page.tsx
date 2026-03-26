@@ -2,11 +2,11 @@
 
 import { useQuery } from '@tanstack/react-query'
 import { getUserAnalytics, getOrderAnalytics, getRevenueAnalytics, getDeviceAnalytics, getSettings } from '@/lib/api'
+import { PluginSlot } from '@/components/plugins/plugin-slot'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Users, ShoppingCart, DollarSign, TrendingUp, TrendingDown, BarChart3, Smartphone, Monitor, AlertTriangle } from 'lucide-react'
 import { formatCurrency } from '@/lib/utils'
-import { useRouter } from 'next/navigation'
 import { useLocale } from '@/hooks/use-locale'
 import { getTranslations } from '@/lib/i18n'
 import { usePageTitle } from '@/hooks/use-page-title'
@@ -41,7 +41,6 @@ export default function AnalyticsPage() {
   const { locale } = useLocale()
   const t = getTranslations(locale)
   usePageTitle(t.pageTitle.adminAnalytics)
-  const router = useRouter()
   const { isSuperAdmin } = usePermission()
   const isSuper = isSuperAdmin()
   const chart = useChartTheme()
@@ -81,9 +80,36 @@ export default function AnalyticsPage() {
     return null
   }
 
+  const users = userData?.data
+  const orders = orderData?.data
+  const rev = revenueData?.data
+  const devices = deviceData?.data
+  const adminAnalyticsPluginContext = {
+    view: 'admin_analytics',
+    analytics_enabled: analyticsEnabled,
+    loading: {
+      users: !userData,
+      orders: !orderData,
+      revenue: !revenueData,
+      devices: !deviceData,
+    },
+    summary: {
+      users_overview: users?.overview || null,
+      orders_overview: orders?.overview || null,
+      revenue_overview: rev?.overview || null,
+      device_distribution_count: Array.isArray(devices?.device_distribution)
+        ? devices.device_distribution.length
+        : 0,
+      os_distribution_count: Array.isArray(devices?.os_distribution)
+        ? devices.os_distribution.length
+        : 0,
+    },
+  }
+
   if (!analyticsEnabled) {
     return (
       <div className="space-y-6">
+        <PluginSlot slot="admin.analytics.top" context={adminAnalyticsPluginContext} />
         <div>
           <h1 className="text-3xl font-bold">{t.admin.analyticsTitle}</h1>
           <p className="text-muted-foreground mt-1">{t.admin.analyticsDesc}</p>
@@ -98,11 +124,6 @@ export default function AnalyticsPage() {
       </div>
     )
   }
-
-  const users = userData?.data
-  const orders = orderData?.data
-  const rev = revenueData?.data
-  const devices = deviceData?.data
 
   const statusLabels: Record<string, string> = {
     pending_payment: t.order.status.pending_payment,
@@ -124,6 +145,7 @@ export default function AnalyticsPage() {
 
   return (
     <div className="space-y-6">
+      <PluginSlot slot="admin.analytics.top" context={adminAnalyticsPluginContext} />
       <div>
         <h1 className="text-3xl font-bold">{t.admin.analyticsTitle}</h1>
         <p className="text-muted-foreground mt-1">{t.admin.analyticsDesc}</p>

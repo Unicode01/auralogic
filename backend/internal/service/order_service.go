@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -25,11 +27,18 @@ type OrderService struct {
 	inventoryRepo     *repository.InventoryRepository
 	bindingService    *BindingService
 	serialService     *SerialService
+	serialTaskService *SerialGenerationService
 	virtualProductSvc *VirtualInventoryService
 	promoCodeRepo     *repository.PromoCodeRepository
 	cfg               *config.Config
 	emailService      *EmailService
+	pluginManager     *PluginManagerService
 	userOrderLocks    sync.Map
+}
+
+type MarkAsPaidOptions struct {
+	AdminRemark      string
+	SkipAutoDelivery bool
 }
 
 const (
@@ -38,8 +47,134 @@ const (
 
 var (
 	// Public, user-facing errors (safe to show to clients).
-	ErrProductNotAvailable = bizerr.New("order.productNotAvailable", "Product is not available")
+	ErrProductNotAvailable      = bizerr.New("order.productNotAvailable", "Product is not available")
+	ErrShippingFormAccessDenied = errors.New("shipping form access denied")
+	ErrShippingFormNotFound     = errors.New("shipping form not found")
 )
+
+func newOrderAttributesTooManyError(max int) error {
+	return bizerr.Newf("order.attributesTooMany", "Product attributes cannot exceed %d keys", max).
+		WithParams(map[string]interface{}{"max": max})
+}
+
+func newOrderTotalAmountNegativeError() error {
+	return bizerr.New("order.totalAmountNegative", "Total amount cannot be negative")
+}
+
+func newOrderUserNotFoundError() error {
+	return bizerr.New("order.userNotFound", "User not found")
+}
+
+func newOrderVirtualInventoryRequiredError(sku string) error {
+	return bizerr.Newf("order.virtualInventoryRequired", "Virtual product %s must select a virtual inventory", sku).
+		WithParams(map[string]interface{}{"sku": sku})
+}
+
+func newOrderStatusInvalidError(status string) error {
+	return bizerr.Newf("order.statusInvalid", "Invalid order status: %s", status).
+		WithParams(map[string]interface{}{"status": status})
+}
+
+func newOrderNotFoundError() error {
+	return bizerr.New("order.notFound", "Order not found")
+}
+
+func newOrderAssignTrackingStatusInvalidError(status models.OrderStatus) error {
+	return bizerr.Newf("order.assignTrackingStatusInvalid", "Only pending orders can be assigned tracking number (current status: %s)", status).
+		WithParams(map[string]interface{}{"status": status})
+}
+
+func newOrderCompleteStatusInvalidError(status models.OrderStatus) error {
+	return bizerr.Newf("order.completeStatusInvalid", "Order status %s cannot be marked as completed", status).
+		WithParams(map[string]interface{}{"status": status})
+}
+
+func newOrderCancelStatusInvalidError(status models.OrderStatus) error {
+	return bizerr.Newf("order.cancelStatusInvalid", "Order status %s cannot be cancelled", status).
+		WithParams(map[string]interface{}{"status": status})
+}
+
+func newOrderDeleteStatusInvalidError(status models.OrderStatus) error {
+	return bizerr.Newf("order.deleteStatusInvalid", "Order status %s cannot be deleted", status).
+		WithParams(map[string]interface{}{"status": status})
+}
+
+func newOrderMarkPaidStatusInvalidError(status models.OrderStatus) error {
+	return bizerr.Newf("order.markPaidStatusInvalid", "Only pending payment orders can be marked as paid (current status: %s)", status).
+		WithParams(map[string]interface{}{"status": status})
+}
+
+func newOrderDeliverVirtualStatusInvalidError(status models.OrderStatus) error {
+	return bizerr.Newf("order.deliverVirtualStatusInvalid", "Order status %s cannot deliver virtual stock", status).
+		WithParams(map[string]interface{}{"status": status})
+}
+
+func newOrderVirtualServiceUnavailableError() error {
+	return bizerr.New("order.virtualServiceUnavailable", "Virtual product service is not available")
+}
+
+func newOrderNoPendingVirtualStockError() error {
+	return bizerr.New("order.noPendingVirtualStock", "No pending virtual stock to deliver")
+}
+
+func newOrderHighConcurrencyBusyError() error {
+	return bizerr.New("order.systemBusy", "System is busy, please retry shortly")
+}
+
+func normalizeOrderLookupError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return newOrderNotFoundError()
+	}
+	return err
+}
+
+func normalizeOrderInventoryAvailabilityError(productName, rawMessage string) error {
+	message := strings.TrimSpace(rawMessage)
+	if message == "" {
+		return nil
+	}
+
+	switch {
+	case message == "This specification is unavailable":
+		return bizerr.New("binding.specUnavailable", message)
+	case message == "This specification is sold out":
+		return bizerr.Newf("order.stockInsufficient", "Product %s stock insufficient, only %d available", productName, 0).
+			WithParams(map[string]interface{}{"product": productName, "available": 0})
+	case message == "Insufficient stock":
+		return bizerr.Newf("order.stockInsufficient", "Product %s stock insufficient, only %d available", productName, 0).
+			WithParams(map[string]interface{}{"product": productName, "available": 0})
+	case strings.HasPrefix(message, "Insufficient stock, available quantity:"):
+		availableText := strings.TrimSpace(strings.TrimPrefix(message, "Insufficient stock, available quantity:"))
+		available, err := strconv.ParseInt(availableText, 10, 64)
+		if err != nil {
+			return nil
+		}
+		return bizerr.Newf("order.stockInsufficient", "Product %s stock insufficient, only %d available", productName, available).
+			WithParams(map[string]interface{}{"product": productName, "available": available})
+	default:
+		return nil
+	}
+}
+
+func normalizeOrderInventoryOperationError(productName string, err error) error {
+	if err == nil {
+		return nil
+	}
+
+	var bizErr *bizerr.Error
+	if errors.As(err, &bizErr) {
+		return err
+	}
+
+	if normalized := normalizeOrderInventoryAvailabilityError(productName, err.Error()); normalized != nil {
+		return normalized
+	}
+
+	return err
+}
 
 // validateOrderItems 校验订单商品项的基本参数合理性
 func (s *OrderService) validateOrderItems(items []models.OrderItem) error {
@@ -66,7 +201,7 @@ func (s *OrderService) validateOrderItems(items []models.OrderItem) error {
 				WithParams(map[string]interface{}{"max": maxQty})
 		}
 		if len(item.Attributes) > maxAttributeKeys {
-			return fmt.Errorf("Product attributes cannot exceed %d keys", maxAttributeKeys)
+			return newOrderAttributesTooManyError(maxAttributeKeys)
 		}
 	}
 	return nil
@@ -96,6 +231,212 @@ func NewOrderService(
 		cfg:               cfg,
 		emailService:      emailService,
 	}
+}
+
+func (s *OrderService) SetPluginManager(pluginManager *PluginManagerService) {
+	s.pluginManager = pluginManager
+}
+
+func (s *OrderService) SetSerialGenerationService(serialTaskService *SerialGenerationService) {
+	s.serialTaskService = serialTaskService
+}
+
+func cloneOrderHookExecutionContext(execCtx *ExecutionContext) *ExecutionContext {
+	if execCtx == nil {
+		return nil
+	}
+	cloned := &ExecutionContext{
+		SessionID:      execCtx.SessionID,
+		RequestContext: execCtx.RequestContext,
+	}
+	if execCtx.UserID != nil {
+		userID := *execCtx.UserID
+		cloned.UserID = &userID
+	}
+	if execCtx.OrderID != nil {
+		orderID := *execCtx.OrderID
+		cloned.OrderID = &orderID
+	}
+	if len(execCtx.Metadata) > 0 {
+		cloned.Metadata = make(map[string]string, len(execCtx.Metadata))
+		for key, value := range execCtx.Metadata {
+			cloned.Metadata[key] = value
+		}
+	}
+	return cloned
+}
+
+func (s *OrderService) buildInventoryHookExecutionContext(orderID *uint, userID *uint, source string, orderNo string) *ExecutionContext {
+	metadata := map[string]string{
+		"source": source,
+	}
+	if orderNo != "" {
+		metadata["order_no"] = orderNo
+	}
+	if userID != nil {
+		metadata["user_id"] = strconv.FormatUint(uint64(*userID), 10)
+	}
+	return &ExecutionContext{
+		UserID:   userID,
+		OrderID:  orderID,
+		Metadata: metadata,
+	}
+}
+
+func orderHookValueToUint(value interface{}) (uint, error) {
+	switch typed := value.(type) {
+	case uint:
+		return typed, nil
+	case uint32:
+		return uint(typed), nil
+	case uint64:
+		return uint(typed), nil
+	case int:
+		if typed < 0 {
+			return 0, fmt.Errorf("value must be non-negative")
+		}
+		return uint(typed), nil
+	case int64:
+		if typed < 0 {
+			return 0, fmt.Errorf("value must be non-negative")
+		}
+		return uint(typed), nil
+	case float64:
+		if typed < 0 {
+			return 0, fmt.Errorf("value must be non-negative")
+		}
+		out := uint(typed)
+		if float64(out) != typed {
+			return 0, fmt.Errorf("value must be integer")
+		}
+		return out, nil
+	case string:
+		trimmed := strings.TrimSpace(typed)
+		if trimmed == "" {
+			return 0, nil
+		}
+		parsed, err := strconv.ParseUint(trimmed, 10, 32)
+		if err != nil {
+			return 0, fmt.Errorf("invalid uint string")
+		}
+		return uint(parsed), nil
+	default:
+		return 0, fmt.Errorf("value must be uint")
+	}
+}
+
+func applyInventoryReserveHookPayload(inventoryID uint, payload map[string]interface{}) (uint, error) {
+	if payload == nil {
+		return inventoryID, nil
+	}
+	if raw, exists := payload["inventory_id"]; exists {
+		updatedInventoryID, err := orderHookValueToUint(raw)
+		if err != nil {
+			return inventoryID, fmt.Errorf("decode inventory_id: %w", err)
+		}
+		if updatedInventoryID == 0 {
+			return inventoryID, fmt.Errorf("inventory_id must be greater than 0")
+		}
+		inventoryID = updatedInventoryID
+	}
+	return inventoryID, nil
+}
+
+func (s *OrderService) reserveInventoryWithHook(orderID *uint, userID *uint, orderNo string, inventoryID uint, quantity int, source string) (uint, error) {
+	execCtx := s.buildInventoryHookExecutionContext(orderID, userID, source, orderNo)
+	reservedInventoryID := inventoryID
+	if s.pluginManager != nil {
+		beforePayload := map[string]interface{}{
+			"order_id":     orderID,
+			"user_id":      userID,
+			"order_no":     orderNo,
+			"inventory_id": inventoryID,
+			"quantity":     quantity,
+			"source":       source,
+		}
+		hookResult, hookErr := s.pluginManager.ExecuteHook(HookExecutionRequest{
+			Hook:    "inventory.reserve.before",
+			Payload: beforePayload,
+		}, execCtx)
+		if hookErr != nil {
+			log.Printf("inventory.reserve.before hook execution failed: order_no=%s inventory=%d err=%v", orderNo, inventoryID, hookErr)
+		} else if hookResult != nil {
+			if hookResult.Blocked {
+				reason := strings.TrimSpace(hookResult.BlockReason)
+				if reason == "" {
+					reason = "inventory reserve blocked by plugin"
+				}
+				return 0, errors.New(reason)
+			}
+			if hookResult.Payload != nil {
+				updatedInventoryID, applyErr := applyInventoryReserveHookPayload(inventoryID, hookResult.Payload)
+				if applyErr != nil {
+					log.Printf("inventory.reserve.before payload apply failed, fallback to original inventory: order_no=%s inventory=%d err=%v", orderNo, inventoryID, applyErr)
+				} else {
+					reservedInventoryID = updatedInventoryID
+				}
+			}
+		}
+	}
+
+	reserveErr := s.inventoryRepo.Reserve(reservedInventoryID, quantity, orderNo)
+	if s.pluginManager != nil {
+		afterPayload := map[string]interface{}{
+			"order_id":     orderID,
+			"user_id":      userID,
+			"order_no":     orderNo,
+			"inventory_id": reservedInventoryID,
+			"quantity":     quantity,
+			"success":      reserveErr == nil,
+			"source":       source,
+		}
+		if reserveErr != nil {
+			afterPayload["error"] = reserveErr.Error()
+		}
+		go func(execCtx *ExecutionContext, payload map[string]interface{}) {
+			_, hookErr := s.pluginManager.ExecuteHook(HookExecutionRequest{
+				Hook:    "inventory.reserve.after",
+				Payload: payload,
+			}, execCtx)
+			if hookErr != nil {
+				log.Printf("inventory.reserve.after hook execution failed: order_no=%s inventory=%d err=%v", orderNo, reservedInventoryID, hookErr)
+			}
+		}(cloneOrderHookExecutionContext(execCtx), afterPayload)
+	}
+
+	if reserveErr != nil {
+		return 0, reserveErr
+	}
+	return reservedInventoryID, nil
+}
+
+func (s *OrderService) releaseReservedInventoryWithHook(orderID *uint, userID *uint, orderNo string, inventoryID uint, quantity int, source string) error {
+	releaseErr := s.inventoryRepo.ReleaseReserve(inventoryID, quantity, orderNo)
+	if s.pluginManager != nil {
+		execCtx := s.buildInventoryHookExecutionContext(orderID, userID, source, orderNo)
+		afterPayload := map[string]interface{}{
+			"order_id":     orderID,
+			"user_id":      userID,
+			"order_no":     orderNo,
+			"inventory_id": inventoryID,
+			"quantity":     quantity,
+			"success":      releaseErr == nil,
+			"source":       source,
+		}
+		if releaseErr != nil {
+			afterPayload["error"] = releaseErr.Error()
+		}
+		go func(execCtx *ExecutionContext, payload map[string]interface{}) {
+			_, hookErr := s.pluginManager.ExecuteHook(HookExecutionRequest{
+				Hook:    "inventory.release.after",
+				Payload: payload,
+			}, execCtx)
+			if hookErr != nil {
+				log.Printf("inventory.release.after hook execution failed: order_no=%s inventory=%d err=%v", orderNo, inventoryID, hookErr)
+			}
+		}(cloneOrderHookExecutionContext(execCtx), afterPayload)
+	}
+	return releaseErr
 }
 
 func (s *OrderService) ensurePendingPaymentLimit(userID uint) error {
@@ -154,11 +495,16 @@ func (s *OrderService) CreateDraft(items []models.OrderItem, externalUserID, ext
 		return nil, err
 	}
 
+	productBySKU, err := s.loadProductsForOrderItems(items)
+	if err != nil {
+		return nil, err
+	}
+
 	// 计算订单总金额
 	var totalAmount int64
 	for _, item := range items {
-		product, err := s.productRepo.FindBySKU(item.SKU)
-		if err != nil {
+		product, exists := productBySKU[item.SKU]
+		if !exists || product == nil {
 			return nil, bizerr.Newf("order.productNotFound", "Product %s does not exist", item.SKU).
 				WithParams(map[string]interface{}{"sku": item.SKU})
 		}
@@ -244,14 +590,17 @@ func (s *OrderService) CreateAdminOrder(req AdminOrderRequest) (*models.Order, e
 
 	// 验证管理员覆盖金额
 	if req.TotalAmount != nil && *req.TotalAmount < 0 {
-		return nil, errors.New("Total amount cannot be negative")
+		return nil, newOrderTotalAmountNegativeError()
 	}
 
 	// 验证用户
 	if req.UserID != nil {
 		user, err := s.userRepo.FindByID(*req.UserID)
 		if err != nil {
-			return nil, errors.New("User not found")
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil, newOrderUserNotFoundError()
+			}
+			return nil, err
 		}
 		if req.UserEmail == "" {
 			req.UserEmail = user.Email
@@ -261,6 +610,7 @@ func (s *OrderService) CreateAdminOrder(req AdminOrderRequest) (*models.Order, e
 	// 构建订单商品并计算总金额
 	var orderItems []models.OrderItem
 	var totalAmount int64
+	saleCountAdjustments := make(map[uint]int)
 	// 保存每个商品项指定的虚拟库存ID（管理员手动选择）
 	virtualInventoryIDs := make(map[int]*uint)
 	for idx, item := range req.Items {
@@ -283,7 +633,8 @@ func (s *OrderService) CreateAdminOrder(req AdminOrderRequest) (*models.Order, e
 			product, err := s.productRepo.FindBySKU(sku)
 			if err != nil {
 				if name == "" {
-					return nil, fmt.Errorf("Product %s does not exist", sku)
+					return nil, bizerr.Newf("order.productNotFound", "Product %s does not exist", sku).
+						WithParams(map[string]interface{}{"sku": sku})
 				}
 			} else {
 				if name == "" {
@@ -300,7 +651,7 @@ func (s *OrderService) CreateAdminOrder(req AdminOrderRequest) (*models.Order, e
 
 		// 虚拟商品必须指定虚拟库存
 		if productType == models.ProductTypeVirtual && item.VirtualInventoryID == nil {
-			return nil, fmt.Errorf("Virtual product %s must select a virtual inventory", sku)
+			return nil, newOrderVirtualInventoryRequiredError(sku)
 		}
 
 		orderItems = append(orderItems, models.OrderItem{
@@ -374,10 +725,7 @@ func (s *OrderService) CreateAdminOrder(req AdminOrderRequest) (*models.Order, e
 			}
 			item.Attributes["_inventory_id"] = inventory.ID
 
-			// 更新销量
-			if err := s.productRepo.IncrementSaleCount(product.ID, item.Quantity); err != nil {
-				fmt.Printf("Warning: Failed to update product sales count - ProductID: %d, Error: %v\n", product.ID, err)
-			}
+			saleCountAdjustments[product.ID] += item.Quantity
 		}
 	}
 
@@ -386,16 +734,17 @@ func (s *OrderService) CreateAdminOrder(req AdminOrderRequest) (*models.Order, e
 		item := &orderItems[i]
 		if inventoryIDVal, ok := item.Attributes["_inventory_id"]; ok {
 			if inventoryID, ok := inventoryIDVal.(uint); ok {
-				if err := s.inventoryRepo.Reserve(inventoryID, item.Quantity, orderNo); err != nil {
+				reservedInventoryID, err := s.reserveInventoryWithHook(nil, req.UserID, orderNo, inventoryID, item.Quantity, "admin_create_order")
+				if err != nil {
 					// 回滚已预留的库存
 					for j := 0; j < i; j++ {
 						if prevID, exists := inventoryBindings[j]; exists {
-							s.inventoryRepo.ReleaseReserve(prevID, orderItems[j].Quantity, orderNo)
+							_ = s.releaseReservedInventoryWithHook(nil, req.UserID, orderNo, prevID, orderItems[j].Quantity, "admin_create_order_rollback")
 						}
 					}
-					return nil, fmt.Errorf("Failed to reserve inventory: %v", err)
+					return nil, normalizeOrderInventoryOperationError(item.Name, err)
 				}
-				inventoryBindings[i] = inventoryID
+				inventoryBindings[i] = reservedInventoryID
 				delete(item.Attributes, "_inventory_id")
 			}
 		}
@@ -416,7 +765,7 @@ func (s *OrderService) CreateAdminOrder(req AdminOrderRequest) (*models.Order, e
 		}
 		requested := models.OrderStatus(req.Status)
 		if !validStatuses[requested] {
-			return nil, fmt.Errorf("invalid order status: %s", req.Status)
+			return nil, newOrderStatusInvalidError(req.Status)
 		}
 		status = requested
 	}
@@ -470,10 +819,11 @@ func (s *OrderService) CreateAdminOrder(req AdminOrderRequest) (*models.Order, e
 	if err := s.OrderRepo.Create(order); err != nil {
 		// 释放已预留的物理库存
 		for i, inventoryID := range inventoryBindings {
-			s.inventoryRepo.ReleaseReserve(inventoryID, orderItems[i].Quantity, orderNo)
+			_ = s.releaseReservedInventoryWithHook(nil, req.UserID, orderNo, inventoryID, orderItems[i].Quantity, "admin_create_order_rollback")
 		}
 		return nil, err
 	}
+	createdOrderID := order.ID
 
 	// 虚拟产品预留库存（待付款状态，付款后才发货）
 	virtualInventoryBindings := make(map[int]uint)
@@ -493,10 +843,10 @@ func (s *OrderService) CreateAdminOrder(req AdminOrderRequest) (*models.Order, e
 						fmt.Printf("Warning: Failed to rollback virtual stock for order %s: %v\n", orderNo, releaseErr)
 					}
 					for j, inventoryID := range inventoryBindings {
-						s.inventoryRepo.ReleaseReserve(inventoryID, orderItems[j].Quantity, orderNo)
+						_ = s.releaseReservedInventoryWithHook(&createdOrderID, req.UserID, orderNo, inventoryID, orderItems[j].Quantity, "admin_create_order_rollback")
 					}
 					s.OrderRepo.Delete(order.ID)
-					return nil, fmt.Errorf("Failed to allocate virtual product stock for %s: %v", item.Name, err)
+					return nil, fmt.Errorf("failed to allocate virtual product stock for %s: %w", item.Name, err)
 				}
 				if scriptInvID != nil {
 					virtualInventoryBindings[i] = *scriptInvID
@@ -519,10 +869,10 @@ func (s *OrderService) CreateAdminOrder(req AdminOrderRequest) (*models.Order, e
 						fmt.Printf("Warning: Failed to rollback virtual stock for order %s: %v\n", orderNo, releaseErr)
 					}
 					for j, inventoryID := range inventoryBindings {
-						s.inventoryRepo.ReleaseReserve(inventoryID, orderItems[j].Quantity, orderNo)
+						_ = s.releaseReservedInventoryWithHook(&createdOrderID, req.UserID, orderNo, inventoryID, orderItems[j].Quantity, "admin_create_order_rollback")
 					}
 					s.OrderRepo.Delete(order.ID)
-					return nil, fmt.Errorf("Failed to allocate virtual product stock for %s: %v", item.Name, err)
+					return nil, fmt.Errorf("failed to allocate virtual product stock for %s: %w", item.Name, err)
 				}
 				if scriptInvID != nil {
 					virtualInventoryBindings[i] = *scriptInvID
@@ -532,9 +882,7 @@ func (s *OrderService) CreateAdminOrder(req AdminOrderRequest) (*models.Order, e
 			// 更新虚拟商品销量
 			product, err := s.productRepo.FindBySKU(item.SKU)
 			if err == nil {
-				if err := s.productRepo.IncrementSaleCount(product.ID, item.Quantity); err != nil {
-					fmt.Printf("Warning: Failed to update virtual product sales count - ProductID: %d, Error: %v\n", product.ID, err)
-				}
+				saleCountAdjustments[product.ID] += item.Quantity
 			}
 		}
 	}
@@ -544,7 +892,13 @@ func (s *OrderService) CreateAdminOrder(req AdminOrderRequest) (*models.Order, e
 		order.VirtualInventoryBindings = virtualInventoryBindings
 		s.OrderRepo.Update(order)
 	}
-	s.syncUserConsumptionStatsBestEffort(order.UserID, "create_admin_order")
+	for productID, quantity := range saleCountAdjustments {
+		if err := s.productRepo.IncrementSaleCount(productID, quantity); err != nil {
+			fmt.Printf("Warning: Failed to update product sales count - ProductID: %d, Error: %v\n", productID, err)
+		}
+	}
+	syncUserPurchaseStatsTransitionBestEffort(s.OrderRepo, nil, order.UserID, "", order.Status, order.Items, "create_admin_order")
+	s.syncUserConsumptionStatusTransitionBestEffort(order.UserID, "", order.Status, order.TotalAmount, "create_admin_order")
 
 	// 发送订单创建通知邮件
 	if s.emailService != nil {
@@ -556,10 +910,22 @@ func (s *OrderService) CreateAdminOrder(req AdminOrderRequest) (*models.Order, e
 
 // CreateUserOrder User直接CreateOrder（无需表单流程）
 func (s *OrderService) CreateUserOrder(userID uint, items []models.OrderItem, remark string, promoCode string) (*models.Order, error) {
+	releaseHotPath, err := acquireOrderHighConcurrencyProtection(s.cfg, orderHotPathCreateUserOrder)
+	if err != nil {
+		if isOrderHighConcurrencyBusyError(err) {
+			return nil, newOrderHighConcurrencyBusyError()
+		}
+		return nil, err
+	}
+	defer releaseHotPath()
+
 	// 查找UserInfo
 	user, err := s.userRepo.FindByID(userID)
 	if err != nil {
-		return nil, errors.New("User not found")
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, newOrderUserNotFoundError()
+		}
+		return nil, err
 	}
 
 	unlock := s.lockUserOrderCreation(userID)
@@ -574,28 +940,64 @@ func (s *OrderService) CreateUserOrder(userID uint, items []models.OrderItem, re
 		return nil, err
 	}
 
+	productBySKU, err := s.loadProductsForOrderItems(items)
+	if err != nil {
+		return nil, err
+	}
+
 	// 盲盒属性跟踪：记录每个订单项中盲盒随机分配的属性名
 	// key: 订单项索引, value: 盲盒属性名列表
 	blindBoxAttrNames := make(map[int][]string)
+	saleCountAdjustments := make(map[uint]int)
 
 	// 购买限制：同一SKU可能以多条订单项出现（不同属性/规格）
 	// 需要累计本次订单中该SKU的总数量，避免“拆成多行”绕过限购。
-	purchasedQtyBySKU := make(map[string]int)
 	requestedQtyBySKU := make(map[string]int)
-
-	// 验证Product并处理Inventory（使用新的Inventory绑定机制）
-	for i := range items {
-		item := &items[i]
-
-		// 根据 SKU 查找Product
-		product, err := s.productRepo.FindBySKU(item.SKU)
-		if err != nil {
+	for _, item := range items {
+		product, exists := productBySKU[item.SKU]
+		if !exists || product == nil {
 			return nil, bizerr.Newf("order.productNotFound", "Product %s does not exist", item.SKU).
 				WithParams(map[string]interface{}{"sku": item.SKU})
 		}
 		if product.Status != models.ProductStatusActive {
 			return nil, ErrProductNotAvailable
 		}
+		if product.MaxPurchaseLimit > 0 {
+			requestedQtyBySKU[item.SKU] += item.Quantity
+		}
+	}
+
+	purchasedQtyBySKU, err := s.OrderRepo.GetUserPurchaseQuantityBySKUs(userID, collectRequestedSKUs(requestedQtyBySKU))
+	if err != nil {
+		return nil, fmt.Errorf("Failed to query purchase records: %v", err)
+	}
+	for sku, requestedQty := range requestedQtyBySKU {
+		product := productBySKU[sku]
+		if product == nil || product.MaxPurchaseLimit <= 0 {
+			continue
+		}
+		purchasedQty := purchasedQtyBySKU[sku]
+		if purchasedQty+requestedQty <= product.MaxPurchaseLimit {
+			continue
+		}
+		remaining := product.MaxPurchaseLimit - purchasedQty
+		if remaining <= 0 {
+			return nil, bizerr.Newf("order.purchaseLimitReached",
+				"Product %s has reached purchase limit (maximum %d per account)", product.Name, product.MaxPurchaseLimit).
+				WithParams(map[string]interface{}{"product": product.Name, "limit": product.MaxPurchaseLimit})
+		}
+		return nil, bizerr.Newf("order.purchaseLimitExceeded",
+			"Product %s purchase quantity exceeds limit, you can still purchase %d (maximum %d per account)",
+			product.Name, remaining, product.MaxPurchaseLimit).
+			WithParams(map[string]interface{}{"product": product.Name, "remaining": remaining, "limit": product.MaxPurchaseLimit})
+	}
+
+	// 验证Product并处理Inventory（使用新的Inventory绑定机制）
+	for i := range items {
+		item := &items[i]
+
+		// 根据 SKU 查找Product
+		product := productBySKU[item.SKU]
 
 		// 收集盲盒属性名，并从用户输入中剔除（防止用户手动指定盲盒结果）
 		var bbAttrNames []string
@@ -609,36 +1011,6 @@ func (s *OrderService) CreateUserOrder(userID uint, items []models.OrderItem, re
 		}
 		for _, name := range bbAttrNames {
 			delete(item.Attributes, name)
-		}
-
-		// 检查购买限制
-		if product.MaxPurchaseLimit > 0 {
-			requestedQtyBySKU[item.SKU] += item.Quantity
-
-			// QueryUser已购买的数量（缓存同一SKU避免重复查询）
-			purchasedQty, ok := purchasedQtyBySKU[item.SKU]
-			if !ok {
-				qty, err := s.OrderRepo.GetUserPurchaseQuantityBySKU(userID, item.SKU)
-				if err != nil {
-					return nil, fmt.Errorf("Failed to query purchase records: %v", err)
-				}
-				purchasedQty = qty
-				purchasedQtyBySKU[item.SKU] = qty
-			}
-
-			// 检查是否超过限制
-			if purchasedQty+requestedQtyBySKU[item.SKU] > product.MaxPurchaseLimit {
-				remaining := product.MaxPurchaseLimit - purchasedQty
-				if remaining <= 0 {
-					return nil, bizerr.Newf("order.purchaseLimitReached",
-						"Product %s has reached purchase limit (maximum %d per account)", product.Name, product.MaxPurchaseLimit).
-						WithParams(map[string]interface{}{"product": product.Name, "limit": product.MaxPurchaseLimit})
-				}
-				return nil, bizerr.Newf("order.purchaseLimitExceeded",
-					"Product %s purchase quantity exceeds limit, you can still purchase %d (maximum %d per account)",
-					product.Name, remaining, product.MaxPurchaseLimit).
-					WithParams(map[string]interface{}{"product": product.Name, "remaining": remaining, "limit": product.MaxPurchaseLimit})
-			}
 		}
 
 		// 新的Inventory处理逻辑：根据Product的Inventory模式和User选择的属性查找对应的Inventory
@@ -676,7 +1048,7 @@ func (s *OrderService) CreateUserOrder(userID uint, items []models.OrderItem, re
 						// 混合模式：部分属性用户选择，部分属性盲盒随机
 						_, fullAttrs, err := s.virtualProductSvc.FindVirtualInventoryWithPartialMatch(product.ID, attrStrMap, item.Quantity)
 						if err != nil {
-							return nil, fmt.Errorf("Failed to allocate virtual inventory for product %s: %v", product.Name, err)
+							return nil, fmt.Errorf("failed to allocate virtual inventory for product %s: %w", product.Name, err)
 						}
 						// 更新订单项的属性为完整属性（包括随机分配的）
 						for k, v := range fullAttrs {
@@ -686,7 +1058,7 @@ func (s *OrderService) CreateUserOrder(userID uint, items []models.OrderItem, re
 						// 纯盲盒模式：全部随机
 						_, fullAttrs, err := s.virtualProductSvc.SelectRandomVirtualInventory(product.ID, item.Quantity)
 						if err != nil {
-							return nil, fmt.Errorf("Failed to allocate virtual inventory for product %s: %v", product.Name, err)
+							return nil, fmt.Errorf("failed to allocate virtual inventory for product %s: %w", product.Name, err)
 						}
 						// 更新订单项的属性为完整属性（随机分配的）
 						for k, v := range fullAttrs {
@@ -716,10 +1088,7 @@ func (s *OrderService) CreateUserOrder(userID uint, items []models.OrderItem, re
 				}
 			}
 
-			// 虚拟商品也需要更新销量
-			if err := s.productRepo.IncrementSaleCount(product.ID, item.Quantity); err != nil {
-				fmt.Printf("Warning: Failed to update virtual product sales count - ProductID: %d, Error: %v\n", product.ID, err)
-			}
+			saleCountAdjustments[product.ID] += item.Quantity
 			// 虚拟商品不需要处理物理库存绑定
 			continue
 		}
@@ -753,7 +1122,7 @@ func (s *OrderService) CreateUserOrder(userID uint, items []models.OrderItem, re
 				var fullAttrs map[string]string
 				inventory, fullAttrs, inventoryErr = s.bindingService.FindInventoryWithPartialMatch(product.ID, attributesMap, item.Quantity)
 				if inventoryErr != nil {
-					return nil, fmt.Errorf("Failed to allocate inventory for product %s: %v", product.Name, inventoryErr)
+					return nil, fmt.Errorf("failed to allocate inventory for product %s: %w", product.Name, inventoryErr)
 				}
 				// UpdateOrder项的属性为完整属性（包括随机分配的）
 				for k, v := range fullAttrs {
@@ -764,7 +1133,7 @@ func (s *OrderService) CreateUserOrder(userID uint, items []models.OrderItem, re
 				var fullAttrs map[string]string
 				inventory, fullAttrs, inventoryErr = s.bindingService.SelectRandomInventory(product.ID, item.Quantity)
 				if inventoryErr != nil {
-					return nil, fmt.Errorf("Failed to allocate inventory for product %s: %v", product.Name, inventoryErr)
+					return nil, fmt.Errorf("failed to allocate inventory for product %s: %w", product.Name, inventoryErr)
 				}
 				// UpdateOrder项的属性为完整属性（随机分配的）
 				for k, v := range fullAttrs {
@@ -777,7 +1146,7 @@ func (s *OrderService) CreateUserOrder(userID uint, items []models.OrderItem, re
 			var fullAttrs map[string]string
 			inventory, fullAttrs, inventoryErr = s.bindingService.FindInventoryByAttributes(product.ID, attributesMap)
 			if inventoryErr != nil {
-				return nil, fmt.Errorf("No matching inventory found for product %s: %v", product.Name, inventoryErr)
+				return nil, fmt.Errorf("find inventory for product %s: %w", product.Name, inventoryErr)
 			}
 			// UpdateOrder项的属性为完整属性
 			for k, v := range fullAttrs {
@@ -787,7 +1156,10 @@ func (s *OrderService) CreateUserOrder(userID uint, items []models.OrderItem, re
 
 		// 检查Inventory是否足够
 		if canPurchase, msg := inventory.CanPurchase(item.Quantity); !canPurchase {
-			return nil, fmt.Errorf("Product %s %s", product.Name, msg)
+			if normalized := normalizeOrderInventoryAvailabilityError(product.Name, msg); normalized != nil {
+				return nil, normalized
+			}
+			return nil, fmt.Errorf("product %s %s", product.Name, msg)
 		}
 
 		// 预留Inventory（generateOrder号后Update）
@@ -795,11 +1167,7 @@ func (s *OrderService) CreateUserOrder(userID uint, items []models.OrderItem, re
 		// 使用 _inventory_id 作为临时标记，预留Success后会改为 inventory_id 永久保存
 		item.Attributes["_inventory_id"] = inventory.ID
 
-		// Increment sales count
-		if err := s.productRepo.IncrementSaleCount(product.ID, item.Quantity); err != nil {
-			// Sales count update failure does not affect order creation, just log it
-			fmt.Printf("Warning: Failed to update product sales count - ProductID: %d, Error: %v\n", product.ID, err)
-		}
+		saleCountAdjustments[product.ID] += item.Quantity
 	}
 
 	// generateOrder号
@@ -815,17 +1183,18 @@ func (s *OrderService) CreateUserOrder(userID uint, items []models.OrderItem, re
 		if inventoryIDVal, ok := item.Attributes["_inventory_id"]; ok {
 			if inventoryID, ok := inventoryIDVal.(uint); ok {
 				// 预留Inventory
-				if err := s.inventoryRepo.Reserve(inventoryID, item.Quantity, orderNo); err != nil {
+				reservedInventoryID, err := s.reserveInventoryWithHook(nil, &userID, orderNo, inventoryID, item.Quantity, "user_create_order")
+				if err != nil {
 					// 预留Failed，need回滚之前已预留的Inventory
 					for j := 0; j < i; j++ {
 						if prevInvID, exists := inventoryBindings[j]; exists {
-							s.inventoryRepo.ReleaseReserve(prevInvID, items[j].Quantity, orderNo)
+							_ = s.releaseReservedInventoryWithHook(nil, &userID, orderNo, prevInvID, items[j].Quantity, "user_create_order_rollback")
 						}
 					}
-					return nil, fmt.Errorf("Failed to reserve inventory: %v", err)
+					return nil, normalizeOrderInventoryOperationError(item.Name, err)
 				}
 				// 保存Inventory绑定关系（使用独立的映射表，不污染Product属性）
-				inventoryBindings[i] = inventoryID
+				inventoryBindings[i] = reservedInventoryID
 				// 从属性中移除临时标记
 				delete(item.Attributes, "_inventory_id")
 			}
@@ -863,8 +1232,7 @@ func (s *OrderService) CreateUserOrder(userID uint, items []models.OrderItem, re
 	// 计算订单总金额
 	var totalAmount int64
 	for _, item := range items {
-		product, err := s.productRepo.FindBySKU(item.SKU)
-		if err == nil {
+		if product := productBySKU[item.SKU]; product != nil {
 			totalAmount += product.Price * int64(item.Quantity)
 		}
 	}
@@ -885,21 +1253,21 @@ func (s *OrderService) CreateUserOrder(userID uint, items []models.OrderItem, re
 		if err != nil {
 			// 释放已预留的库存
 			for i, inventoryID := range inventoryBindings {
-				s.inventoryRepo.ReleaseReserve(inventoryID, items[i].Quantity, orderNo)
+				_ = s.releaseReservedInventoryWithHook(nil, &userID, orderNo, inventoryID, items[i].Quantity, "user_create_order_rollback")
 			}
 			return nil, fmt.Errorf("Promo code not found")
 		}
 		if !pc.IsAvailable() {
 			for i, inventoryID := range inventoryBindings {
-				s.inventoryRepo.ReleaseReserve(inventoryID, items[i].Quantity, orderNo)
+				_ = s.releaseReservedInventoryWithHook(nil, &userID, orderNo, inventoryID, items[i].Quantity, "user_create_order_rollback")
 			}
 			return nil, fmt.Errorf("Promo code is not available")
 		}
 		// 收集订单中的商品ID
 		var productIDs []uint
 		for _, item := range items {
-			if p, err := s.productRepo.FindBySKU(item.SKU); err == nil {
-				productIDs = append(productIDs, p.ID)
+			if product := productBySKU[item.SKU]; product != nil {
+				productIDs = append(productIDs, product.ID)
 			}
 		}
 		// 检查优惠码是否适用于订单中的商品
@@ -913,7 +1281,7 @@ func (s *OrderService) CreateUserOrder(userID uint, items []models.OrderItem, re
 			}
 			if !applicable {
 				for i, inventoryID := range inventoryBindings {
-					s.inventoryRepo.ReleaseReserve(inventoryID, items[i].Quantity, orderNo)
+					_ = s.releaseReservedInventoryWithHook(nil, &userID, orderNo, inventoryID, items[i].Quantity, "user_create_order_rollback")
 				}
 				return nil, fmt.Errorf("Promo code is not applicable to the selected products")
 			}
@@ -922,7 +1290,7 @@ func (s *OrderService) CreateUserOrder(userID uint, items []models.OrderItem, re
 		// 预留优惠码
 		if err := promoCodeRepo.Reserve(pc.ID, orderNo); err != nil {
 			for i, inventoryID := range inventoryBindings {
-				s.inventoryRepo.ReleaseReserve(inventoryID, items[i].Quantity, orderNo)
+				_ = s.releaseReservedInventoryWithHook(nil, &userID, orderNo, inventoryID, items[i].Quantity, "user_create_order_rollback")
 			}
 			return nil, fmt.Errorf("Failed to reserve promo code: %v", err)
 		}
@@ -949,10 +1317,21 @@ func (s *OrderService) CreateUserOrder(userID uint, items []models.OrderItem, re
 		// FormToken 和 FormExpiresAt 在User点击填写时动态generate（仅非虚拟商品订单需要）
 	}
 
-	if err := s.OrderRepo.Create(order); err != nil {
+	if err := s.OrderRepo.WithTransaction(func(tx *gorm.DB) error {
+		if err := s.ensurePendingPaymentLimitTx(tx, userID); err != nil {
+			return err
+		}
+		if err := s.ensurePurchaseLimitsTx(tx, userID, requestedQtyBySKU); err != nil {
+			return err
+		}
+		if err := tx.Create(order).Error; err != nil {
+			return err
+		}
+		return applyUserPurchaseStatsTransitionTx(tx, nil, order.UserID, "", order.Status, order.Items)
+	}); err != nil {
 		// CreateOrderFailed，释放已预留的Inventory
 		for i, inventoryID := range inventoryBindings {
-			s.inventoryRepo.ReleaseReserve(inventoryID, items[i].Quantity, orderNo)
+			_ = s.releaseReservedInventoryWithHook(nil, &userID, orderNo, inventoryID, items[i].Quantity, "user_create_order_rollback")
 		}
 		// 释放优惠码
 		if promoCodeID != nil && s.promoCodeRepo != nil {
@@ -966,8 +1345,8 @@ func (s *OrderService) CreateUserOrder(userID uint, items []models.OrderItem, re
 	if s.virtualProductSvc != nil {
 		for i := range items {
 			item := &items[i]
-			product, err := s.productRepo.FindBySKU(item.SKU)
-			if err == nil && product.ProductType == models.ProductTypeVirtual {
+			product := productBySKU[item.SKU]
+			if product != nil && product.ProductType == models.ProductTypeVirtual {
 				// 为虚拟产品分配库存（预留状态），传入完整规格属性
 				// 需要从 ActualAttributes 中合并盲盒属性回来用于库存匹配
 				allocAttrs := make(map[string]interface{})
@@ -993,7 +1372,8 @@ func (s *OrderService) CreateUserOrder(userID uint, items []models.OrderItem, re
 						fmt.Printf("Warning: Failed to rollback virtual stock for order %s: %v\n", orderNo, releaseErr)
 					}
 					for j, inventoryID := range inventoryBindings {
-						s.inventoryRepo.ReleaseReserve(inventoryID, items[j].Quantity, orderNo)
+						orderIDForHook := order.ID
+						_ = s.releaseReservedInventoryWithHook(&orderIDForHook, &userID, orderNo, inventoryID, items[j].Quantity, "user_create_order_rollback")
 					}
 					if promoCodeID != nil && s.promoCodeRepo != nil {
 						if releaseErr := s.promoCodeRepo.ReleaseReserve(*promoCodeID, orderNo); releaseErr != nil {
@@ -1001,7 +1381,7 @@ func (s *OrderService) CreateUserOrder(userID uint, items []models.OrderItem, re
 						}
 					}
 					s.OrderRepo.Delete(order.ID)
-					return nil, fmt.Errorf("Failed to allocate virtual product stock: %v", err)
+					return nil, fmt.Errorf("failed to allocate virtual product stock: %w", err)
 				}
 				if scriptInvID != nil {
 					userVirtualInventoryBindings[i] = *scriptInvID
@@ -1015,6 +1395,12 @@ func (s *OrderService) CreateUserOrder(userID uint, items []models.OrderItem, re
 	if len(userVirtualInventoryBindings) > 0 {
 		order.VirtualInventoryBindings = userVirtualInventoryBindings
 		s.OrderRepo.Update(order)
+	}
+
+	for productID, quantity := range saleCountAdjustments {
+		if err := s.productRepo.IncrementSaleCount(productID, quantity); err != nil {
+			fmt.Printf("Warning: Failed to update product sales count - ProductID: %d, Error: %v\n", productID, err)
+		}
 	}
 
 	// 零金额订单自动完成支付（如100%优惠码或价格为0的商品）
@@ -1033,204 +1419,338 @@ func (s *OrderService) CreateUserOrder(userID uint, items []models.OrderItem, re
 }
 
 // SubmitShippingForm 提交发货Info表单
-func (s *OrderService) SubmitShippingForm(formToken string, receiverInfo map[string]interface{}, privacyProtected bool, userPassword string, userRemark string) (*models.Order, *models.User, bool, error) {
-	// Find order
-	order, err := s.OrderRepo.FindByFormToken(formToken)
+func (s *OrderService) SubmitShippingForm(formToken string, receiverInfo map[string]interface{}, privacyProtected bool, userPassword string, userRemark string, actorUserID *uint) (*models.Order, *models.User, bool, error) {
+	type preparedNewUserCredentials struct {
+		normalizedEmail string
+		passwordHash    string
+	}
+
+	var preparedNewUser *preparedNewUserCredentials
+	if actorUserID == nil && s.userRepo != nil {
+		normalizedEmail := strings.ToLower(strings.TrimSpace(receiverInfo["receiver_email"].(string)))
+		if normalizedEmail != "" {
+			_, findErr := s.userRepo.FindByEmail(normalizedEmail)
+			switch {
+			case findErr == nil:
+				// User already exists; keep historical behavior and ignore the provided password.
+			case errors.Is(findErr, gorm.ErrRecordNotFound):
+				generatedPassword := userPassword
+				if generatedPassword == "" {
+					var genErr error
+					generatedPassword, genErr = password.GenerateRandomPassword(12)
+					if genErr != nil {
+						return nil, nil, false, genErr
+					}
+				}
+
+				policy := s.cfg.Security.PasswordPolicy
+				if err := password.ValidatePasswordPolicy(generatedPassword, policy.MinLength, policy.RequireUppercase,
+					policy.RequireLowercase, policy.RequireNumber, policy.RequireSpecial); err != nil {
+					if bizErr := password.ToBizError(err); bizErr != nil {
+						return nil, nil, false, bizErr
+					}
+					return nil, nil, false, err
+				}
+
+				hashedPassword, hashErr := password.HashPassword(generatedPassword)
+				if hashErr != nil {
+					return nil, nil, false, hashErr
+				}
+				preparedNewUser = &preparedNewUserCredentials{
+					normalizedEmail: normalizedEmail,
+					passwordHash:    hashedPassword,
+				}
+			default:
+				return nil, nil, false, findErr
+			}
+		}
+	}
+
+	releaseHotPath, err := acquireOrderHighConcurrencyProtection(s.cfg, orderHotPathSubmitShippingForm)
 	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+		if isOrderHighConcurrencyBusyError(err) {
+			return nil, nil, false, newOrderHighConcurrencyBusyError()
+		}
+		return nil, nil, false, err
+	}
+	defer releaseHotPath()
+
+	var (
+		order             *models.Order
+		user              *models.User
+		isNewUser         bool
+		isResubmit        bool
+		serialHookSerials []models.ProductSerial
+		serialTaskQueued  bool
+	)
+
+	err = s.OrderRepo.WithTransaction(func(tx *gorm.DB) error {
+		txOrderRepo := repository.NewOrderRepository(tx)
+		lockedOrder, err := txOrderRepo.FindByFormTokenForUpdate(tx, formToken)
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrShippingFormNotFound
+			}
+			return err
+		}
+		if actorUserID != nil && lockedOrder.UserID != nil && *lockedOrder.UserID != *actorUserID {
+			return ErrShippingFormAccessDenied
+		}
+
+		isResubmit = lockedOrder.Status == models.OrderStatusNeedResubmit
+		if lockedOrder.Status != models.OrderStatusDraft && lockedOrder.Status != models.OrderStatusNeedResubmit {
+			return errors.New("Order is not ready for shipping information submission")
+		}
+		if lockedOrder.FormSubmittedAt != nil && !isResubmit {
+			return errors.New("Form has already been submitted")
+		}
+		if lockedOrder.FormExpiresAt != nil && models.NowFunc().After(*lockedOrder.FormExpiresAt) {
+			return errors.New("Form has expired")
+		}
+
+		beforeStatus := lockedOrder.Status
+		beforeUserID := lockedOrder.UserID
+
+		lockedOrder.ReceiverName = receiverInfo["receiver_name"].(string)
+		if phoneCode, ok := receiverInfo["phone_code"].(string); ok {
+			lockedOrder.PhoneCode = phoneCode
+		}
+		lockedOrder.ReceiverPhone = receiverInfo["receiver_phone"].(string)
+		lockedOrder.ReceiverEmail = receiverInfo["receiver_email"].(string)
+		if country, ok := receiverInfo["receiver_country"].(string); ok {
+			lockedOrder.ReceiverCountry = country
+		}
+		if province, ok := receiverInfo["receiver_province"].(string); ok {
+			lockedOrder.ReceiverProvince = province
+		}
+		if city, ok := receiverInfo["receiver_city"].(string); ok {
+			lockedOrder.ReceiverCity = city
+		}
+		if district, ok := receiverInfo["receiver_district"].(string); ok {
+			lockedOrder.ReceiverDistrict = district
+		}
+		lockedOrder.ReceiverAddress = receiverInfo["receiver_address"].(string)
+		if postcode, ok := receiverInfo["receiver_postcode"].(string); ok {
+			lockedOrder.ReceiverPostcode = postcode
+		}
+		lockedOrder.PrivacyProtected = privacyProtected
+
+		if userRemark != "" {
+			if lockedOrder.Remark != "" {
+				lockedOrder.Remark = lockedOrder.Remark + "\n\n[User Remark]\n" + userRemark
+			} else {
+				lockedOrder.Remark = userRemark
+			}
+		}
+
+		lockedOrder.Status = models.OrderStatusPending
+		now := models.NowFunc()
+		lockedOrder.FormSubmittedAt = &now
+
+		if isResubmit {
+			if lockedOrder.UserID == nil {
+				return errors.New("Resubmit order missing user association")
+			}
+			var existingUser models.User
+			if err := tx.First(&existingUser, *lockedOrder.UserID).Error; err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return errors.New("Cannot find user associated with order")
+				}
+				return err
+			}
+			user = &existingUser
+			isNewUser = false
+		} else {
+			if actorUserID != nil {
+				var existingUser models.User
+				if err := tx.First(&existingUser, *actorUserID).Error; err != nil {
+					if errors.Is(err, gorm.ErrRecordNotFound) {
+						return newOrderUserNotFoundError()
+					}
+					return err
+				}
+				user = &existingUser
+				isNewUser = false
+			} else {
+				normalizedEmail := strings.ToLower(strings.TrimSpace(lockedOrder.ReceiverEmail))
+				lockedOrder.ReceiverEmail = normalizedEmail
+
+				var existingUser models.User
+				findErr := tx.Where("email = ?", normalizedEmail).First(&existingUser).Error
+				switch {
+				case findErr == nil:
+					user = &existingUser
+					isNewUser = false
+				case errors.Is(findErr, gorm.ErrRecordNotFound):
+					isNewUser = true
+					hashedPassword := ""
+					if preparedNewUser != nil && preparedNewUser.normalizedEmail == normalizedEmail {
+						hashedPassword = preparedNewUser.passwordHash
+					} else {
+						generatedPassword := userPassword
+						if generatedPassword == "" {
+							generatedPassword, err = password.GenerateRandomPassword(12)
+							if err != nil {
+								return err
+							}
+						}
+
+						policy := s.cfg.Security.PasswordPolicy
+						if err := password.ValidatePasswordPolicy(generatedPassword, policy.MinLength, policy.RequireUppercase,
+							policy.RequireLowercase, policy.RequireNumber, policy.RequireSpecial); err != nil {
+							if bizErr := password.ToBizError(err); bizErr != nil {
+								return bizErr
+							}
+							return err
+						}
+
+						hashedPassword, err = password.HashPassword(generatedPassword)
+						if err != nil {
+							return err
+						}
+					}
+
+					createdUser := &models.User{
+						UUID:                 uuid.New().String(),
+						Email:                normalizedEmail,
+						Name:                 lockedOrder.ReceiverName,
+						PasswordHash:         hashedPassword,
+						Role:                 "user",
+						IsActive:             true,
+						EmailNotifyMarketing: true,
+						SMSNotifyMarketing:   true,
+					}
+					if lockedOrder.ReceiverPhone != "" {
+						createdUser.Phone = &lockedOrder.ReceiverPhone
+					}
+					if err := tx.Create(createdUser).Error; err != nil {
+						if !isUniqueConstraintError(err) {
+							return err
+						}
+						if err := tx.Where("email = ?", normalizedEmail).First(&existingUser).Error; err != nil {
+							return err
+						}
+						user = &existingUser
+						isNewUser = false
+					} else {
+						user = createdUser
+					}
+				default:
+					return findErr
+				}
+			}
+
+			lockedOrder.UserID = &user.ID
+		}
+
+		userUpdateValue := interface{}(nil)
+		if lockedOrder.UserID != nil {
+			userUpdateValue = *lockedOrder.UserID
+		}
+
+		orderUpdates := map[string]interface{}{
+			"receiver_name":     lockedOrder.ReceiverName,
+			"phone_code":        lockedOrder.PhoneCode,
+			"receiver_phone":    lockedOrder.ReceiverPhone,
+			"receiver_email":    lockedOrder.ReceiverEmail,
+			"receiver_country":  lockedOrder.ReceiverCountry,
+			"receiver_province": lockedOrder.ReceiverProvince,
+			"receiver_city":     lockedOrder.ReceiverCity,
+			"receiver_district": lockedOrder.ReceiverDistrict,
+			"receiver_address":  lockedOrder.ReceiverAddress,
+			"receiver_postcode": lockedOrder.ReceiverPostcode,
+			"privacy_protected": lockedOrder.PrivacyProtected,
+			"remark":            lockedOrder.Remark,
+			"status":            lockedOrder.Status,
+			"form_submitted_at": lockedOrder.FormSubmittedAt,
+			"user_id":           userUpdateValue,
+		}
+		if err := tx.Model(lockedOrder).Updates(orderUpdates).Error; err != nil {
+			return err
+		}
+		if err := applyUserPurchaseStatsTransitionTx(tx, beforeUserID, lockedOrder.UserID, beforeStatus, lockedOrder.Status, lockedOrder.Items); err != nil {
+			return err
+		}
+
+		if !isResubmit && s.serialService != nil {
+			txProductRepo := repository.NewProductRepository(tx)
+			productBySKU, findErr := txProductRepo.FindBySKUs(collectOrderItemSKUs(lockedOrder.Items))
+			if findErr != nil {
+				return findErr
+			}
+
+			hasSerialEligibleProduct := false
+			for i := range lockedOrder.Items {
+				item := &lockedOrder.Items[i]
+				product := productBySKU[item.SKU]
+				if product == nil || product.ProductCode == "" || product.ProductType != models.ProductTypePhysical || item.Quantity <= 0 {
+					continue
+				}
+				hasSerialEligibleProduct = true
+				break
+			}
+
+			switch {
+			case !hasSerialEligibleProduct:
+				lockedOrder.SerialGenerationStatus = models.SerialGenerationStatusNotRequired
+				lockedOrder.SerialGenerationError = ""
+				lockedOrder.SerialGeneratedAt = nil
+				if err := tx.Model(lockedOrder).Updates(map[string]interface{}{
+					"serial_generation_status": lockedOrder.SerialGenerationStatus,
+					"serial_generation_error":  lockedOrder.SerialGenerationError,
+					"serial_generated_at":      lockedOrder.SerialGeneratedAt,
+				}).Error; err != nil {
+					return err
+				}
+			case s.serialTaskService != nil:
+				lockedOrder.SerialGenerationStatus = models.SerialGenerationStatusQueued
+				lockedOrder.SerialGenerationError = ""
+				lockedOrder.SerialGeneratedAt = nil
+				if err := tx.Model(lockedOrder).Updates(map[string]interface{}{
+					"serial_generation_status": lockedOrder.SerialGenerationStatus,
+					"serial_generation_error":  lockedOrder.SerialGenerationError,
+					"serial_generated_at":      lockedOrder.SerialGeneratedAt,
+				}).Error; err != nil {
+					return err
+				}
+				if err := s.serialTaskService.EnqueueOrderTx(tx, lockedOrder.ID); err != nil {
+					return err
+				}
+				serialTaskQueued = true
+			default:
+				createdSerials, _, createErr := s.serialService.createMissingOrderSerialsTx(tx, lockedOrder)
+				if createErr != nil {
+					return createErr
+				}
+				completedAt := models.NowFunc()
+				lockedOrder.SerialGenerationStatus = models.SerialGenerationStatusCompleted
+				lockedOrder.SerialGenerationError = ""
+				lockedOrder.SerialGeneratedAt = &completedAt
+				if err := tx.Model(lockedOrder).Updates(map[string]interface{}{
+					"serial_generation_status": lockedOrder.SerialGenerationStatus,
+					"serial_generation_error":  lockedOrder.SerialGenerationError,
+					"serial_generated_at":      lockedOrder.SerialGeneratedAt,
+				}).Error; err != nil {
+					return err
+				}
+				serialHookSerials = append(serialHookSerials, createdSerials...)
+			}
+		}
+
+		order = lockedOrder
+		return nil
+	})
+	if err != nil {
+		if errors.Is(err, ErrShippingFormNotFound) {
 			return nil, nil, false, errors.New("Form not found or expired")
 		}
 		return nil, nil, false, err
 	}
-
-	// 保存原始状态，用于判断是否是重填操作
-	isResubmit := order.Status == models.OrderStatusNeedResubmit
-
-	// 检查订单状态：只有草稿和需要重填状态的订单可以提交表单
-	// 防止待付款状态的订单通过表单提交跳过付款步骤
-	if order.Status != models.OrderStatusDraft && order.Status != models.OrderStatusNeedResubmit {
-		return nil, nil, false, errors.New("Order is not ready for shipping information submission")
+	if serialTaskQueued && s.serialTaskService != nil {
+		s.serialTaskService.NotifyOrderQueued(order.ID)
 	}
-
-	// 检查表单是否已提交（重填时FormSubmittedAt会被清空，所以这里不检查重填的情况）
-	if order.FormSubmittedAt != nil && !isResubmit {
-		return nil, nil, false, errors.New("Form has already been submitted")
-	}
-
-	// Check if form has expired
-	if order.FormExpiresAt != nil && models.NowFunc().After(*order.FormExpiresAt) {
-		return nil, nil, false, errors.New("Form has expired")
-	}
-
-	// UpdateOrder收货Info
-	order.ReceiverName = receiverInfo["receiver_name"].(string)
-	if phoneCode, ok := receiverInfo["phone_code"].(string); ok {
-		order.PhoneCode = phoneCode
-	}
-	order.ReceiverPhone = receiverInfo["receiver_phone"].(string)
-	order.ReceiverEmail = receiverInfo["receiver_email"].(string)
-	if country, ok := receiverInfo["receiver_country"].(string); ok {
-		order.ReceiverCountry = country
-	}
-	if province, ok := receiverInfo["receiver_province"].(string); ok {
-		order.ReceiverProvince = province
-	}
-	if city, ok := receiverInfo["receiver_city"].(string); ok {
-		order.ReceiverCity = city
-	}
-	if district, ok := receiverInfo["receiver_district"].(string); ok {
-		order.ReceiverDistrict = district
-	}
-	order.ReceiverAddress = receiverInfo["receiver_address"].(string)
-	if postcode, ok := receiverInfo["receiver_postcode"].(string); ok {
-		order.ReceiverPostcode = postcode
-	}
-	order.PrivacyProtected = privacyProtected
-
-	// 保存User备注（追加到原有备注后）
-	if userRemark != "" {
-		if order.Remark != "" {
-			// 如果已有平台备注，追加User备注
-			order.Remark = order.Remark + "\n\n[User Remark]\n" + userRemark
-		} else {
-			// 如果没有平台备注，直接保存User备注
-			order.Remark = userRemark
-		}
-	}
-
-	// UpdateOrder状态
-	order.Status = models.OrderStatusPending
-	now := models.NowFunc()
-	order.FormSubmittedAt = &now
-
-	// 查找或CreateUser
-	var user *models.User
-	isNewUser := false
-	var generatedPassword string
-
-	// If this is a resubmission, use the existing user, do not create a new one
-	if isResubmit {
-		// Resubmit operation: order already has user association
-		if order.UserID == nil {
-			return nil, nil, false, errors.New("Resubmit order missing user association")
-		}
-
-		// Find associated user
-		user, err = s.userRepo.FindByID(*order.UserID)
-		if err != nil {
-			return nil, nil, false, errors.New("Cannot find user associated with order")
-		}
-
-		isNewUser = false // Resubmission is not a new user
-	} else {
-		// First submission: find or create user
-		// 先尝试通过Email查找
-		normalizedEmail := strings.ToLower(strings.TrimSpace(order.ReceiverEmail))
-		order.ReceiverEmail = normalizedEmail
-		user, err = s.userRepo.FindByEmail(normalizedEmail)
-		if err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				// Userdoes not exist，Create新User
-				isNewUser = true
-
-				// generate随机Password（如果未提供）
-				if userPassword == "" {
-					generatedPassword, err = password.GenerateRandomPassword(12)
-					if err != nil {
-						return nil, nil, false, err
-					}
-				} else {
-					generatedPassword = userPassword
-				}
-
-				// Enforce the same password policy as normal registration.
-				policy := s.cfg.Security.PasswordPolicy
-				if err := password.ValidatePasswordPolicy(generatedPassword, policy.MinLength, policy.RequireUppercase,
-					policy.RequireLowercase, policy.RequireNumber, policy.RequireSpecial); err != nil {
-					return nil, nil, false, err
-				}
-
-				// 哈希Password
-				hashedPassword, err := password.HashPassword(generatedPassword)
-				if err != nil {
-					return nil, nil, false, err
-				}
-
-				user = &models.User{
-					UUID:                 uuid.New().String(),
-					Email:                normalizedEmail,
-					Name:                 order.ReceiverName,
-					PasswordHash:         hashedPassword,
-					Role:                 "user",
-					IsActive:             true,
-					EmailNotifyMarketing: true,
-					SMSNotifyMarketing:   true,
-				}
-				// 只有phone不为空时才设置
-				if order.ReceiverPhone != "" {
-					user.Phone = &order.ReceiverPhone
-				}
-				if err := s.userRepo.Create(user); err != nil {
-					// Race: another request created the same user after our FindByEmail.
-					if isUniqueConstraintError(err) {
-						existing, findErr := s.userRepo.FindByEmail(normalizedEmail)
-						if findErr != nil {
-							return nil, nil, false, findErr
-						}
-						user = existing
-						isNewUser = false
-						generatedPassword = ""
-					} else {
-						return nil, nil, false, err
-					}
-				}
-			} else {
-				return nil, nil, false, err
-			}
-		} else {
-			// User已存在，检查是否是Admin账户
-			if user.Role == "admin" || user.Role == "super_admin" {
-				// 如果是Admin账户，允许关联但不发送欢迎邮件
-				// 这是正常情况，Admin可以为自己CreateOrder
-			}
-			// 普通User账户已存在，直接关联Order
-			isNewUser = false
-		}
-
-		// 关联User（首次提交时）
-		order.UserID = &user.ID
-	}
-
-	// UpdateOrder
-	if err := s.OrderRepo.Update(order); err != nil {
-		return nil, nil, false, err
-	}
-	s.syncUserConsumptionStatsBestEffort(order.UserID, "submit_shipping_form")
-
-	// 注意：虚拟产品在 MarkAsPaid 时已经发货，这里不需要再次发货
-	// SubmitShippingForm 只用于实物订单填写收货信息
-
-	// 填写收货信息后立即生成产品序列号（非重填时）
-	if !isResubmit && s.serialService != nil {
-		for i := range order.Items {
-			item := &order.Items[i]
-
-			// 通过SKU查找商品并检查是否有产品码
-			product, err := s.productRepo.FindBySKU(item.SKU)
-			if err == nil && product.ProductCode != "" {
-				// 为此商品生成序列号
-				_, err := s.serialService.CreateSerialForOrder(
-					order.ID,
-					product.ID,
-					item.Quantity,
-				)
-				if err != nil {
-					// 记录错误但不阻止流程
-					fmt.Printf("Warning: Failed to create serials for product %s (ID:%d) in order %s: %v\n",
-						item.SKU, product.ID, order.OrderNo, err)
-				}
-			}
-		}
+	if len(serialHookSerials) > 0 {
+		s.serialService.emitSerialCreateAfterHook(serialHookSerials, "order_service", order.UserID, order.ID)
 	}
 
 	// 发送邮件通知
@@ -1242,6 +1762,17 @@ func (s *OrderService) SubmitShippingForm(formToken string, receiverInfo map[str
 	}
 
 	return order, user, isNewUser, nil
+}
+
+func (s *OrderService) GetShippingFormOrder(formToken string, actorUserID *uint) (*models.Order, error) {
+	order, err := s.OrderRepo.FindByFormToken(formToken)
+	if err != nil {
+		return nil, err
+	}
+	if actorUserID != nil && order.UserID != nil && *order.UserID != *actorUserID {
+		return nil, ErrShippingFormAccessDenied
+	}
+	return order, nil
 }
 
 // GetOrderByNo 根据Order号getOrder
@@ -1273,12 +1804,12 @@ func (s *OrderService) ListUserOrders(userID uint, page, limit int, status strin
 func (s *OrderService) AssignTracking(orderID uint, trackingNo string) error {
 	order, err := s.OrderRepo.FindByID(orderID)
 	if err != nil {
-		return err
+		return normalizeOrderLookupError(err)
 	}
 
 	// 只有待发货状态的订单可以分配物流单号
 	if order.Status != models.OrderStatusPending {
-		return errors.New("Only pending orders can be assigned tracking number")
+		return newOrderAssignTrackingStatusInvalidError(order.Status)
 	}
 
 	// 发货时将预留Inventory转为已售Inventory
@@ -1327,16 +1858,16 @@ func (s *OrderService) AssignTracking(orderID uint, trackingNo string) error {
 func (s *OrderService) DeliverVirtualStock(orderID uint, deliveredBy uint, markOnlyShipped bool) error {
 	order, err := s.OrderRepo.FindByID(orderID)
 	if err != nil {
-		return err
+		return normalizeOrderLookupError(err)
 	}
 
 	// 只有待发货和已发货状态的订单可以手动发货虚拟商品
 	if order.Status != models.OrderStatusPending && order.Status != models.OrderStatusShipped {
-		return errors.New("Only pending or shipped orders can deliver virtual stock")
+		return newOrderDeliverVirtualStatusInvalidError(order.Status)
 	}
 
 	if s.virtualProductSvc == nil {
-		return errors.New("Virtual product service not available")
+		return newOrderVirtualServiceUnavailableError()
 	}
 
 	// 检查是否有待发货的虚拟库存
@@ -1345,7 +1876,7 @@ func (s *OrderService) DeliverVirtualStock(orderID uint, deliveredBy uint, markO
 		return fmt.Errorf("Failed to check pending stock: %v", err)
 	}
 	if !hasPending {
-		return errors.New("No pending virtual stock to deliver")
+		return newOrderNoPendingVirtualStockError()
 	}
 
 	if markOnlyShipped {
@@ -1392,11 +1923,11 @@ func (s *OrderService) DeliverVirtualStock(orderID uint, deliveredBy uint, markO
 func (s *OrderService) CompleteOrder(orderID uint, completedBy uint, feedback, adminRemark string) error {
 	order, err := s.OrderRepo.FindByID(orderID)
 	if err != nil {
-		return err
+		return normalizeOrderLookupError(err)
 	}
 
 	if order.Status != models.OrderStatusShipped {
-		return errors.New("Order not shipped, cannot mark as completed")
+		return newOrderCompleteStatusInvalidError(order.Status)
 	}
 
 	order.Status = models.OrderStatusCompleted
@@ -1423,7 +1954,6 @@ func (s *OrderService) CompleteOrder(orderID uint, completedBy uint, feedback, a
 	if err := s.OrderRepo.Update(order); err != nil {
 		return err
 	}
-	s.syncUserConsumptionStatsBestEffort(order.UserID, "complete_order")
 
 	// 发送完成邮件通知
 	if s.emailService != nil {
@@ -1472,21 +2002,22 @@ func (s *OrderService) RequestResubmit(orderID uint, reason string) (string, err
 func (s *OrderService) DeleteOrder(orderID uint) error {
 	order, err := s.OrderRepo.FindByID(orderID)
 	if err != nil {
-		return err
+		return normalizeOrderLookupError(err)
 	}
 
 	// 只有待付款、草稿、已取消和已退款的Order可以Delete
 	if order.Status != models.OrderStatusPendingPayment && order.Status != models.OrderStatusDraft && order.Status != models.OrderStatusCancelled && order.Status != models.OrderStatusRefunded {
-		return errors.New("Only pending payment, draft, cancelled or refunded orders can be deleted")
+		return newOrderDeleteStatusInvalidError(order.Status)
 	}
 
 	// 删除待付款订单时释放预留库存
 	if order.Status == models.OrderStatusPendingPayment {
+		orderIDRef := order.ID
 		// 释放物理商品库存
 		for i := range order.Items {
 			item := &order.Items[i]
 			if inventoryID, exists := order.InventoryBindings[i]; exists && inventoryID > 0 {
-				if err := s.inventoryRepo.ReleaseReserve(inventoryID, item.Quantity, order.OrderNo); err != nil {
+				if err := s.releaseReservedInventoryWithHook(&orderIDRef, order.UserID, order.OrderNo, inventoryID, item.Quantity, "delete_order"); err != nil {
 					fmt.Printf("Warning: Order %s Failed to release reserved inventory: %v\n", order.OrderNo, err)
 				}
 			}
@@ -1512,10 +2043,16 @@ func (s *OrderService) DeleteOrder(orderID uint) error {
 			fmt.Printf("Warning: Order %s failed to delete serial numbers: %v\n", order.OrderNo, err)
 		}
 	}
+	if s.serialTaskService != nil {
+		if err := s.serialTaskService.DeleteOrderTask(orderID); err != nil {
+			fmt.Printf("Warning: Order %s failed to delete serial generation task: %v\n", order.OrderNo, err)
+		}
+	}
 	if err := s.OrderRepo.Delete(orderID); err != nil {
 		return err
 	}
-	s.syncUserConsumptionStatsBestEffort(order.UserID, "delete_order")
+	syncUserPurchaseStatsTransitionBestEffort(s.OrderRepo, order.UserID, nil, order.Status, "", order.Items, "delete_order")
+	s.syncUserConsumptionStatusTransitionBestEffort(order.UserID, order.Status, "", order.TotalAmount, "delete_order")
 	return nil
 }
 
@@ -1528,17 +2065,19 @@ func (s *OrderService) UpdateOrder(order *models.Order) error {
 func (s *OrderService) CancelOrder(orderID uint, reason string) error {
 	order, err := s.OrderRepo.FindByID(orderID)
 	if err != nil {
-		return err
+		return normalizeOrderLookupError(err)
 	}
+	previousStatus := order.Status
 
 	// 已发货和已完成的Order不能取消
 	if order.Status == models.OrderStatusShipped || order.Status == models.OrderStatusCompleted {
-		return errors.New("Shipped or completed orders cannot be cancelled")
+		return newOrderCancelStatusInvalidError(order.Status)
 	}
 
 	// 取消Order时释放预留Inventory
 	// 待付款、草稿状态和待发货状态的Order有预留Inventoryneed释放
 	if order.Status == models.OrderStatusPendingPayment || order.Status == models.OrderStatusDraft || order.Status == models.OrderStatusPending || order.Status == models.OrderStatusNeedResubmit {
+		orderIDRef := order.ID
 		// 释放物理商品库存
 		for i := range order.Items {
 			item := &order.Items[i]
@@ -1546,7 +2085,7 @@ func (s *OrderService) CancelOrder(orderID uint, reason string) error {
 			// 从Inventory绑定映射中getInventoryID
 			if inventoryID, exists := order.InventoryBindings[i]; exists && inventoryID > 0 {
 				// 释放预留Inventory
-				if err := s.inventoryRepo.ReleaseReserve(inventoryID, item.Quantity, order.OrderNo); err != nil {
+				if err := s.releaseReservedInventoryWithHook(&orderIDRef, order.UserID, order.OrderNo, inventoryID, item.Quantity, "cancel_order"); err != nil {
 					// 释放Failed但不阻止取消流程，记录Error日志
 					fmt.Printf("Warning: Order %s Failed to release reserved inventory: %v\n", order.OrderNo, err)
 				}
@@ -1587,7 +2126,13 @@ func (s *OrderService) CancelOrder(orderID uint, reason string) error {
 	if err := s.OrderRepo.Update(order); err != nil {
 		return err
 	}
-	s.syncUserConsumptionStatsBestEffort(order.UserID, "cancel_order")
+	if s.serialTaskService != nil {
+		if err := s.serialTaskService.CancelOrder(orderID); err != nil {
+			fmt.Printf("Warning: Order %s failed to cancel serial generation task: %v\n", order.OrderNo, err)
+		}
+	}
+	syncUserPurchaseStatsTransitionBestEffort(s.OrderRepo, order.UserID, order.UserID, previousStatus, order.Status, order.Items, "cancel_order")
+	s.syncUserConsumptionStatusTransitionBestEffort(order.UserID, previousStatus, order.Status, order.TotalAmount, "cancel_order")
 
 	// 发送Order取消邮件
 	if s.emailService != nil {
@@ -1599,11 +2144,12 @@ func (s *OrderService) CancelOrder(orderID uint, reason string) error {
 
 // ReleaseOrderReserves 释放订单预留的库存和优惠码（用于退款/取消等场景）
 func (s *OrderService) ReleaseOrderReserves(order *models.Order) {
+	orderIDRef := order.ID
 	// 释放物理商品库存
 	for i := range order.Items {
 		item := &order.Items[i]
 		if inventoryID, exists := order.InventoryBindings[i]; exists && inventoryID > 0 {
-			if err := s.inventoryRepo.ReleaseReserve(inventoryID, item.Quantity, order.OrderNo); err != nil {
+			if err := s.releaseReservedInventoryWithHook(&orderIDRef, order.UserID, order.OrderNo, inventoryID, item.Quantity, "release_order_reserves"); err != nil {
 				fmt.Printf("Warning: Order %s failed to release reserved inventory: %v\n", order.OrderNo, err)
 			}
 		}
@@ -1626,82 +2172,55 @@ func (s *OrderService) ReleaseOrderReserves(order *models.Order) {
 
 // MarkAsPaid 标记订单为已付款
 func (s *OrderService) MarkAsPaid(orderID uint) error {
-	order, err := s.OrderRepo.FindByID(orderID)
+	return s.MarkAsPaidWithOptions(orderID, MarkAsPaidOptions{})
+}
+
+func (s *OrderService) MarkAsPaidWithOptions(orderID uint, options MarkAsPaidOptions) error {
+	var (
+		order          *models.Order
+		finalizeResult *paidOrderFinalizeResult
+	)
+
+	err := s.OrderRepo.WithTransaction(func(tx *gorm.DB) error {
+		txOrderRepo := repository.NewOrderRepository(tx)
+		lockedOrder, err := txOrderRepo.FindByIDForUpdate(tx, orderID)
+		if err != nil {
+			return err
+		}
+		order = lockedOrder
+		finalizeResult, err = finalizePendingPaymentOrderTx(tx, lockedOrder, s.virtualProductSvc, paidOrderFinalizeOptions{
+			AdminRemark:             options.AdminRemark,
+			SkipAutoDelivery:        options.SkipAutoDelivery,
+			StrictAutoDeliveryCheck: true,
+		})
+		return err
+	})
 	if err != nil {
-		return err
+		return normalizeOrderLookupError(err)
+	}
+	if finalizeResult == nil || !finalizeResult.Updated {
+		return newOrderMarkPaidStatusInvalidError(order.Status)
 	}
 
-	// 只有待付款状态的订单可以标记为已付款
-	if order.Status != models.OrderStatusPendingPayment {
-		return errors.New("Only pending payment orders can be marked as paid")
-	}
-
-	// 判断是否为纯虚拟商品订单
-	isVirtualOnly := true
-	for _, item := range order.Items {
-		if item.ProductType != models.ProductTypeVirtual {
-			isVirtualOnly = false
-			break
-		}
-	}
-
-	// 根据订单类型设置状态
-	if isVirtualOnly {
-		// 纯虚拟商品订单
-		if s.virtualProductSvc != nil {
-			// 检查是否所有虚拟库存都可以自动发货
-			canAuto, err := s.virtualProductSvc.CanAutoDeliver(order.OrderNo)
-			if err != nil {
-				return fmt.Errorf("Failed to check auto delivery: %v", err)
-			}
-
-			if canAuto {
-				// 所有库存都属于自动发货商品，执行自动发货
-				if err := s.virtualProductSvc.DeliverAutoDeliveryStock(order.ID, order.OrderNo, nil); err != nil {
-					// 自动发货失败回退到待发货，由管理员手动处理
-					fmt.Printf("Warning: Failed to auto deliver virtual order %s: %v\n", order.OrderNo, err)
-					order.Status = models.OrderStatusPending
-				} else {
-					order.Status = models.OrderStatusShipped
-					now := models.NowFunc()
-					order.ShippedAt = &now
-				}
-			} else {
-				// 存在非自动发货的库存，全部交给管理员手动发货
-				order.Status = models.OrderStatusPending
-			}
+	if finalizeResult.VirtualDeliveryErr != nil {
+		if finalizeResult.IsVirtualOnly {
+			fmt.Printf("Warning: Failed to auto deliver virtual order %s: %v\n", order.OrderNo, finalizeResult.VirtualDeliveryErr)
 		} else {
-			order.Status = models.OrderStatusPending
-		}
-	} else {
-		// 实物或混合订单
-		// 如果已经有收货信息，直接进入待发货状态；否则设置为草稿状态，等待填写收货信息
-		hasShippingInfo := order.ReceiverName != "" && order.ReceiverAddress != ""
-		if hasShippingInfo {
-			order.Status = models.OrderStatusPending
-		} else {
-			order.Status = models.OrderStatusDraft
-		}
-
-		// 混合订单：仅当所有虚拟库存都可自动发货时才自动发货，否则全部留给管理员
-		if s.virtualProductSvc != nil {
-			canAuto, _ := s.virtualProductSvc.CanAutoDeliver(order.OrderNo)
-			if canAuto {
-				if err := s.virtualProductSvc.DeliverAutoDeliveryStock(order.ID, order.OrderNo, nil); err != nil {
-					fmt.Printf("Warning: Failed to deliver virtual products for mixed order %s: %v\n", order.OrderNo, err)
-				}
-			}
+			fmt.Printf("Warning: Failed to deliver virtual products for mixed order %s: %v\n", order.OrderNo, finalizeResult.VirtualDeliveryErr)
 		}
 	}
 
-	if err := s.OrderRepo.Update(order); err != nil {
-		return err
-	}
-	s.syncUserConsumptionStatsBestEffort(order.UserID, "mark_as_paid")
+	s.syncUserConsumptionStatusTransitionBestEffort(
+		order.UserID,
+		models.OrderStatusPendingPayment,
+		finalizeResult.FinalStatus,
+		order.TotalAmount,
+		"mark_as_paid",
+	)
 
 	// 发送付款成功邮件
 	if s.emailService != nil {
-		go s.emailService.SendOrderPaidEmail(order, isVirtualOnly)
+		go s.emailService.SendOrderPaidEmail(order, finalizeResult.IsVirtualOnly)
 	}
 
 	return nil

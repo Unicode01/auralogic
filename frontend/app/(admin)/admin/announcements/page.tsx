@@ -15,17 +15,9 @@ import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Textarea } from '@/components/ui/textarea'
 import { MarkdownEditor } from '@/components/ui/markdown-editor'
 import {
   AlertDialog,
@@ -38,32 +30,70 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import toast from 'react-hot-toast'
-import {
-  FileText,
-  Loader2,
-  Megaphone,
-  Pencil,
-  Plus,
-  Save,
-  Trash2,
-  X,
-} from 'lucide-react'
+import { FileText, Loader2, Megaphone, Pencil, Plus, Save, Trash2, X } from 'lucide-react'
 import { useLocale } from '@/hooks/use-locale'
 import { getTranslations } from '@/lib/i18n'
 import { usePageTitle } from '@/hooks/use-page-title'
 import { MarkdownMessage } from '@/components/ui/markdown-message'
+import { resolveApiErrorMessage } from '@/lib/api-error'
+import { PluginExtensionList } from '@/components/plugins/plugin-extension-list'
+import { PluginSlot } from '@/components/plugins/plugin-slot'
+import { usePluginExtensionBatch } from '@/lib/plugin-extension-batch'
 
 interface AnnouncementForm {
   title: string
   content: string
-  category: 'general' | 'marketing'
-  send_email: boolean
-  send_sms: boolean
   is_mandatory: boolean
   require_full_read: boolean
 }
 
 type EditorMode = 'empty' | 'create' | 'edit'
+
+function createEmptyAnnouncementForm(): AnnouncementForm {
+  return {
+    title: '',
+    content: '',
+    is_mandatory: false,
+    require_full_read: false,
+  }
+}
+
+function buildAnnouncementPayload(form: AnnouncementForm) {
+  return {
+    title: form.title,
+    content: form.content,
+    category: 'general' as const,
+    send_email: false,
+    send_sms: false,
+    is_mandatory: form.is_mandatory,
+    require_full_read: form.require_full_read,
+  }
+}
+
+function formatAnnouncementDateTime(value?: string) {
+  if (!value) {
+    return '--'
+  }
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) {
+    return value
+  }
+  return date.toLocaleString()
+}
+
+function buildAdminAnnouncementRowSummary(item: Announcement) {
+  return {
+    id: item.id,
+    title: item.title,
+    category: item.category,
+    is_mandatory: item.is_mandatory,
+    require_full_read: item.require_full_read,
+    created_at: item.created_at,
+    updated_at: item.updated_at,
+    content_length: item.content?.length || 0,
+    content_preview: item.content?.replace(/\s+/g, ' ').trim().slice(0, 120) || '',
+  }
+}
 
 export default function AdminAnnouncementsPage() {
   const queryClient = useQueryClient()
@@ -77,17 +107,15 @@ export default function AdminAnnouncementsPage() {
 
   const [editorMode, setEditorMode] = useState<EditorMode>('empty')
   const [selectedId, setSelectedId] = useState<number | null>(null)
-  const [form, setForm] = useState<AnnouncementForm>({
-    title: '',
-    content: '',
-    category: 'general',
-    send_email: false,
-    send_sms: false,
-    is_mandatory: false,
-    require_full_read: false,
-  })
+  const [form, setForm] = useState<AnnouncementForm>(createEmptyAnnouncementForm())
+  const [baselineForm, setBaselineForm] = useState<AnnouncementForm | null>(null)
 
-  const { data, isLoading } = useQuery({
+  const {
+    data,
+    isLoading,
+    isError: announcementsLoadFailed,
+    refetch: refetchAnnouncements,
+  } = useQuery({
     queryKey: ['adminAnnouncements', page],
     queryFn: () => getAdminAnnouncements({ page, limit }),
   })
@@ -96,7 +124,12 @@ export default function AdminAnnouncementsPage() {
   const total = data?.data?.total || 0
   const totalPages = Math.ceil(total / limit) || 1
 
-  const { data: detailData, isLoading: detailLoading } = useQuery({
+  const {
+    data: detailData,
+    isLoading: detailLoading,
+    isError: detailLoadFailed,
+    refetch: refetchAnnouncementDetail,
+  } = useQuery({
     queryKey: ['adminAnnouncement', selectedId],
     queryFn: () => getAdminAnnouncement(selectedId as number),
     enabled: editorMode === 'edit' && !!selectedId,
@@ -108,15 +141,14 @@ export default function AdminAnnouncementsPage() {
     if (editorMode !== 'edit') return
     if (!detailData?.data) return
     const item = detailData.data
-    setForm({
+    const nextForm = {
       title: item.title || '',
       content: item.content || '',
-      category: (item.category as 'general' | 'marketing') || 'general',
-      send_email: item.send_email ?? false,
-      send_sms: item.send_sms ?? false,
       is_mandatory: item.is_mandatory ?? false,
       require_full_read: item.require_full_read ?? false,
-    })
+    }
+    setForm(nextForm)
+    setBaselineForm(nextForm)
   }, [editorMode, detailData])
 
   const deleteMutation = useMutation({
@@ -127,20 +159,13 @@ export default function AdminAnnouncementsPage() {
       if (typeof id === 'number' && id === selectedId) {
         setEditorMode('empty')
         setSelectedId(null)
-        setForm({
-          title: '',
-          content: '',
-          category: 'general',
-          send_email: false,
-          send_sms: false,
-          is_mandatory: false,
-          require_full_read: false,
-        })
+        setForm(createEmptyAnnouncementForm())
+        setBaselineForm(null)
       }
       setDeleteId(null)
     },
     onError: (error: Error) => {
-      toast.error(`${t.announcement.deleteFailed}: ${error.message}`)
+      toast.error(resolveApiErrorMessage(error, t, t.announcement.deleteFailed))
     },
   })
 
@@ -158,9 +183,11 @@ export default function AdminAnnouncementsPage() {
       }
       setEditorMode('empty')
       setSelectedId(null)
+      setForm(createEmptyAnnouncementForm())
+      setBaselineForm(null)
     },
     onError: (error: Error) => {
-      toast.error(`${t.announcement.createFailed}: ${error.message}`)
+      toast.error(resolveApiErrorMessage(error, t, t.announcement.createFailed))
     },
   })
 
@@ -170,30 +197,94 @@ export default function AdminAnnouncementsPage() {
     onSuccess: () => {
       toast.success(t.announcement.announcementUpdated)
       queryClient.invalidateQueries({ queryKey: ['adminAnnouncements'] })
+      setBaselineForm(form)
       if (selectedId) {
         queryClient.invalidateQueries({ queryKey: ['adminAnnouncement', selectedId] })
       }
     },
     onError: (error: Error) => {
-      toast.error(`${t.announcement.updateFailed}: ${error.message}`)
+      toast.error(resolveApiErrorMessage(error, t, t.announcement.updateFailed))
     },
   })
 
   const isSaving = createMutation.isPending || updateMutation.isPending
   const isEditorLoading = editorMode === 'edit' && detailLoading
+  const selectedAnnouncement = detailData?.data as Announcement | undefined
+  const editorNotFound =
+    editorMode === 'edit' && !isEditorLoading && !detailLoadFailed && !selectedAnnouncement
+  const currentPageMandatoryCount = announcements.filter((item) => item.is_mandatory).length
+  const visibleStart = total === 0 ? 0 : (page - 1) * limit + 1
+  const visibleEnd = total === 0 ? 0 : Math.min(page * limit, total)
+  const rangeSummary = t.announcement.rangeSummary
+    .replace('{start}', String(visibleStart))
+    .replace('{end}', String(visibleEnd))
+    .replace('{total}', String(total))
+  const contentCharCount = form.content.length
+  const contentLineCount = form.content ? form.content.split(/\r?\n/).length : 0
+  const hasUnsavedChanges =
+    editorMode !== 'empty' && JSON.stringify(form) !== JSON.stringify(baselineForm)
+  const adminAnnouncementsPluginContext = {
+    view: 'admin_announcements',
+    pagination: {
+      page,
+      total,
+      total_pages: totalPages,
+      limit,
+    },
+    editor: {
+      mode: editorMode,
+      selected_id: selectedId || undefined,
+      has_unsaved_changes: hasUnsavedChanges,
+    },
+    summary: {
+      current_page_count: announcements.length,
+      mandatory_count: currentPageMandatoryCount,
+      content_char_count: contentCharCount,
+      content_line_count: contentLineCount,
+    },
+    state: {
+      list_load_failed: announcementsLoadFailed && announcements.length === 0,
+      list_empty: !isLoading && !announcementsLoadFailed && announcements.length === 0,
+      editor_empty: editorMode === 'empty',
+      editor_loading: isEditorLoading,
+      editor_load_failed: editorMode === 'edit' && detailLoadFailed && !selectedAnnouncement,
+      editor_not_found: editorNotFound,
+    },
+  }
+  const adminAnnouncementRowActionItems = announcements.map((item, index) => ({
+    key: String(item.id),
+    slot: 'admin.announcements.row_actions',
+    path: '/admin/announcements',
+    hostContext: {
+      view: 'admin_announcements_row',
+      announcement: buildAdminAnnouncementRowSummary(item),
+      row: {
+        index: index + 1,
+        absolute_index: (page - 1) * limit + index + 1,
+        selected: editorMode === 'edit' && selectedId === item.id,
+      },
+      pagination: adminAnnouncementsPluginContext.pagination,
+      editor: adminAnnouncementsPluginContext.editor,
+      summary: adminAnnouncementsPluginContext.summary,
+    },
+  }))
+  const adminAnnouncementRowActionExtensions = usePluginExtensionBatch({
+    scope: 'admin',
+    path: '/admin/announcements',
+    items: adminAnnouncementRowActionItems,
+    enabled: announcements.length > 0,
+  })
+  const deleteTarget = deleteId
+    ? announcements.find((item) => item.id === deleteId) ||
+      (selectedId === deleteId ? selectedAnnouncement : undefined)
+    : undefined
 
   const handleStartCreate = () => {
+    const nextForm = createEmptyAnnouncementForm()
     setEditorMode('create')
     setSelectedId(null)
-    setForm({
-      title: '',
-      content: '',
-      category: 'general',
-      send_email: false,
-      send_sms: false,
-      is_mandatory: false,
-      require_full_read: false,
-    })
+    setForm(nextForm)
+    setBaselineForm(nextForm)
   }
 
   const handleSelectAnnouncement = (id: number) => {
@@ -204,73 +295,85 @@ export default function AdminAnnouncementsPage() {
   const handleCloseEditor = () => {
     setEditorMode('empty')
     setSelectedId(null)
-    setForm({
-      title: '',
-      content: '',
-      category: 'general',
-      send_email: false,
-      send_sms: false,
-      is_mandatory: false,
-      require_full_read: false,
-    })
+    setForm(createEmptyAnnouncementForm())
+    setBaselineForm(null)
   }
 
   const handleSave = () => {
     if (!form.title.trim()) {
-      toast.error(`${t.announcement.announcementTitle} is required`)
+      toast.error(t.announcement.titleRequired)
       return
     }
     if (editorMode === 'create') {
-      createMutation.mutate(form)
+      createMutation.mutate(buildAnnouncementPayload(form))
       return
     }
     if (editorMode === 'edit' && selectedId) {
-      updateMutation.mutate({ id: selectedId, payload: form })
+      updateMutation.mutate({ id: selectedId, payload: buildAnnouncementPayload(form) })
     }
   }
 
   return (
-    <div className="min-h-[calc(100dvh-4rem)] flex flex-col gap-4">
-      <div className="flex items-start justify-between gap-4 shrink-0">
-        <h1 className="text-lg md:text-xl font-bold">
-          {t.admin.announcementManagement}
-        </h1>
+    <div className="flex min-h-[calc(100dvh-4rem)] flex-col gap-4">
+      <PluginSlot slot="admin.announcements.top" context={adminAnnouncementsPluginContext} />
+      <div className="flex shrink-0 flex-col gap-3 md:flex-row md:items-start md:justify-between">
+        <div>
+          <h1 className="text-lg font-bold md:text-xl">{t.admin.announcementManagement}</h1>
+          <p className="mt-1 text-sm text-muted-foreground">{rangeSummary}</p>
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-[420px_1fr] gap-6 flex-1 min-h-0">
-        <Card className="overflow-hidden flex flex-col min-w-0 min-h-0">
+      <div className="grid min-h-0 flex-1 grid-cols-1 gap-6 xl:grid-cols-[420px_1fr]">
+        <Card className="flex min-h-0 min-w-0 flex-col overflow-hidden">
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between gap-3">
-              <CardTitle className="text-base">
-                {t.announcement.announcements}
-              </CardTitle>
+              <CardTitle className="text-base">{t.announcement.announcements}</CardTitle>
               <Button size="sm" onClick={handleStartCreate}>
                 <Plus className="mr-1.5 h-4 w-4" />
                 {t.announcement.addAnnouncement}
               </Button>
             </div>
           </CardHeader>
-          <CardContent className="p-0 flex-1 min-h-0">
+          <CardContent className="min-h-0 flex-1 p-0">
             <ScrollArea className="h-full">
               <div className="p-3">
                 {isLoading ? (
                   <div className="flex items-center justify-center py-12">
                     <Loader2 className="h-6 w-6 animate-spin" />
                   </div>
+                ) : announcementsLoadFailed && announcements.length === 0 ? (
+                  <div className="space-y-4 py-12 text-center">
+                    <Megaphone className="mx-auto h-10 w-10 text-muted-foreground" />
+                    <div className="space-y-1">
+                      <p className="text-sm font-medium">{t.announcement.loadFailed}</p>
+                      <p className="text-xs text-muted-foreground">{t.announcement.loadFailedDesc}</p>
+                    </div>
+                    <div className="flex justify-center">
+                      <Button size="sm" variant="outline" onClick={() => refetchAnnouncements()}>
+                        {t.common.refresh}
+                      </Button>
+                    </div>
+                    <PluginSlot
+                      slot="admin.announcements.load_failed"
+                      context={{ ...adminAnnouncementsPluginContext, section: 'list_state' }}
+                    />
+                  </div>
                 ) : announcements.length === 0 ? (
-                  <div className="text-center py-12 text-muted-foreground">
-                    <Megaphone className="h-10 w-10 mx-auto mb-3 opacity-50" />
+                  <div className="py-12 text-center text-muted-foreground">
+                    <Megaphone className="mx-auto mb-3 h-10 w-10 opacity-50" />
                     {t.announcement.noAnnouncements}
+                    <PluginSlot
+                      slot="admin.announcements.empty"
+                      context={{ ...adminAnnouncementsPluginContext, section: 'list_state' }}
+                    />
                   </div>
                 ) : (
                   <div className="space-y-1">
                     {announcements.map((item) => (
                       <div
                         key={item.id}
-                        className={`group flex items-center justify-between gap-3 rounded-md px-3 py-2.5 hover:bg-muted/50 transition-colors ${
-                          editorMode === 'edit' && selectedId === item.id
-                            ? 'bg-muted/60'
-                            : ''
+                        className={`group flex items-center justify-between gap-3 rounded-md px-3 py-2.5 transition-colors hover:bg-muted/50 ${
+                          editorMode === 'edit' && selectedId === item.id ? 'bg-muted/60' : ''
                         }`}
                         role="button"
                         tabIndex={0}
@@ -281,14 +384,9 @@ export default function AdminAnnouncementsPage() {
                           }
                         }}
                       >
-                        <div className="flex-1 min-w-0">
-                          <div className="font-medium truncate">{item.title}</div>
-                          <div className="flex items-center gap-2 mt-1">
-                            {item.category === 'marketing' && (
-                              <Badge variant="outline" className="text-xs">
-                                {t.announcement.categoryMarketing}
-                              </Badge>
-                            )}
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate font-medium">{item.title}</div>
+                          <div className="mt-1 flex items-center gap-2">
                             {item.is_mandatory && (
                               <Badge variant="destructive" className="text-xs">
                                 {t.announcement.mandatory}
@@ -299,22 +397,17 @@ export default function AdminAnnouncementsPage() {
                                 {t.announcement.requireFullRead}
                               </Badge>
                             )}
-                            {item.send_email && (
-                              <Badge variant="secondary" className="text-xs">
-                                {t.announcement.sendEmail}
-                              </Badge>
-                            )}
-                            {item.send_sms && (
-                              <Badge variant="secondary" className="text-xs">
-                                {t.announcement.sendSms}
-                              </Badge>
-                            )}
                             <span className="text-xs text-muted-foreground">
                               {new Date(item.created_at).toLocaleDateString()}
                             </span>
                           </div>
+                          {item.content ? (
+                            <div className="mt-1 truncate text-xs text-muted-foreground">
+                              {item.content.replace(/\s+/g, ' ').trim()}
+                            </div>
+                          ) : null}
                         </div>
-                        <div className="flex items-center gap-1 shrink-0">
+                        <div className="flex shrink-0 items-center gap-1">
                           <Button
                             size="sm"
                             variant="ghost"
@@ -338,6 +431,12 @@ export default function AdminAnnouncementsPage() {
                           >
                             <Trash2 className="h-4 w-4" />
                           </Button>
+                          <PluginExtensionList
+                            extensions={
+                              adminAnnouncementRowActionExtensions[String(item.id)] || []
+                            }
+                            display="inline"
+                          />
                         </div>
                       </div>
                     ))}
@@ -345,7 +444,7 @@ export default function AdminAnnouncementsPage() {
                 )}
 
                 {totalPages > 1 && (
-                  <div className="flex items-center justify-between gap-2 mt-4">
+                  <div className="mt-4 flex items-center justify-between gap-2">
                     <Button
                       variant="outline"
                       size="sm"
@@ -374,20 +473,22 @@ export default function AdminAnnouncementsPage() {
           </CardContent>
         </Card>
 
-        <Card className="overflow-hidden flex flex-col min-w-0 min-h-0">
+        <Card className="flex min-h-0 min-w-0 flex-col overflow-hidden">
           {editorMode === 'empty' ? (
-            <CardContent className="p-0 flex-1">
-              <div className="flex flex-col items-center justify-center text-center px-4 py-10 h-full">
-                <div className="h-12 w-12 rounded-xl bg-muted flex items-center justify-center mb-4">
+            <CardContent className="flex-1 p-0">
+              <div className="flex h-full flex-col items-center justify-center px-4 py-10 text-center">
+                <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-muted">
                   <FileText className="h-6 w-6 text-muted-foreground" />
                 </div>
-                <div className="text-base font-semibold">
-                  {t.announcement.announcements}
-                </div>
-                <div className="text-sm text-muted-foreground mt-1">
+                <div className="text-base font-semibold">{t.announcement.announcements}</div>
+                <div className="mt-1 text-sm text-muted-foreground">
                   {t.announcement.announcementDetail}
                 </div>
-                <div className="mt-6">
+                <div className="mt-6 space-y-3">
+                  <PluginSlot
+                    slot="admin.announcements.editor.empty"
+                    context={{ ...adminAnnouncementsPluginContext, section: 'editor_state' }}
+                  />
                   <Button onClick={handleStartCreate}>
                     <Plus className="mr-1.5 h-4 w-4" />
                     {t.announcement.addAnnouncement}
@@ -397,37 +498,47 @@ export default function AdminAnnouncementsPage() {
             </CardContent>
           ) : (
             <>
-              <CardHeader className="pb-3 min-w-0">
+              <CardHeader className="min-w-0 pb-3">
                 <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <CardTitle className="text-base">
-                      {editorMode === 'create'
-                        ? t.announcement.addAnnouncement
-                        : t.announcement.editAnnouncement}
-                    </CardTitle>
-                    <div className="text-xs text-muted-foreground mt-1">
-                      {editorMode === 'edit' && selectedId
-                        ? `#${selectedId}`
-                        : t.announcement.announcementDetail}
+                    <div className="space-y-2">
+                      <CardTitle className="text-base">
+                        {editorMode === 'create'
+                          ? t.announcement.addAnnouncement
+                          : t.announcement.editAnnouncement}
+                      </CardTitle>
+                      <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+                      {editorMode === 'edit' ? (
+                        <>
+                          {selectedId ? <span>#{selectedId}</span> : null}
+                          <span>
+                            {t.announcement.createdAt}:{' '}
+                            {formatAnnouncementDateTime(selectedAnnouncement?.created_at)}
+                          </span>
+                          <span>
+                            {t.announcement.updatedAt}:{' '}
+                            {formatAnnouncementDateTime(selectedAnnouncement?.updated_at)}
+                          </span>
+                          {hasUnsavedChanges ? <span>{t.announcement.unsavedChanges}</span> : null}
+                        </>
+                      ) : (
+                        <>
+                          <span>{t.announcement.editorHint}</span>
+                          {hasUnsavedChanges ? <span>{t.announcement.unsavedChanges}</span> : null}
+                        </>
+                      )}
+                     </div>
+                      <PluginSlot
+                        slot="admin.announcements.editor.meta.after"
+                        context={{ ...adminAnnouncementsPluginContext, section: 'editor_meta' }}
+                      />
                     </div>
-                  </div>
                   <div className="flex items-center gap-2">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={handleCloseEditor}
-                    >
+                    <Button type="button" variant="outline" size="sm" onClick={handleCloseEditor}>
                       <X className="mr-1.5 h-4 w-4" />
                       {t.common.cancel}
                     </Button>
                     {!isEditorLoading ? (
-                      <Button
-                        type="button"
-                        size="sm"
-                        disabled={isSaving}
-                        onClick={handleSave}
-                      >
+                      <Button type="button" size="sm" disabled={isSaving} onClick={handleSave}>
                         {isSaving ? (
                           <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
                         ) : (
@@ -439,100 +550,84 @@ export default function AdminAnnouncementsPage() {
                   </div>
                 </div>
               </CardHeader>
-              <CardContent className="p-0 flex-1 min-h-0 min-w-0">
+              <CardContent className="min-h-0 min-w-0 flex-1 p-0">
                 {isEditorLoading ? (
-                  <div className="h-full flex items-center justify-center">
+                  <div className="flex h-full items-center justify-center">
                     <Loader2 className="h-8 w-8 animate-spin" />
                   </div>
+                ) : detailLoadFailed && !selectedAnnouncement ? (
+                  <div className="flex h-full flex-col items-center justify-center gap-4 px-4 py-10 text-center">
+                    <Megaphone className="h-10 w-10 text-muted-foreground" />
+                    <div className="space-y-1">
+                      <p className="text-sm font-medium">{t.announcement.detailLoadFailed}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {t.announcement.detailLoadFailedDesc}
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap justify-center gap-2">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => refetchAnnouncementDetail()}
+                      >
+                        {t.common.refresh}
+                      </Button>
+                      <Button type="button" size="sm" variant="ghost" onClick={handleCloseEditor}>
+                        {t.common.cancel}
+                      </Button>
+                    </div>
+                  </div>
+                ) : editorNotFound ? (
+                  <div className="flex h-full flex-col items-center justify-center gap-4 px-4 py-10 text-center">
+                    <FileText className="h-10 w-10 text-muted-foreground" />
+                    <div className="space-y-1">
+                      <p className="text-sm font-medium">{t.announcement.announcementNotFound}</p>
+                      <p className="text-xs text-muted-foreground">{t.announcement.announcementDetail}</p>
+                    </div>
+                    <Button type="button" size="sm" variant="outline" onClick={handleCloseEditor}>
+                      {t.common.back}
+                    </Button>
+                  </div>
                 ) : (
-                  <div className="p-4 flex flex-col gap-4 h-full min-h-0 min-w-0">
+                  <div className="flex h-full min-h-0 min-w-0 flex-col gap-4 p-4">
                     <div className="space-y-2">
                       <Label htmlFor="announcementTitle">
-                        {t.announcement.announcementTitle}{' '}
-                        <span className="text-red-500">*</span>
+                        {t.announcement.announcementTitle} <span className="text-red-500">*</span>
                       </Label>
                       <Input
                         id="announcementTitle"
                         value={form.title}
-                        onChange={(e) =>
-                          setForm({ ...form, title: e.target.value })
-                        }
+                        onChange={(e) => setForm({ ...form, title: e.target.value })}
                         placeholder={t.announcement.announcementTitlePlaceholder}
                         required
                       />
                     </div>
 
-                    <div className="space-y-2">
-                      <Label>{t.announcement.category}</Label>
-                      <Select
-                        value={form.category}
-                        onValueChange={(value: 'general' | 'marketing') =>
-                          setForm((prev) => ({ ...prev, category: value }))
-                        }
-                      >
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="general">{t.announcement.categoryGeneral}</SelectItem>
-                          <SelectItem value="marketing">{t.announcement.categoryMarketing}</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-
-                    <div className="flex items-center justify-between rounded-lg border p-3">
-                      <div className="space-y-0.5">
-                        <Label>{t.announcement.sendEmail}</Label>
-                        <p className="text-xs text-muted-foreground">
-                          {t.announcement.sendEmailHint}
-                        </p>
-                      </div>
-                      <Switch
-                        checked={form.send_email}
-                        onCheckedChange={(checked) =>
-                          setForm((prev) => ({ ...prev, send_email: checked }))
-                        }
-                      />
-                    </div>
-
-                    <div className="flex items-center justify-between rounded-lg border p-3">
-                      <div className="space-y-0.5">
-                        <Label>{t.announcement.sendSms}</Label>
-                        <p className="text-xs text-muted-foreground">
-                          {t.announcement.sendSmsHint}
-                        </p>
-                      </div>
-                      <Switch
-                        checked={form.send_sms}
-                        onCheckedChange={(checked) =>
-                          setForm((prev) => ({ ...prev, send_sms: checked }))
-                        }
-                      />
-                    </div>
-
-                    <div className="flex items-center justify-between rounded-lg border p-3">
-                      <div className="space-y-0.5">
-                        <Label>{t.announcement.mandatory}</Label>
-                        <p className="text-xs text-muted-foreground">
-                          {t.announcement.mandatoryHint}
-                        </p>
-                      </div>
-                      <Switch
-                        checked={form.is_mandatory}
-                        onCheckedChange={(checked) =>
-                          setForm({
-                            ...form,
-                            is_mandatory: checked,
-                            require_full_read: checked
-                              ? form.require_full_read
-                              : false,
-                          })
-                        }
-                      />
-                    </div>
-
-                    {form.is_mandatory ? (
+                    <div className="grid gap-3 md:grid-cols-2">
                       <div className="flex items-center justify-between rounded-lg border p-3">
+                        <div className="space-y-0.5">
+                          <Label>{t.announcement.mandatory}</Label>
+                          <p className="text-xs text-muted-foreground">
+                            {t.announcement.mandatoryHint}
+                          </p>
+                        </div>
+                        <Switch
+                          checked={form.is_mandatory}
+                          onCheckedChange={(checked) =>
+                            setForm({
+                              ...form,
+                              is_mandatory: checked,
+                              require_full_read: checked ? form.require_full_read : false,
+                            })
+                          }
+                        />
+                      </div>
+                      <div
+                        className={`flex items-center justify-between rounded-lg border p-3 ${
+                          form.is_mandatory ? '' : 'opacity-60'
+                        }`}
+                      >
                         <div className="space-y-0.5">
                           <Label>{t.announcement.requireFullRead}</Label>
                           <p className="text-xs text-muted-foreground">
@@ -541,50 +636,52 @@ export default function AdminAnnouncementsPage() {
                         </div>
                         <Switch
                           checked={form.require_full_read}
+                          disabled={!form.is_mandatory}
                           onCheckedChange={(checked) =>
                             setForm({ ...form, require_full_read: checked })
                           }
                         />
                       </div>
-                    ) : null}
+                    </div>
 
-                    <div className="flex flex-col gap-2 flex-1 min-h-0 min-w-0">
+                    <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
                       <Tabs
                         defaultValue="edit"
-                        className="flex flex-col flex-1 min-h-0 w-full min-w-0"
+                        className="flex min-h-0 w-full min-w-0 flex-1 flex-col"
                       >
-                        <div className="flex items-center justify-between gap-3 mb-2">
-                          <Label>{t.announcement.announcementContent}</Label>
+                        <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
+                          <div className="space-y-1">
+                            <Label>{t.announcement.announcementContent}</Label>
+                            <div className="text-xs text-muted-foreground">
+                              {t.announcement.contentChars.replace(
+                                '{count}',
+                                String(contentCharCount)
+                              )}
+                              {' · '}
+                              {t.announcement.contentLines.replace(
+                                '{count}',
+                                String(contentLineCount)
+                              )}
+                            </div>
+                          </div>
                           <TabsList className="shrink-0">
-                            <TabsTrigger value="edit">
-                              {t.announcement.editTab}
-                            </TabsTrigger>
-                            <TabsTrigger value="preview">
-                              {t.announcement.previewTab}
-                            </TabsTrigger>
+                            <TabsTrigger value="edit">{t.announcement.editTab}</TabsTrigger>
+                            <TabsTrigger value="preview">{t.announcement.previewTab}</TabsTrigger>
                           </TabsList>
                         </div>
 
-                        <div className="flex-1 min-h-0 min-w-0">
-                          <TabsContent
-                            value="edit"
-                            className="mt-0 h-full min-h-0 min-w-0"
-                          >
+                        <div className="min-h-0 min-w-0 flex-1">
+                          <TabsContent value="edit" className="mt-0 h-full min-h-0 min-w-0">
                             <MarkdownEditor
                               value={form.content}
-                              onChange={(v) =>
-                                setForm({ ...form, content: v })
-                              }
+                              onChange={(v) => setForm({ ...form, content: v })}
                               fill
                               className="h-full min-h-0 w-full"
                               placeholder={t.announcement.announcementContent}
                             />
                           </TabsContent>
-                          <TabsContent
-                            value="preview"
-                            className="mt-0 h-full min-h-0 min-w-0"
-                          >
-                            <div className="h-full min-h-0 w-full overflow-auto border rounded-md p-4 bg-background">
+                          <TabsContent value="preview" className="mt-0 h-full min-h-0 min-w-0">
+                            <div className="h-full min-h-0 w-full overflow-auto rounded-md border bg-background p-4">
                               {form.content ? (
                                 <MarkdownMessage
                                   content={form.content}
@@ -609,15 +706,25 @@ export default function AdminAnnouncementsPage() {
         </Card>
       </div>
 
-      <AlertDialog
-        open={deleteId !== null}
-        onOpenChange={() => setDeleteId(null)}
-      >
+      <AlertDialog open={deleteId !== null} onOpenChange={() => setDeleteId(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>{t.admin.confirmDelete}</AlertDialogTitle>
             <AlertDialogDescription>
-              {t.announcement.confirmDelete}
+              <div className="space-y-3">
+                <p>{t.announcement.confirmDelete}</p>
+                {deleteTarget ? (
+                  <div className="rounded-md border border-dashed bg-muted/20 p-3 text-xs text-foreground">
+                    <div className="font-medium">{deleteTarget.title}</div>
+                    <div className="mt-1 text-muted-foreground">
+                      {t.announcement.createdAt}:{' '}
+                      {formatAnnouncementDateTime(deleteTarget.created_at)}
+                      {deleteTarget.is_mandatory ? ` · ${t.announcement.mandatory}` : ''}
+                      {deleteTarget.require_full_read ? ` · ${t.announcement.requireFullRead}` : ''}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

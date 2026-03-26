@@ -1,20 +1,80 @@
 package admin
 
 import (
+	"encoding/json"
+	"log"
+	"strings"
 	"time"
 
 	"auralogic/internal/models"
 	"auralogic/internal/pkg/response"
+	"auralogic/internal/service"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
 
 type LogHandler struct {
-	db *gorm.DB
+	db            *gorm.DB
+	pluginManager *service.PluginManagerService
 }
 
-func NewLogHandler(db *gorm.DB) *LogHandler {
-	return &LogHandler{db: db}
+func NewLogHandler(db *gorm.DB, pluginManager *service.PluginManagerService) *LogHandler {
+	return &LogHandler{
+		db:            db,
+		pluginManager: pluginManager,
+	}
+}
+
+func buildEmailLogRetryHookPayload(emailLog *models.EmailLog) map[string]interface{} {
+	if emailLog == nil {
+		return map[string]interface{}{}
+	}
+
+	return map[string]interface{}{
+		"email_id":      emailLog.ID,
+		"to":            emailLog.ToEmail,
+		"subject":       emailLog.Subject,
+		"event_type":    emailLog.EventType,
+		"order_id":      emailLog.OrderID,
+		"user_id":       emailLog.UserID,
+		"batch_id":      emailLog.BatchID,
+		"status":        emailLog.Status,
+		"error_message": emailLog.ErrorMessage,
+		"retry_count":   emailLog.RetryCount,
+		"expire_at":     emailLog.ExpireAt,
+		"sent_at":       emailLog.SentAt,
+		"created_at":    emailLog.CreatedAt,
+		"updated_at":    emailLog.UpdatedAt,
+	}
+}
+
+func buildEmailLogRetryHookPayloadList(emailLogs []models.EmailLog) []map[string]interface{} {
+	if len(emailLogs) == 0 {
+		return []map[string]interface{}{}
+	}
+
+	items := make([]map[string]interface{}, 0, len(emailLogs))
+	for i := range emailLogs {
+		items = append(items, buildEmailLogRetryHookPayload(&emailLogs[i]))
+	}
+	return items
+}
+
+func decodeRetryEmailIDs(value interface{}) ([]uint, error) {
+	if value == nil {
+		return nil, nil
+	}
+
+	body, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+
+	var ids []uint
+	if err := json.Unmarshal(body, &ids); err != nil {
+		return nil, err
+	}
+	return ids, nil
 }
 
 // ListOperationLogs get操作日志列表
@@ -274,6 +334,61 @@ func (h *LogHandler) RetryFailedEmails(c *gin.Context) {
 		response.BadRequest(c, "Invalid request parameters")
 		return
 	}
+	adminID := getOptionalUserID(c)
+	adminIDValue := uint(0)
+	if adminID != nil {
+		adminIDValue = *adminID
+	}
+	var beforeLogs []models.EmailLog
+	if len(req.EmailIDs) > 0 {
+		if err := h.db.Where("id IN ?", req.EmailIDs).Find(&beforeLogs).Error; err != nil {
+			response.InternalError(c, "Query failed")
+			return
+		}
+	}
+	if h.pluginManager != nil {
+		hookPayload := map[string]interface{}{
+			"email_ids":   req.EmailIDs,
+			"email_count": len(req.EmailIDs),
+			"emails":      buildEmailLogRetryHookPayloadList(beforeLogs),
+			"admin_id":    adminIDValue,
+			"source":      "admin_api",
+		}
+		hookResult, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+			Hook:    "log.email.retry.before",
+			Payload: hookPayload,
+		}, buildAdminHookExecutionContext(c, adminID, map[string]string{
+			"hook_resource": "email_log",
+			"hook_source":   "admin_api",
+			"hook_action":   "retry",
+		}))
+		if hookErr != nil {
+			log.Printf("log.email.retry.before hook execution failed: admin=%d count=%d err=%v", adminIDValue, len(req.EmailIDs), hookErr)
+		} else if hookResult != nil {
+			if hookResult.Blocked {
+				reason := strings.TrimSpace(hookResult.BlockReason)
+				if reason == "" {
+					reason = "Email retry rejected by plugin"
+				}
+				response.BadRequest(c, reason)
+				return
+			}
+			if hookResult.Payload != nil {
+				if rawIDs, exists := hookResult.Payload["email_ids"]; exists {
+					updatedIDs, decodeErr := decodeRetryEmailIDs(rawIDs)
+					if decodeErr != nil {
+						log.Printf("log.email.retry.before email_ids patch ignored: admin=%d err=%v", adminIDValue, decodeErr)
+					} else {
+						req.EmailIDs = updatedIDs
+					}
+				}
+			}
+		}
+	}
+	if len(req.EmailIDs) == 0 {
+		response.BadRequest(c, "No email IDs provided")
+		return
+	}
 
 	// Update状态为待发送，重置过期时间
 	newExpire := time.Now().Add(30 * time.Minute)
@@ -289,6 +404,35 @@ func (h *LogHandler) RetryFailedEmails(c *gin.Context) {
 	if result.Error != nil {
 		response.InternalError(c, "Retry failed")
 		return
+	}
+
+	if h.pluginManager != nil {
+		var afterLogs []models.EmailLog
+		if err := h.db.Where("id IN ?", req.EmailIDs).Find(&afterLogs).Error; err != nil {
+			log.Printf("log.email.retry.after reload failed: admin=%d count=%d err=%v", adminIDValue, len(req.EmailIDs), err)
+		}
+		afterPayload := map[string]interface{}{
+			"email_ids":     req.EmailIDs,
+			"email_count":   len(req.EmailIDs),
+			"affected":      result.RowsAffected,
+			"new_expire_at": newExpire,
+			"emails":        buildEmailLogRetryHookPayloadList(afterLogs),
+			"admin_id":      adminIDValue,
+			"source":        "admin_api",
+		}
+		go func(execCtx *service.ExecutionContext, payload map[string]interface{}, affected int64) {
+			_, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+				Hook:    "log.email.retry.after",
+				Payload: payload,
+			}, execCtx)
+			if hookErr != nil {
+				log.Printf("log.email.retry.after hook execution failed: admin=%d affected=%d err=%v", adminIDValue, affected, hookErr)
+			}
+		}(cloneAdminHookExecutionContext(buildAdminHookExecutionContext(c, adminID, map[string]string{
+			"hook_resource": "email_log",
+			"hook_source":   "admin_api",
+			"hook_action":   "retry",
+		})), afterPayload, result.RowsAffected)
 	}
 
 	response.Success(c, gin.H{

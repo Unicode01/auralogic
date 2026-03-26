@@ -3,30 +3,35 @@ package user
 import (
 	"encoding/json"
 	"fmt"
+	"log"
+	"mime/multipart"
+	"net/textproto"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 	"auralogic/internal/config"
 	"auralogic/internal/middleware"
 	"auralogic/internal/models"
 	"auralogic/internal/pkg/response"
+	"auralogic/internal/pkg/ticketbiz"
 	"auralogic/internal/pkg/validator"
 	"auralogic/internal/service"
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
 type TicketHandler struct {
-	db           *gorm.DB
-	emailService *service.EmailService
+	db            *gorm.DB
+	emailService  *service.EmailService
+	pluginManager *service.PluginManagerService
 }
 
-func NewTicketHandler(db *gorm.DB, emailService *service.EmailService) *TicketHandler {
-	return &TicketHandler{db: db, emailService: emailService}
+func NewTicketHandler(db *gorm.DB, emailService *service.EmailService, pluginManager *service.PluginManagerService) *TicketHandler {
+	return &TicketHandler{db: db, emailService: emailService, pluginManager: pluginManager}
 }
 
 // generateTicketNo 生成工单号
@@ -43,6 +48,15 @@ type CreateTicketRequest struct {
 	OrderID  *uint  `json:"order_id"` // 可选绑定订单
 }
 
+type ticketAutoReplyPayload struct {
+	Enabled        *bool                  `json:"enabled"`
+	Content        string                 `json:"content"`
+	ContentType    string                 `json:"content_type"`
+	SenderName     string                 `json:"sender_name"`
+	Metadata       map[string]interface{} `json:"metadata"`
+	MarkProcessing bool                   `json:"mark_processing"`
+}
+
 // CreateTicket 创建工单
 func (h *TicketHandler) CreateTicket(c *gin.Context) {
 	var req CreateTicketRequest
@@ -53,9 +67,54 @@ func (h *TicketHandler) CreateTicket(c *gin.Context) {
 
 	userID := middleware.MustGetUserID(c)
 
+	if h.pluginManager != nil {
+		originalReq := req
+		beforePayload := map[string]interface{}{
+			"user_id":   userID,
+			"subject":   req.Subject,
+			"content":   req.Content,
+			"category":  req.Category,
+			"priority":  req.Priority,
+			"source":    "user_api",
+			"hook_time": time.Now().Format(time.RFC3339),
+		}
+		if req.OrderID != nil && *req.OrderID > 0 {
+			beforePayload["order_id"] = *req.OrderID
+		}
+
+		hookResult, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+			Hook:    "ticket.create.before",
+			Payload: beforePayload,
+		}, h.buildTicketHookExecutionContext(c, userID, 0))
+		if hookErr != nil {
+			log.Printf("ticket.create.before hook execution failed: user=%d err=%v", userID, hookErr)
+		} else if hookResult != nil {
+			if hookResult.Blocked {
+				reason := strings.TrimSpace(hookResult.BlockReason)
+				if reason == "" {
+					reason = "Ticket creation rejected by plugin"
+				}
+				response.BadRequest(c, reason)
+				return
+			}
+			if hookResult.Payload != nil {
+				if applyErr := applyCreateTicketHookPayload(&req, hookResult.Payload); applyErr != nil {
+					log.Printf("ticket.create.before payload apply failed, fallback to original request: user=%d err=%v", userID, applyErr)
+					req = originalReq
+				}
+			}
+		}
+	}
+
 	priority := models.TicketPriorityNormal
 	if req.Priority != "" {
-		priority = models.TicketPriority(req.Priority)
+		parsedPriority, ok := ticketbiz.ParsePriority(req.Priority)
+		if !ok {
+			respondUserBizError(c, ticketbiz.PriorityInvalid())
+			return
+		}
+		priority = parsedPriority
+		req.Priority = string(parsedPriority)
 	}
 
 	// 清理内容，防止XSS
@@ -65,7 +124,7 @@ func (h *TicketHandler) CreateTicket(c *gin.Context) {
 	// 检查内容长度限制
 	cfg := config.GetConfig()
 	if cfg.Ticket.MaxContentLength > 0 && len([]rune(sanitizedContent)) > cfg.Ticket.MaxContentLength {
-		response.BadRequest(c, fmt.Sprintf("Content cannot exceed %d characters", cfg.Ticket.MaxContentLength))
+		respondUserBizError(c, ticketbiz.ContentTooLong(cfg.Ticket.MaxContentLength))
 		return
 	}
 
@@ -150,12 +209,302 @@ func (h *TicketHandler) CreateTicket(c *gin.Context) {
 		}
 	}
 
+	if h.pluginManager != nil {
+		hookPayload := map[string]interface{}{
+			"ticket_id":   ticket.ID,
+			"ticket_no":   ticket.TicketNo,
+			"user_id":     userID,
+			"subject":     ticket.Subject,
+			"content":     ticket.Content,
+			"category":    ticket.Category,
+			"priority":    string(ticket.Priority),
+			"status":      string(ticket.Status),
+			"created_at":  ticket.CreatedAt.Format(time.RFC3339),
+			"user_name":   user.Name,
+			"user_email":  user.Email,
+			"user_locale": user.Locale,
+		}
+		if req.OrderID != nil && *req.OrderID > 0 {
+			hookPayload["order_id"] = *req.OrderID
+		}
+
+		hookResult, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+			Hook:    "ticket.create.after",
+			Payload: hookPayload,
+		}, h.buildTicketHookExecutionContext(c, userID, ticket.ID))
+
+		if hookErr != nil {
+			log.Printf("ticket.create.after hook execution failed: user=%d ticket=%d err=%v", userID, ticket.ID, hookErr)
+		} else if hookResult != nil && hookResult.Payload != nil {
+			if applyErr := h.applyTicketAutoReplyPayload(ticket, hookResult.Payload); applyErr != nil {
+				log.Printf("ticket.create.after payload apply failed: user=%d ticket=%d err=%v", userID, ticket.ID, applyErr)
+			}
+		}
+	}
+
+	if err := h.db.First(ticket, ticket.ID).Error; err != nil {
+		response.InternalError(c, "Failed to load ticket")
+		return
+	}
+
 	response.Success(c, ticket)
 
 	// 发送工单创建通知邮件（通知管理员）
 	if h.emailService != nil {
 		go h.emailService.SendTicketCreatedEmail(ticket, user.Email)
 	}
+}
+
+func applyCreateTicketHookPayload(req *CreateTicketRequest, payload map[string]interface{}) error {
+	if req == nil || payload == nil {
+		return nil
+	}
+
+	if raw, exists := payload["subject"]; exists {
+		subject, err := ticketValueToOptionalString(raw)
+		if err != nil {
+			return fmt.Errorf("decode subject: %w", err)
+		}
+		req.Subject = subject
+	}
+	if raw, exists := payload["content"]; exists {
+		content, err := ticketValueToOptionalString(raw)
+		if err != nil {
+			return fmt.Errorf("decode content: %w", err)
+		}
+		req.Content = content
+	}
+	if raw, exists := payload["category"]; exists {
+		category, err := ticketValueToOptionalString(raw)
+		if err != nil {
+			return fmt.Errorf("decode category: %w", err)
+		}
+		req.Category = category
+	}
+	if raw, exists := payload["priority"]; exists {
+		priority, err := ticketValueToOptionalString(raw)
+		if err != nil {
+			return fmt.Errorf("decode priority: %w", err)
+		}
+		req.Priority = priority
+	}
+	if raw, exists := payload["order_id"]; exists {
+		orderID, err := ticketValueToOptionalUint(raw)
+		if err != nil {
+			return fmt.Errorf("decode order_id: %w", err)
+		}
+		req.OrderID = orderID
+	}
+
+	return nil
+}
+
+func (h *TicketHandler) buildTicketHookExecutionContext(c *gin.Context, userID uint, ticketID uint) *service.ExecutionContext {
+	if c == nil {
+		return nil
+	}
+
+	metadata := map[string]string{
+		"request_path":    c.Request.URL.Path,
+		"route":           c.FullPath(),
+		"method":          c.Request.Method,
+		"client_ip":       c.ClientIP(),
+		"user_agent":      c.GetHeader("User-Agent"),
+		"accept_language": c.GetHeader("Accept-Language"),
+		"ticket_id":       strconv.FormatUint(uint64(ticketID), 10),
+	}
+	sessionID := strings.TrimSpace(c.GetHeader("X-Session-ID"))
+	return &service.ExecutionContext{
+		UserID:         &userID,
+		OrderID:        nil,
+		SessionID:      sessionID,
+		Metadata:       metadata,
+		RequestContext: c.Request.Context(),
+	}
+}
+
+func ticketValueToOptionalString(value interface{}) (string, error) {
+	if value == nil {
+		return "", nil
+	}
+	str, ok := value.(string)
+	if !ok {
+		return "", fmt.Errorf("value must be string")
+	}
+	return str, nil
+}
+
+func ticketValueToOptionalUint(value interface{}) (*uint, error) {
+	if value == nil {
+		return nil, nil
+	}
+
+	switch typed := value.(type) {
+	case uint:
+		if typed == 0 {
+			return nil, nil
+		}
+		out := typed
+		return &out, nil
+	case uint64:
+		if typed == 0 {
+			return nil, nil
+		}
+		out := uint(typed)
+		return &out, nil
+	case int:
+		if typed <= 0 {
+			return nil, nil
+		}
+		out := uint(typed)
+		return &out, nil
+	case int64:
+		if typed <= 0 {
+			return nil, nil
+		}
+		out := uint(typed)
+		return &out, nil
+	case float64:
+		if typed <= 0 {
+			return nil, nil
+		}
+		out := uint(typed)
+		if float64(out) != typed {
+			return nil, fmt.Errorf("value must be an integer")
+		}
+		return &out, nil
+	case string:
+		trimmed := strings.TrimSpace(typed)
+		if trimmed == "" || trimmed == "0" {
+			return nil, nil
+		}
+		parsed, err := strconv.ParseUint(trimmed, 10, 32)
+		if err != nil {
+			return nil, fmt.Errorf("invalid uint string")
+		}
+		out := uint(parsed)
+		return &out, nil
+	default:
+		return nil, fmt.Errorf("value must be uint")
+	}
+}
+
+func applyTicketAttachmentUploadHookPayload(file *multipart.FileHeader, payload map[string]interface{}) error {
+	if file == nil || payload == nil {
+		return nil
+	}
+	if raw, exists := payload["filename"]; exists {
+		filename, err := ticketValueToOptionalString(raw)
+		if err != nil {
+			return fmt.Errorf("decode filename: %w", err)
+		}
+		normalized := strings.TrimSpace(filepath.Base(filename))
+		if normalized == "" {
+			return fmt.Errorf("filename cannot be empty")
+		}
+		file.Filename = normalized
+	}
+	if raw, exists := payload["content_type"]; exists {
+		contentType, err := ticketValueToOptionalString(raw)
+		if err != nil {
+			return fmt.Errorf("decode content_type: %w", err)
+		}
+		if file.Header == nil {
+			file.Header = make(textproto.MIMEHeader)
+		}
+		normalized := strings.TrimSpace(contentType)
+		if normalized == "" {
+			file.Header.Del("Content-Type")
+		} else {
+			file.Header.Set("Content-Type", normalized)
+		}
+	}
+	return nil
+}
+
+func (h *TicketHandler) applyTicketAutoReplyPayload(ticket *models.Ticket, payload map[string]interface{}) error {
+	if ticket == nil || payload == nil {
+		return nil
+	}
+
+	raw, exists := payload["auto_reply"]
+	if !exists {
+		raw, exists = payload["ticket_auto_reply"]
+	}
+	if !exists || raw == nil {
+		return nil
+	}
+
+	body, err := json.Marshal(raw)
+	if err != nil {
+		return fmt.Errorf("encode auto_reply failed: %w", err)
+	}
+
+	var reply ticketAutoReplyPayload
+	if err := json.Unmarshal(body, &reply); err != nil {
+		return fmt.Errorf("decode auto_reply failed: %w", err)
+	}
+
+	if reply.Enabled != nil && !*reply.Enabled {
+		return nil
+	}
+
+	content := strings.TrimSpace(reply.Content)
+	if content == "" {
+		return nil
+	}
+
+	contentType := strings.TrimSpace(reply.ContentType)
+	if contentType == "" {
+		contentType = "text"
+	}
+
+	senderName := strings.TrimSpace(reply.SenderName)
+	if senderName == "" {
+		senderName = "System"
+	}
+
+	var metadata models.JSON
+	if len(reply.Metadata) > 0 {
+		metaBody, metaErr := json.Marshal(reply.Metadata)
+		if metaErr != nil {
+			return fmt.Errorf("encode auto_reply metadata failed: %w", metaErr)
+		}
+		metadata = models.JSON(metaBody)
+	}
+
+	now := time.Now()
+	preview := truncateString(content, 200)
+
+	return h.db.Transaction(func(tx *gorm.DB) error {
+		message := &models.TicketMessage{
+			TicketID:      ticket.ID,
+			SenderType:    "admin",
+			SenderID:      0,
+			SenderName:    senderName,
+			Content:       content,
+			ContentType:   contentType,
+			Metadata:      metadata,
+			IsReadByUser:  false,
+			IsReadByAdmin: true,
+		}
+		if err := tx.Create(message).Error; err != nil {
+			return err
+		}
+
+		updates := map[string]interface{}{
+			"unread_count_user":    gorm.Expr("unread_count_user + 1"),
+			"last_message_at":      now,
+			"last_message_preview": preview,
+			"last_message_by":      "admin",
+		}
+		if reply.MarkProcessing {
+			updates["status"] = models.TicketStatusProcessing
+			updates["closed_at"] = nil
+		}
+
+		return tx.Model(&models.Ticket{}).Where("id = ?", ticket.ID).Updates(updates).Error
+	})
 }
 
 // ListTickets 获取用户工单列表
@@ -213,6 +562,25 @@ func (h *TicketHandler) GetTicket(c *gin.Context) {
 	h.db.Model(&ticket).Update("unread_count_user", 0)
 	h.db.Model(&models.TicketMessage{}).Where("ticket_id = ? AND sender_type = ?", ticketID, "admin").Update("is_read_by_user", true)
 
+	if h.pluginManager != nil {
+		hookPayload := map[string]interface{}{
+			"ticket_id": ticket.ID,
+			"ticket_no": ticket.TicketNo,
+			"user_id":   userID,
+			"status":    ticket.Status,
+			"source":    "user_api",
+		}
+		go func(execCtx *service.ExecutionContext, payload map[string]interface{}, uid uint, tid uint) {
+			_, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+				Hook:    "ticket.message.read.user.after",
+				Payload: payload,
+			}, execCtx)
+			if hookErr != nil {
+				log.Printf("ticket.message.read.user.after hook execution failed: user=%d ticket=%d err=%v", uid, tid, hookErr)
+			}
+		}(h.buildTicketHookExecutionContext(c, userID, ticket.ID), hookPayload, userID, ticket.ID)
+	}
+
 	response.Success(c, ticket)
 }
 
@@ -244,6 +612,27 @@ func (h *TicketHandler) GetTicketMessages(c *gin.Context) {
 	if err := h.db.Where("ticket_id = ?", ticketID).Order("created_at ASC").Find(&messages).Error; err != nil {
 		response.InternalError(c, "Query failed")
 		return
+	}
+
+	if h.pluginManager != nil {
+		hookPayload := map[string]interface{}{
+			"ticket_id":      ticket.ID,
+			"ticket_no":      ticket.TicketNo,
+			"user_id":        userID,
+			"status":         ticket.Status,
+			"message_count":  len(messages),
+			"unread_to_user": 0,
+			"source":         "user_api",
+		}
+		go func(execCtx *service.ExecutionContext, payload map[string]interface{}, uid uint, tid uint) {
+			_, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+				Hook:    "ticket.message.read.user.after",
+				Payload: payload,
+			}, execCtx)
+			if hookErr != nil {
+				log.Printf("ticket.message.read.user.after hook execution failed: user=%d ticket=%d err=%v", uid, tid, hookErr)
+			}
+		}(h.buildTicketHookExecutionContext(c, userID, ticket.ID), hookPayload, userID, ticket.ID)
 	}
 
 	response.Success(c, messages)
@@ -282,8 +671,45 @@ func (h *TicketHandler) SendMessage(c *gin.Context) {
 	}
 
 	if ticket.Status == models.TicketStatusClosed {
-		response.BadRequest(c, "Ticket is closed, cannot send messages")
+		respondUserBizError(c, ticketbiz.ClosedCannotSend())
 		return
+	}
+
+	hookExecCtx := h.buildTicketHookExecutionContext(c, userID, ticket.ID)
+	if h.pluginManager != nil {
+		originalReq := req
+		hookPayload := map[string]interface{}{
+			"ticket_id":    ticket.ID,
+			"ticket_no":    ticket.TicketNo,
+			"user_id":      userID,
+			"status":       ticket.Status,
+			"content":      req.Content,
+			"content_type": req.ContentType,
+			"source":       "user_api",
+		}
+
+		hookResult, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+			Hook:    "ticket.message.user.before",
+			Payload: hookPayload,
+		}, hookExecCtx)
+		if hookErr != nil {
+			log.Printf("ticket.message.user.before hook execution failed: user=%d ticket=%d err=%v", userID, ticket.ID, hookErr)
+		} else if hookResult != nil {
+			if hookResult.Blocked {
+				reason := strings.TrimSpace(hookResult.BlockReason)
+				if reason == "" {
+					reason = "Ticket message rejected by plugin"
+				}
+				response.BadRequest(c, reason)
+				return
+			}
+			if hookResult.Payload != nil {
+				if applyErr := applyUserTicketMessageHookPayload(&req, hookResult.Payload); applyErr != nil {
+					log.Printf("ticket.message.user.before payload apply failed, fallback to original request: user=%d ticket=%d err=%v", userID, ticket.ID, applyErr)
+					req = originalReq
+				}
+			}
+		}
 	}
 
 	var user models.User
@@ -300,7 +726,7 @@ func (h *TicketHandler) SendMessage(c *gin.Context) {
 	// 检查内容长度限制
 	cfg := config.GetConfig()
 	if cfg.Ticket.MaxContentLength > 0 && len([]rune(sanitizedContent)) > cfg.Ticket.MaxContentLength {
-		response.BadRequest(c, fmt.Sprintf("Message cannot exceed %d characters", cfg.Ticket.MaxContentLength))
+		respondUserBizError(c, ticketbiz.ContentTooLong(cfg.Ticket.MaxContentLength))
 		return
 	}
 
@@ -330,6 +756,29 @@ func (h *TicketHandler) SendMessage(c *gin.Context) {
 		"status":               models.TicketStatusOpen, // 用户回复后重新打开工单
 	})
 
+	if h.pluginManager != nil {
+		afterPayload := map[string]interface{}{
+			"ticket_id":    ticket.ID,
+			"ticket_no":    ticket.TicketNo,
+			"message_id":   message.ID,
+			"user_id":      userID,
+			"content":      sanitizedContent,
+			"content_type": contentType,
+			"status":       models.TicketStatusOpen,
+			"source":       "user_api",
+			"created_at":   message.CreatedAt.Format(time.RFC3339),
+		}
+		go func(execCtx *service.ExecutionContext, payload map[string]interface{}, uid uint, tid uint) {
+			_, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+				Hook:    "ticket.message.user.after",
+				Payload: payload,
+			}, execCtx)
+			if hookErr != nil {
+				log.Printf("ticket.message.user.after hook execution failed: user=%d ticket=%d err=%v", uid, tid, hookErr)
+			}
+		}(hookExecCtx, afterPayload, userID, ticket.ID)
+	}
+
 	response.Success(c, message)
 
 	// 发送用户回复通知邮件（通知管理员）
@@ -338,9 +787,30 @@ func (h *TicketHandler) SendMessage(c *gin.Context) {
 	}
 }
 
+func applyUserTicketMessageHookPayload(req *SendMessageRequest, payload map[string]interface{}) error {
+	if req == nil || payload == nil {
+		return nil
+	}
+	if raw, exists := payload["content"]; exists {
+		content, err := ticketValueToOptionalString(raw)
+		if err != nil {
+			return fmt.Errorf("decode content: %w", err)
+		}
+		req.Content = content
+	}
+	if raw, exists := payload["content_type"]; exists {
+		contentType, err := ticketValueToOptionalString(raw)
+		if err != nil {
+			return fmt.Errorf("decode content_type: %w", err)
+		}
+		req.ContentType = contentType
+	}
+	return nil
+}
+
 // UpdateTicketStatusRequest 更新工单状态请求
 type UpdateTicketStatusRequest struct {
-	Status string `json:"status" binding:"required,oneof=open resolved closed"`
+	Status string `json:"status" binding:"required"`
 }
 
 // UpdateTicketStatus 更新工单状态（用户只能关闭或重新打开）
@@ -368,12 +838,54 @@ func (h *TicketHandler) UpdateTicketStatus(c *gin.Context) {
 		response.Forbidden(c, "No permission to operate this ticket")
 		return
 	}
+	beforeStatus := ticket.Status
+	hookExecCtx := h.buildTicketHookExecutionContext(c, userID, ticket.ID)
+
+	if h.pluginManager != nil {
+		originalReq := req
+		hookPayload := map[string]interface{}{
+			"ticket_id":     ticket.ID,
+			"ticket_no":     ticket.TicketNo,
+			"user_id":       userID,
+			"status_before": ticket.Status,
+			"status_after":  req.Status,
+			"source":        "user_api",
+		}
+		hookResult, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+			Hook:    "ticket.status.user.before",
+			Payload: hookPayload,
+		}, hookExecCtx)
+		if hookErr != nil {
+			log.Printf("ticket.status.user.before hook execution failed: user=%d ticket=%d err=%v", userID, ticket.ID, hookErr)
+		} else if hookResult != nil {
+			if hookResult.Blocked {
+				reason := strings.TrimSpace(hookResult.BlockReason)
+				if reason == "" {
+					reason = "Ticket status update rejected by plugin"
+				}
+				response.BadRequest(c, reason)
+				return
+			}
+			if hookResult.Payload != nil {
+				if applyErr := applyUserTicketStatusHookPayload(&req, hookResult.Payload); applyErr != nil {
+					log.Printf("ticket.status.user.before payload apply failed, fallback to original request: user=%d ticket=%d err=%v", userID, ticket.ID, applyErr)
+					req = originalReq
+				}
+			}
+		}
+	}
+	status, ok := ticketbiz.ParseStatus(req.Status)
+	if !ok || status == models.TicketStatusProcessing {
+		respondUserBizError(c, ticketbiz.StatusInvalid())
+		return
+	}
+	req.Status = string(status)
 
 	updates := map[string]interface{}{
-		"status": req.Status,
+		"status": status,
 	}
 
-	if req.Status == "closed" {
+	if status == models.TicketStatusClosed {
 		now := time.Now()
 		updates["closed_at"] = now
 	}
@@ -383,7 +895,41 @@ func (h *TicketHandler) UpdateTicketStatus(c *gin.Context) {
 		return
 	}
 
+	if h.pluginManager != nil {
+		afterPayload := map[string]interface{}{
+			"ticket_id":     ticket.ID,
+			"ticket_no":     ticket.TicketNo,
+			"user_id":       userID,
+			"status_before": beforeStatus,
+			"status_after":  req.Status,
+			"source":        "user_api",
+		}
+		go func(execCtx *service.ExecutionContext, payload map[string]interface{}, uid uint, tid uint) {
+			_, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+				Hook:    "ticket.status.user.after",
+				Payload: payload,
+			}, execCtx)
+			if hookErr != nil {
+				log.Printf("ticket.status.user.after hook execution failed: user=%d ticket=%d err=%v", uid, tid, hookErr)
+			}
+		}(hookExecCtx, afterPayload, userID, ticket.ID)
+	}
+
 	response.Success(c, gin.H{"message": "Status updated successfully"})
+}
+
+func applyUserTicketStatusHookPayload(req *UpdateTicketStatusRequest, payload map[string]interface{}) error {
+	if req == nil || payload == nil {
+		return nil
+	}
+	if raw, exists := payload["status"]; exists {
+		status, err := ticketValueToOptionalString(raw)
+		if err != nil {
+			return fmt.Errorf("decode status: %w", err)
+		}
+		req.Status = status
+	}
+	return nil
 }
 
 // ShareOrderRequest 分享订单请求
@@ -477,6 +1023,27 @@ func (h *TicketHandler) ShareOrder(c *gin.Context) {
 		"unread_count_admin":   gorm.Expr("unread_count_admin + 1"),
 	})
 
+	if h.pluginManager != nil {
+		hookPayload := map[string]interface{}{
+			"ticket_id":  ticket.ID,
+			"ticket_no":  ticket.TicketNo,
+			"user_id":    userID,
+			"order_id":   order.ID,
+			"order_no":   order.OrderNo,
+			"message_id": message.ID,
+			"source":     "user_api",
+		}
+		go func(execCtx *service.ExecutionContext, payload map[string]interface{}, uid uint, tid uint, oid uint) {
+			_, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+				Hook:    "ticket.order.share.after",
+				Payload: payload,
+			}, execCtx)
+			if hookErr != nil {
+				log.Printf("ticket.order.share.after hook execution failed: user=%d ticket=%d order=%d err=%v", uid, tid, oid, hookErr)
+			}
+		}(h.buildTicketHookExecutionContext(c, userID, ticket.ID), hookPayload, userID, ticket.ID, order.ID)
+	}
+
 	response.Success(c, gin.H{"message": "Order shared successfully"})
 }
 
@@ -564,7 +1131,7 @@ func (h *TicketHandler) UploadFile(c *gin.Context) {
 	}
 
 	if ticket.Status == models.TicketStatusClosed {
-		response.BadRequest(c, "Ticket is closed, cannot upload files")
+		respondUserBizError(c, ticketbiz.ClosedCannotUpload())
 		return
 	}
 
@@ -573,8 +1140,53 @@ func (h *TicketHandler) UploadFile(c *gin.Context) {
 
 	file, err := c.FormFile("file")
 	if err != nil {
-		response.BadRequest(c, "Please select a file")
+		respondUserBizError(c, ticketbiz.FileRequired())
 		return
+	}
+	originalFilename := file.Filename
+	originalContentType := file.Header.Get("Content-Type")
+	hookExecCtx := h.buildTicketHookExecutionContext(c, userID, ticket.ID)
+	if h.pluginManager != nil {
+		hookPayload := map[string]interface{}{
+			"ticket_id":    ticket.ID,
+			"ticket_no":    ticket.TicketNo,
+			"user_id":      userID,
+			"status":       ticket.Status,
+			"filename":     file.Filename,
+			"size":         file.Size,
+			"content_type": file.Header.Get("Content-Type"),
+			"source":       "user_api",
+		}
+		hookResult, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+			Hook:    "ticket.attachment.upload.before",
+			Payload: hookPayload,
+		}, hookExecCtx)
+		if hookErr != nil {
+			log.Printf("ticket.attachment.upload.before hook execution failed: user=%d ticket=%d err=%v", userID, ticket.ID, hookErr)
+		} else if hookResult != nil {
+			if hookResult.Blocked {
+				reason := strings.TrimSpace(hookResult.BlockReason)
+				if reason == "" {
+					reason = "Attachment upload rejected by plugin"
+				}
+				response.BadRequest(c, reason)
+				return
+			}
+			if hookResult.Payload != nil {
+				if applyErr := applyTicketAttachmentUploadHookPayload(file, hookResult.Payload); applyErr != nil {
+					log.Printf("ticket.attachment.upload.before payload apply failed, fallback to original metadata: user=%d ticket=%d err=%v", userID, ticket.ID, applyErr)
+					file.Filename = originalFilename
+					if file.Header == nil {
+						file.Header = make(textproto.MIMEHeader)
+					}
+					if strings.TrimSpace(originalContentType) == "" {
+						file.Header.Del("Content-Type")
+					} else {
+						file.Header.Set("Content-Type", originalContentType)
+					}
+				}
+			}
+		}
 	}
 
 	ext := strings.ToLower(filepath.Ext(file.Filename))
@@ -583,7 +1195,7 @@ func (h *TicketHandler) UploadFile(c *gin.Context) {
 	isAudio := strings.HasPrefix(file.Header.Get("Content-Type"), "audio/")
 	if isAudio {
 		if attachment != nil && !attachment.EnableVoice {
-			response.BadRequest(c, "Voice upload not allowed")
+			respondUserBizError(c, ticketbiz.VoiceUploadDisabled())
 			return
 		}
 		allowedAudioTypes := []string{".mp3", ".wav", ".m4a", ".ogg", ".aac", ".webm"}
@@ -595,7 +1207,7 @@ func (h *TicketHandler) UploadFile(c *gin.Context) {
 			}
 		}
 		if !audioAllowed {
-			response.BadRequest(c, "Invalid audio format")
+			respondUserBizError(c, ticketbiz.AudioFormatInvalid())
 			return
 		}
 		maxSize := int64(10 * 1024 * 1024)
@@ -603,12 +1215,12 @@ func (h *TicketHandler) UploadFile(c *gin.Context) {
 			maxSize = attachment.MaxVoiceSize
 		}
 		if file.Size > maxSize {
-			response.BadRequest(c, fmt.Sprintf("Voice file size cannot exceed %dMB", maxSize/1024/1024))
+			respondUserBizError(c, ticketbiz.VoiceFileTooLarge(ticketbiz.BytesToMegabytes(maxSize)))
 			return
 		}
 	} else {
 		if attachment != nil && !attachment.EnableImage {
-			response.BadRequest(c, "Image upload not allowed")
+			respondUserBizError(c, ticketbiz.ImageUploadDisabled())
 			return
 		}
 		maxSize := int64(5 * 1024 * 1024)
@@ -616,7 +1228,7 @@ func (h *TicketHandler) UploadFile(c *gin.Context) {
 			maxSize = attachment.MaxImageSize
 		}
 		if file.Size > maxSize {
-			response.BadRequest(c, fmt.Sprintf("Image size cannot exceed %dMB", maxSize/1024/1024))
+			respondUserBizError(c, ticketbiz.ImageFileTooLarge(ticketbiz.BytesToMegabytes(maxSize)))
 			return
 		}
 
@@ -633,7 +1245,7 @@ func (h *TicketHandler) UploadFile(c *gin.Context) {
 			}
 		}
 		if !allowed {
-			response.BadRequest(c, "Unsupported image format")
+			respondUserBizError(c, ticketbiz.ImageFormatUnsupported())
 			return
 		}
 	}
@@ -655,6 +1267,29 @@ func (h *TicketHandler) UploadFile(c *gin.Context) {
 	}
 
 	fileURL := fmt.Sprintf("%s/uploads/tickets/%s/%s", cfg.App.URL, dateDir, filename)
+
+	if h.pluginManager != nil {
+		afterPayload := map[string]interface{}{
+			"ticket_id":     ticket.ID,
+			"ticket_no":     ticket.TicketNo,
+			"user_id":       userID,
+			"status":        ticket.Status,
+			"filename":      filename,
+			"original_name": file.Filename,
+			"size":          file.Size,
+			"url":           fileURL,
+			"source":        "user_api",
+		}
+		go func(execCtx *service.ExecutionContext, payload map[string]interface{}, uid uint, tid uint) {
+			_, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+				Hook:    "ticket.attachment.upload.after",
+				Payload: payload,
+			}, execCtx)
+			if hookErr != nil {
+				log.Printf("ticket.attachment.upload.after hook execution failed: user=%d ticket=%d err=%v", uid, tid, hookErr)
+			}
+		}(hookExecCtx, afterPayload, userID, ticket.ID)
+	}
 
 	response.Success(c, gin.H{
 		"url":      fileURL,

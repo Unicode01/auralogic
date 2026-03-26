@@ -1,48 +1,63 @@
 'use client'
 
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import DOMPurify from 'dompurify'
 import { getPublicConfig } from '@/lib/api'
 import { useLocale } from '@/hooks/use-locale'
 import { getTranslations } from '@/lib/i18n'
+import { PluginSlot } from '@/components/plugins/plugin-slot'
 
 const CACHE_KEY = 'auth_branding_cache'
 
-// Read cache from window (set by head script) — fastest possible access
-let _initialCache: any = null
-if (typeof window !== 'undefined') {
-  _initialCache = (window as any).__AUTH_BRAND__ || null
-  if (!_initialCache) {
-    try {
-      const raw = localStorage.getItem(CACHE_KEY)
-      if (raw) _initialCache = JSON.parse(raw)
-    } catch {}
-  }
+type AuthBrandingCache = {
+  app_name?: string
+  primary_color?: string
+  auth_branding?: {
+    mode?: string
+    title?: string
+    title_en?: string
+    subtitle?: string
+    subtitle_en?: string
+    custom_html?: string
+  } | null
 }
 
-const LoadingSkeleton = (
-  <div className="hidden lg:flex lg:w-1/2 relative overflow-hidden bg-primary">
-    <div className="relative z-10 flex flex-col justify-between w-full p-12 animate-pulse">
-      <div className="h-8 w-32 rounded bg-white/10" />
-      <div className="space-y-4">
-        <div className="h-10 w-64 rounded bg-white/10" />
-        <div className="h-10 w-48 rounded bg-white/10" />
-        <div className="h-5 w-72 rounded bg-white/10" />
-      </div>
-      <div className="h-4 w-36 rounded bg-white/10" />
-    </div>
-  </div>
-)
+function readAuthBrandingCache(): AuthBrandingCache | null {
+  if (typeof window === 'undefined') {
+    return null
+  }
+
+  const preload = (window as Window & { __AUTH_BRAND__?: AuthBrandingCache | null }).__AUTH_BRAND__
+  if (preload && typeof preload === 'object') {
+    return preload
+  }
+
+  try {
+    const raw = window.localStorage.getItem(CACHE_KEY)
+    if (!raw) {
+      return null
+    }
+    const parsed = JSON.parse(raw)
+    if (parsed && typeof parsed === 'object') {
+      return parsed as AuthBrandingCache
+    }
+  } catch {}
+
+  return null
+}
 
 export function AuthBrandingPanel() {
   const { locale } = useLocale()
   const t = getTranslations(locale)
-  const cacheRef = useRef<any>(_initialCache)
-  const [mounted, setMounted] = useState(false)
+  const [cachedBranding, setCachedBranding] = useState<AuthBrandingCache | null>(null)
 
-  // Module-level cache already loaded into ref — just flip the boolean before paint
-  useLayoutEffect(() => { setMounted(true) }, [])
+  useLayoutEffect(() => {
+    const initialCache = readAuthBrandingCache()
+    if (initialCache) {
+      setCachedBranding(initialCache)
+    }
+  }, [])
 
   const { data: publicConfig } = useQuery({
     queryKey: ['publicConfig'],
@@ -53,38 +68,55 @@ export function AuthBrandingPanel() {
   useEffect(() => {
     if (!publicConfig?.data) return
     const d = publicConfig.data
-    const val = {
+    const val: AuthBrandingCache = {
       app_name: d.app_name,
       primary_color: d.customization?.primary_color,
       auth_branding: d.customization?.auth_branding,
     }
-    cacheRef.current = val
-    localStorage.setItem(CACHE_KEY, JSON.stringify(val))
+    setCachedBranding(val)
+    if (typeof window !== 'undefined') {
+      ;(window as Window & { __AUTH_BRAND__?: AuthBrandingCache | null }).__AUTH_BRAND__ = val
+      window.localStorage.setItem(CACHE_KEY, JSON.stringify(val))
+    }
   }, [publicConfig])
 
-  // SSR or first visit (no cache): gray loading skeleton
-  if (!mounted) return LoadingSkeleton
-
   const net = publicConfig?.data
-  const cached = cacheRef.current
+  const cached = cachedBranding
   const appName = net?.app_name || cached?.app_name || 'AuraLogic'
   const primaryColor = net?.customization?.primary_color || cached?.primary_color
   const branding = net?.customization?.auth_branding || cached?.auth_branding
   const bgStyle = primaryColor ? { backgroundColor: `hsl(${primaryColor})` } : undefined
-
-  // No cache + no network yet: keep showing skeleton
-  if (!net && !cached) return LoadingSkeleton
+  const safeCustomHtml = useMemo(() => {
+    if (typeof window === 'undefined' || branding?.mode !== 'custom' || !branding.custom_html) {
+      return ''
+    }
+    return DOMPurify.sanitize(branding.custom_html, {
+      FORBID_TAGS: ['script', 'iframe', 'object', 'embed'],
+      FORBID_ATTR: ['onerror', 'onload', 'onclick', 'onmouseover'],
+      FORCE_BODY: true,
+    })
+  }, [branding?.custom_html, branding?.mode])
+  const authBrandingPluginContext = useMemo(
+    () => ({
+      view: 'auth_branding_panel',
+      locale,
+      branding: {
+        mode: branding?.mode || 'default',
+        app_name: appName,
+        primary_color: primaryColor || null,
+        has_custom_html: Boolean(branding?.custom_html),
+      },
+    }),
+    [appName, branding?.custom_html, branding?.mode, locale, primaryColor]
+  )
 
   // Custom HTML mode
-  if (branding?.mode === 'custom' && branding.custom_html) {
-    const safeHtml = typeof window !== 'undefined'
-      ? DOMPurify.sanitize(branding.custom_html, { FORBID_TAGS: ['script', 'iframe', 'object', 'embed'], FORBID_ATTR: ['onerror', 'onload', 'onclick', 'onmouseover'], FORCE_BODY: true })
-      : ''
+  if (branding?.mode === 'custom' && safeCustomHtml) {
     return (
       <div
         className="hidden lg:flex lg:w-1/2 relative overflow-hidden bg-primary"
         style={bgStyle}
-        dangerouslySetInnerHTML={{ __html: safeHtml }}
+        dangerouslySetInnerHTML={{ __html: safeCustomHtml }}
       />
     )
   }
@@ -107,7 +139,8 @@ export function AuthBrandingPanel() {
         <div className="absolute top-1/2 left-1/4 w-64 h-64 rounded-full border border-white/10" />
       </div>
       <div className="relative z-10 flex flex-col justify-between w-full p-12">
-        <div>
+        <div className="space-y-6">
+          <PluginSlot slot="auth.layout.branding.top" context={authBrandingPluginContext} />
           <h1 className="text-3xl font-bold text-primary-foreground tracking-tight">
             {appName}
           </h1>
@@ -120,9 +153,12 @@ export function AuthBrandingPanel() {
             {subtitle}
           </p>
         </div>
-        <p className="text-primary-foreground/50 text-sm">
-          &copy; {new Date().getFullYear()} {appName}
-        </p>
+        <div className="space-y-4">
+          <PluginSlot slot="auth.layout.branding.bottom" context={authBrandingPluginContext} />
+          <p className="text-primary-foreground/50 text-sm">
+            &copy; {new Date().getFullYear()} {appName}
+          </p>
+        </div>
       </div>
     </div>
   )

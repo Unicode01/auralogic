@@ -1,5 +1,7 @@
 # AuraLogic API Documentation
 
+> 说明：本文档是人工维护的接口总览，适合快速浏览，不保证覆盖当前仓库里的全部最新路由、字段与权限约束。实际集成请以 `backend/internal/router`、handler/service、前端调用代码和测试为准。
+
 ## Overview
 
 Base URL: `http://localhost:8080`

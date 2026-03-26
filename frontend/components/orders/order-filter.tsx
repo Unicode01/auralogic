@@ -18,55 +18,56 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { useLocale } from '@/hooks/use-locale'
 import { getTranslations } from '@/lib/i18n'
+import { PluginSlot } from '@/components/plugins/plugin-slot'
 
 // 国家名称映射（用于显示）
 const COUNTRY_NAMES: Record<string, { zh: string; en: string }> = {
-  "CN": { zh: "中国", en: "China" },
-  "HK": { zh: "中国香港", en: "Hong Kong" },
-  "MO": { zh: "中国澳门", en: "Macau" },
-  "TW": { zh: "中国台湾", en: "Taiwan" },
-  "US": { zh: "美国", en: "United States" },
-  "CA": { zh: "加拿大", en: "Canada" },
-  "GB": { zh: "英国", en: "United Kingdom" },
-  "JP": { zh: "日本", en: "Japan" },
-  "KR": { zh: "韩国", en: "South Korea" },
-  "SG": { zh: "新加坡", en: "Singapore" },
-  "AU": { zh: "澳大利亚", en: "Australia" },
-  "DE": { zh: "德国", en: "Germany" },
-  "FR": { zh: "法国", en: "France" },
-  "IT": { zh: "意大利", en: "Italy" },
-  "ES": { zh: "西班牙", en: "Spain" },
-  "NL": { zh: "荷兰", en: "Netherlands" },
-  "BE": { zh: "比利时", en: "Belgium" },
-  "SE": { zh: "瑞典", en: "Sweden" },
-  "NO": { zh: "挪威", en: "Norway" },
-  "DK": { zh: "丹麦", en: "Denmark" },
-  "FI": { zh: "芬兰", en: "Finland" },
-  "PL": { zh: "波兰", en: "Poland" },
-  "CZ": { zh: "捷克", en: "Czech Republic" },
-  "AT": { zh: "奥地利", en: "Austria" },
-  "CH": { zh: "瑞士", en: "Switzerland" },
-  "PT": { zh: "葡萄牙", en: "Portugal" },
-  "GR": { zh: "希腊", en: "Greece" },
-  "IE": { zh: "爱尔兰", en: "Ireland" },
-  "NZ": { zh: "新西兰", en: "New Zealand" },
-  "MY": { zh: "马来西亚", en: "Malaysia" },
-  "TH": { zh: "泰国", en: "Thailand" },
-  "VN": { zh: "越南", en: "Vietnam" },
-  "PH": { zh: "菲律宾", en: "Philippines" },
-  "ID": { zh: "印度尼西亚", en: "Indonesia" },
-  "IN": { zh: "印度", en: "India" },
-  "AE": { zh: "阿联酋", en: "UAE" },
-  "SA": { zh: "沙特阿拉伯", en: "Saudi Arabia" },
-  "IL": { zh: "以色列", en: "Israel" },
-  "TR": { zh: "土耳其", en: "Turkey" },
-  "BR": { zh: "巴西", en: "Brazil" },
-  "MX": { zh: "墨西哥", en: "Mexico" },
-  "AR": { zh: "阿根廷", en: "Argentina" },
-  "ZA": { zh: "南非", en: "South Africa" },
-  "EG": { zh: "埃及", en: "Egypt" },
-  "RU": { zh: "俄罗斯", en: "Russia" },
-  "UA": { zh: "乌克兰", en: "Ukraine" },
+  CN: { zh: '中国', en: 'China' },
+  HK: { zh: '中国香港', en: 'Hong Kong' },
+  MO: { zh: '中国澳门', en: 'Macau' },
+  TW: { zh: '中国台湾', en: 'Taiwan' },
+  US: { zh: '美国', en: 'United States' },
+  CA: { zh: '加拿大', en: 'Canada' },
+  GB: { zh: '英国', en: 'United Kingdom' },
+  JP: { zh: '日本', en: 'Japan' },
+  KR: { zh: '韩国', en: 'South Korea' },
+  SG: { zh: '新加坡', en: 'Singapore' },
+  AU: { zh: '澳大利亚', en: 'Australia' },
+  DE: { zh: '德国', en: 'Germany' },
+  FR: { zh: '法国', en: 'France' },
+  IT: { zh: '意大利', en: 'Italy' },
+  ES: { zh: '西班牙', en: 'Spain' },
+  NL: { zh: '荷兰', en: 'Netherlands' },
+  BE: { zh: '比利时', en: 'Belgium' },
+  SE: { zh: '瑞典', en: 'Sweden' },
+  NO: { zh: '挪威', en: 'Norway' },
+  DK: { zh: '丹麦', en: 'Denmark' },
+  FI: { zh: '芬兰', en: 'Finland' },
+  PL: { zh: '波兰', en: 'Poland' },
+  CZ: { zh: '捷克', en: 'Czech Republic' },
+  AT: { zh: '奥地利', en: 'Austria' },
+  CH: { zh: '瑞士', en: 'Switzerland' },
+  PT: { zh: '葡萄牙', en: 'Portugal' },
+  GR: { zh: '希腊', en: 'Greece' },
+  IE: { zh: '爱尔兰', en: 'Ireland' },
+  NZ: { zh: '新西兰', en: 'New Zealand' },
+  MY: { zh: '马来西亚', en: 'Malaysia' },
+  TH: { zh: '泰国', en: 'Thailand' },
+  VN: { zh: '越南', en: 'Vietnam' },
+  PH: { zh: '菲律宾', en: 'Philippines' },
+  ID: { zh: '印度尼西亚', en: 'Indonesia' },
+  IN: { zh: '印度', en: 'India' },
+  AE: { zh: '阿联酋', en: 'UAE' },
+  SA: { zh: '沙特阿拉伯', en: 'Saudi Arabia' },
+  IL: { zh: '以色列', en: 'Israel' },
+  TR: { zh: '土耳其', en: 'Turkey' },
+  BR: { zh: '巴西', en: 'Brazil' },
+  MX: { zh: '墨西哥', en: 'Mexico' },
+  AR: { zh: '阿根廷', en: 'Argentina' },
+  ZA: { zh: '南非', en: 'South Africa' },
+  EG: { zh: '埃及', en: 'Egypt' },
+  RU: { zh: '俄罗斯', en: 'Russia' },
+  UA: { zh: '乌克兰', en: 'Ukraine' },
 }
 
 interface OrderFilterProps {
@@ -81,6 +82,9 @@ interface OrderFilterProps {
   onCountryChange?: (country: string | undefined) => void
   onProductSearchChange?: (productSearch: string) => void
   useSmartCountryFilter?: boolean // 是否使用智能国家筛选（仅管理员）
+  pluginSlotNamespace?: string
+  pluginSlotContext?: Record<string, any>
+  pluginSlotPath?: string
 }
 
 export function OrderFilter({
@@ -95,6 +99,9 @@ export function OrderFilter({
   onCountryChange,
   onProductSearchChange,
   useSmartCountryFilter = false,
+  pluginSlotNamespace,
+  pluginSlotContext,
+  pluginSlotPath,
 }: OrderFilterProps) {
   const { locale } = useLocale()
   const t = getTranslations(locale)
@@ -141,37 +148,98 @@ export function OrderFilter({
     setUserSearch('')
     onUserChange?.(undefined)
   }
+  const countryOptionCount =
+    useSmartCountryFilter && countriesData?.data?.countries
+      ? countriesData.data.countries.length
+      : onCountryChange
+        ? Object.keys(COUNTRY_NAMES).length
+        : 0
+  const orderFilterPluginContext = {
+    ...(pluginSlotContext || {}),
+    filter_panel: {
+      search: search || undefined,
+      status: status || undefined,
+      user_id: userId,
+      country: country || undefined,
+      product_search: productSearch || undefined,
+    },
+    capabilities: {
+      user_filter_enabled: Boolean(onUserChange),
+      country_filter_enabled: Boolean(onCountryChange),
+      product_filter_enabled: Boolean(onProductSearchChange),
+      smart_country_filter: useSmartCountryFilter,
+    },
+    summary: {
+      country_option_count: countryOptionCount,
+      has_selected_user: Boolean(selectedUser),
+      user_result_count: usersData?.data?.items?.length || 0,
+    },
+    state: {
+      user_list_open: showUserList,
+      user_list_loading: Boolean(onUserChange && showUserList && !usersData),
+      user_list_empty: Boolean(showUserList && userSearch && usersData && !usersData?.data?.items?.length),
+      has_active_filters: Boolean(status || search || userId || country || productSearch),
+    },
+  }
 
   return (
     <Card>
       <CardContent className="pt-6">
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
           {/* 订单搜索 */}
           <div>
-            <label className="text-sm font-medium mb-2 block">{t.order.searchOrder}</label>
+            <label className="mb-2 block text-sm font-medium">{t.order.searchOrder}</label>
             <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 placeholder={t.order.orderNoPlaceholder}
                 value={search}
                 onChange={(e) => onSearchChange?.(e.target.value)}
-                className="pl-10"
+                className="pl-10 pr-10"
               />
+              {search ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => onSearchChange?.('')}
+                  className="absolute right-1 top-1/2 h-7 w-7 -translate-y-1/2 p-0"
+                  aria-label={t.common.clear}
+                  title={t.common.clear}
+                >
+                  <X className="h-4 w-4" />
+                  <span className="sr-only">{t.common.clear}</span>
+                </Button>
+              ) : null}
             </div>
           </div>
 
           {/* 商品搜索 */}
           {onProductSearchChange && (
             <div>
-              <label className="text-sm font-medium mb-2 block">{t.order.searchProduct}</label>
+              <label className="mb-2 block text-sm font-medium">{t.order.searchProduct}</label>
               <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                 <Input
                   placeholder={t.order.skuPlaceholder}
                   value={productSearch}
                   onChange={(e) => onProductSearchChange(e.target.value)}
-                  className="pl-10"
+                  className="pl-10 pr-10"
                 />
+                {productSearch ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => onProductSearchChange('')}
+                    className="absolute right-1 top-1/2 h-7 w-7 -translate-y-1/2 p-0"
+                    aria-label={t.common.clear}
+                    title={t.common.clear}
+                  >
+                    <X className="h-4 w-4" />
+                    <span className="sr-only">{t.common.clear}</span>
+                  </Button>
+                ) : null}
               </div>
             </div>
           )}
@@ -179,9 +247,9 @@ export function OrderFilter({
           {/* 用户筛选 */}
           {onUserChange && (
             <div className="relative">
-              <label className="text-sm font-medium mb-2 block">{t.order.filterUser}</label>
+              <label className="mb-2 block text-sm font-medium">{t.order.filterUser}</label>
               <div className="relative">
-                <User className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <User className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                 <Input
                   placeholder={t.order.searchUser}
                   value={userSearch}
@@ -197,21 +265,24 @@ export function OrderFilter({
                     variant="ghost"
                     size="sm"
                     onClick={handleClearUser}
-                    className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7 p-0"
+                    className="absolute right-1 top-1/2 h-7 w-7 -translate-y-1/2 p-0"
+                    aria-label={t.common.clear}
+                    title={t.common.clear}
                   >
                     <X className="h-4 w-4" />
+                    <span className="sr-only">{t.common.clear}</span>
                   </Button>
                 )}
               </div>
 
               {/* 用户列表下拉 */}
               {showUserList && !selectedUser && userSearch && (
-                <div className="absolute top-full left-0 right-0 mt-1 bg-background border rounded-md shadow-lg z-50 max-h-60 overflow-y-auto">
+                <div className="absolute left-0 right-0 top-full z-50 mt-1 max-h-60 overflow-y-auto rounded-md border bg-background shadow-lg">
                   {usersData && usersData?.data?.items?.length > 0 ? (
                     usersData.data.items.map((user: any) => (
                       <div
                         key={user.id}
-                        className="px-3 py-2 hover:bg-muted cursor-pointer"
+                        className="cursor-pointer px-3 py-2 hover:bg-muted"
                         onClick={() => handleSelectUser(user)}
                       >
                         <div className="flex items-center justify-between">
@@ -228,7 +299,7 @@ export function OrderFilter({
                       </div>
                     ))
                   ) : (
-                    <div className="px-3 py-2 text-sm text-muted-foreground text-center">
+                    <div className="px-3 py-2 text-center text-sm text-muted-foreground">
                       {t.order.noUserFound}
                     </div>
                   )}
@@ -237,10 +308,7 @@ export function OrderFilter({
 
               {/* 点击外部关闭下拉框 */}
               {showUserList && !selectedUser && (
-                <div
-                  className="fixed inset-0 z-40"
-                  onClick={() => setShowUserList(false)}
-                />
+                <div className="fixed inset-0 z-40" onClick={() => setShowUserList(false)} />
               )}
             </div>
           )}
@@ -248,30 +316,33 @@ export function OrderFilter({
           {/* 国家筛选 */}
           {onCountryChange && (
             <div>
-              <label className="text-sm font-medium mb-2 block">{t.order.shippingCountry}</label>
-              <Select value={country} onValueChange={onCountryChange}>
+              <label className="mb-2 block text-sm font-medium">{t.order.shippingCountry}</label>
+              <Select
+                value={country || 'all'}
+                onValueChange={(value) => onCountryChange(value === 'all' ? undefined : value)}
+              >
                 <SelectTrigger>
                   <SelectValue placeholder={t.order.allCountries} />
                 </SelectTrigger>
                 <SelectContent className="max-h-[300px]">
                   <SelectItem value="all">{t.order.allCountries}</SelectItem>
-                  {useSmartCountryFilter && countriesData?.data?.countries ? (
-                    // 管理员：只显示有订单的国家
-                    countriesData.data.countries.map((countryCode: string) => (
-                      <SelectItem key={countryCode} value={countryCode}>
-                        {COUNTRY_NAMES[countryCode]
-                          ? (locale === 'zh' ? COUNTRY_NAMES[countryCode].zh : COUNTRY_NAMES[countryCode].en)
-                          : countryCode}
-                      </SelectItem>
-                    ))
-                  ) : (
-                    // 用户端：显示所有常用国家（向后兼容）
-                    Object.entries(COUNTRY_NAMES).map(([code, names]) => (
-                      <SelectItem key={code} value={code}>
-                        {locale === 'zh' ? names.zh : names.en}
-                      </SelectItem>
-                    ))
-                  )}
+                  {useSmartCountryFilter && countriesData?.data?.countries
+                    ? // 管理员：只显示有订单的国家
+                      countriesData.data.countries.map((countryCode: string) => (
+                        <SelectItem key={countryCode} value={countryCode}>
+                          {COUNTRY_NAMES[countryCode]
+                            ? locale === 'zh'
+                              ? COUNTRY_NAMES[countryCode].zh
+                              : COUNTRY_NAMES[countryCode].en
+                            : countryCode}
+                        </SelectItem>
+                      ))
+                    : // 用户端：显示所有常用国家（向后兼容）
+                      Object.entries(COUNTRY_NAMES).map(([code, names]) => (
+                        <SelectItem key={code} value={code}>
+                          {locale === 'zh' ? names.zh : names.en}
+                        </SelectItem>
+                      ))}
                 </SelectContent>
               </Select>
             </div>
@@ -279,8 +350,11 @@ export function OrderFilter({
 
           {/* 状态筛选 */}
           <div>
-            <label className="text-sm font-medium mb-2 block">{t.order.orderStatus}</label>
-            <Select value={status} onValueChange={onStatusChange}>
+            <label className="mb-2 block text-sm font-medium">{t.order.orderStatus}</label>
+            <Select
+              value={status || 'all'}
+              onValueChange={(value) => onStatusChange(value === 'all' ? undefined : value)}
+            >
               <SelectTrigger>
                 <SelectValue placeholder={t.order.allStatus} />
               </SelectTrigger>
@@ -298,8 +372,14 @@ export function OrderFilter({
             </Select>
           </div>
         </div>
+        {pluginSlotNamespace ? (
+          <PluginSlot
+            slot={`${pluginSlotNamespace}.filters`}
+            path={pluginSlotPath}
+            context={{ ...orderFilterPluginContext, section: 'filters' }}
+          />
+        ) : null}
       </CardContent>
     </Card>
   )
 }
-
