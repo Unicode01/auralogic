@@ -1,4 +1,4 @@
-.PHONY: help build run test clean init-admin migrate
+.PHONY: help build run test test-plugin-regression clean init-admin migrate
 
 help: ## 显示帮助信息
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
@@ -15,6 +15,10 @@ run: ## 运行开发服务器
 test: ## 运行测试
 	@echo "Running tests..."
 	@go test -v ./...
+
+test-plugin-regression: ## 运行插件基线回归测试（用于改造前后对比）
+	@echo "Running plugin regression baseline tests..."
+	@sh scripts/test_plugin_regression.sh
 
 test-cover: ## 运行测试并显示覆盖率
 	@echo "Running tests with coverage..."

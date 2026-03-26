@@ -7,8 +7,11 @@ import (
 	"path/filepath"
 	"strings"
 
+	"auralogic/internal/config"
 	"auralogic/internal/models"
+	"auralogic/internal/pkg/bizerr"
 	"auralogic/internal/repository"
+	"gorm.io/gorm"
 )
 
 type ProductService struct {
@@ -18,9 +21,12 @@ type ProductService struct {
 	baseURL       string
 }
 
+type DeleteProductOptions struct {
+	DeleteImages bool
+}
+
 var (
-	// Public, user-facing errors (safe to show to clients).
-	ErrSKUAlreadyExists = errors.New("SKU already exists")
+	ErrProductNotFound = errors.New("Product not found")
 )
 
 func NewProductService(productRepo *repository.ProductRepository, inventoryRepo *repository.InventoryRepository) *ProductService {
@@ -38,25 +44,96 @@ func (s *ProductService) SetUploadConfig(uploadDir, baseURL string) {
 	s.baseURL = baseURL
 }
 
+func (s *ProductService) currentUploadRuntime() (string, string) {
+	uploadDir := strings.TrimSpace(s.uploadDir)
+	baseURL := strings.TrimRight(strings.TrimSpace(s.baseURL), "/")
+
+	if runtimeCfg := config.GetConfig(); runtimeCfg != nil {
+		if strings.TrimSpace(runtimeCfg.Upload.Dir) != "" {
+			uploadDir = strings.TrimSpace(runtimeCfg.Upload.Dir)
+		}
+		baseURL = strings.TrimRight(strings.TrimSpace(runtimeCfg.App.URL), "/")
+	}
+
+	if uploadDir == "" {
+		uploadDir = "uploads"
+	}
+	return uploadDir, baseURL
+}
+
+func extractProductImageRelativePath(imageURL string) (string, bool) {
+	const marker = "/uploads/products/"
+	idx := strings.Index(strings.TrimSpace(imageURL), marker)
+	if idx < 0 {
+		return "", false
+	}
+
+	relativePath := strings.TrimPrefix(imageURL[idx+len(marker):], "/")
+	cleanRel := filepath.Clean(filepath.FromSlash(relativePath))
+	if cleanRel == "." || strings.HasPrefix(cleanRel, "..") {
+		return "", false
+	}
+	return filepath.ToSlash(cleanRel), true
+}
+
+func resolveProductImageFilePath(uploadDirs []string, relativePath string) (string, error) {
+	cleanRel := filepath.Clean(relativePath)
+	if cleanRel == "." || strings.HasPrefix(cleanRel, "..") {
+		return "", fmt.Errorf("invalid image path")
+	}
+
+	seen := make(map[string]struct{})
+	for _, uploadDir := range uploadDirs {
+		trimmedDir := strings.TrimSpace(uploadDir)
+		if trimmedDir == "" {
+			continue
+		}
+		if _, exists := seen[trimmedDir]; exists {
+			continue
+		}
+		seen[trimmedDir] = struct{}{}
+
+		baseDir, err := filepath.Abs(filepath.Join(trimmedDir, "products"))
+		if err != nil {
+			continue
+		}
+		targetPath, err := filepath.Abs(filepath.Join(baseDir, cleanRel))
+		if err != nil {
+			continue
+		}
+		if targetPath != baseDir && !strings.HasPrefix(targetPath, baseDir+string(os.PathSeparator)) {
+			continue
+		}
+		if _, err := os.Stat(targetPath); err == nil {
+			return targetPath, nil
+		}
+	}
+
+	return "", os.ErrNotExist
+}
+
 // CreateProduct CreateProduct
 func (s *ProductService) CreateProduct(product *models.Product) error {
 	// 验证SKU唯一性
-	existing, _ := s.productRepo.FindBySKU(product.SKU)
-	if existing != nil && existing.ID != 0 {
-		return ErrSKUAlreadyExists
+	existing, err := s.productRepo.FindBySKU(product.SKU)
+	if err == nil && existing != nil && existing.ID != 0 {
+		return newProductSKUAlreadyExistsError()
+	}
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return err
 	}
 
 	// Validate required fields
 	if product.Name == "" {
-		return errors.New("Product name cannot be empty")
+		return bizerr.New("product.nameRequired", "Product name cannot be empty")
 	}
 	if product.SKU == "" {
-		return errors.New("Product SKU cannot be empty")
+		return bizerr.New("product.skuRequired", "Product SKU cannot be empty")
 	}
 
 	// Price validation
 	if product.Price < 0 {
-		return errors.New("Product price must be greater than or equal to 0")
+		return bizerr.New("product.priceNegative", "Product price must be greater than or equal to 0")
 	}
 
 	// 设置默认状态
@@ -78,11 +155,7 @@ func (s *ProductService) CreateProduct(product *models.Product) error {
 	if err := s.productRepo.Create(product); err != nil {
 		// Concurrent create (or DB constraint) might still hit unique constraints.
 		if isUniqueConstraintError(err) {
-			msg := strings.ToLower(err.Error())
-			if strings.Contains(msg, "sku") || strings.Contains(msg, "products.sku") {
-				return ErrSKUAlreadyExists
-			}
-			return ErrSKUAlreadyExists
+			return newProductSKUAlreadyExistsError()
 		}
 		return err
 	}
@@ -93,14 +166,17 @@ func (s *ProductService) CreateProduct(product *models.Product) error {
 func (s *ProductService) UpdateProduct(id uint, updates *models.Product) error {
 	product, err := s.productRepo.FindByID(id)
 	if err != nil {
-		return errors.New("Product not found")
+		return ErrProductNotFound
 	}
 
 	// 如果UpdateSKU，检查唯一性
 	if updates.SKU != "" && updates.SKU != product.SKU {
-		existing, _ := s.productRepo.FindBySKU(updates.SKU)
-		if existing != nil && existing.ID != 0 {
-			return ErrSKUAlreadyExists
+		existing, findErr := s.productRepo.FindBySKU(updates.SKU)
+		if findErr == nil && existing != nil && existing.ID != 0 {
+			return newProductSKUAlreadyExistsError()
+		}
+		if findErr != nil && !errors.Is(findErr, gorm.ErrRecordNotFound) {
+			return findErr
 		}
 		product.SKU = updates.SKU
 	}
@@ -145,11 +221,7 @@ func (s *ProductService) UpdateProduct(id uint, updates *models.Product) error {
 
 	if err := s.productRepo.Update(product); err != nil {
 		if isUniqueConstraintError(err) {
-			msg := strings.ToLower(err.Error())
-			if strings.Contains(msg, "sku") || strings.Contains(msg, "products.sku") {
-				return ErrSKUAlreadyExists
-			}
-			return ErrSKUAlreadyExists
+			return newProductSKUAlreadyExistsError()
 		}
 		return err
 	}
@@ -158,15 +230,21 @@ func (s *ProductService) UpdateProduct(id uint, updates *models.Product) error {
 
 // DeleteProduct DeleteProduct
 func (s *ProductService) DeleteProduct(id uint) error {
+	return s.DeleteProductWithOptions(id, DeleteProductOptions{DeleteImages: true})
+}
+
+func (s *ProductService) DeleteProductWithOptions(id uint, options DeleteProductOptions) error {
 	product, err := s.productRepo.FindByID(id)
 	if err != nil {
-		return errors.New("Product not found")
+		return ErrProductNotFound
 	}
 
 	// Delete product associated image files
-	if err := s.deleteProductImages(product); err != nil {
-		// Log error but do not block product deletion
-		fmt.Printf("Warning: Failed to delete product images: %v\n", err)
+	if options.DeleteImages {
+		if err := s.deleteProductImages(product); err != nil {
+			// Log error but do not block product deletion
+			fmt.Printf("Warning: Failed to delete product images: %v\n", err)
+		}
 	}
 
 	return s.productRepo.Delete(product.ID)
@@ -194,29 +272,20 @@ func (s *ProductService) deleteProductImages(product *models.Product) error {
 
 // deleteImageFile Delete单个图片文件
 func (s *ProductService) deleteImageFile(imageURL string) error {
-	// 从URL中提取文件路径
-	// 例如：http://localhost:8080/uploads/products/2026/01/07/uuid.jpg
-	// 提取：products/2026/01/07/uuid.jpg
-	prefix := s.baseURL + "/uploads/"
-	if !strings.HasPrefix(imageURL, prefix) {
+	uploadDir, _ := s.currentUploadRuntime()
+	relativePath, ok := extractProductImageRelativePath(imageURL)
+	if !ok {
 		// 不是本地上传的图片（可能是外部URL），跳过
 		return nil
 	}
 
-	relativePath := strings.TrimPrefix(imageURL, prefix)
-	cleanRel := filepath.Clean(relativePath)
-	baseDir, err := filepath.Abs(s.uploadDir)
+	filePath, err := resolveProductImageFilePath([]string{uploadDir, s.uploadDir}, relativePath)
 	if err != nil {
-		return fmt.Errorf("failed to resolve upload directory: %w", err)
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
 	}
-	targetPath, err := filepath.Abs(filepath.Join(baseDir, cleanRel))
-	if err != nil {
-		return fmt.Errorf("failed to resolve image path: %w", err)
-	}
-	if targetPath != baseDir && !strings.HasPrefix(targetPath, baseDir+string(os.PathSeparator)) {
-		return fmt.Errorf("invalid image path")
-	}
-	filePath := targetPath
 
 	// 检查文件是否存在
 	if _, err := os.Stat(filePath); os.IsNotExist(err) {
@@ -232,7 +301,7 @@ func (s *ProductService) deleteImageFile(imageURL string) error {
 func (s *ProductService) GetProductByID(id uint, incrementView bool) (*models.Product, error) {
 	product, err := s.productRepo.FindByID(id)
 	if err != nil {
-		return nil, errors.New("Product not found")
+		return nil, ErrProductNotFound
 	}
 
 	// 增加浏览次数
@@ -270,7 +339,7 @@ func (s *ProductService) ListProducts(page, limit int, status, category, search 
 func (s *ProductService) UpdateProductStatus(id uint, status models.ProductStatus) error {
 	product, err := s.productRepo.FindByID(id)
 	if err != nil {
-		return errors.New("Product not found")
+		return ErrProductNotFound
 	}
 
 	product.Status = status
@@ -280,12 +349,12 @@ func (s *ProductService) UpdateProductStatus(id uint, status models.ProductStatu
 // UpdateStock Update inventory
 func (s *ProductService) UpdateStock(id uint, stock int) error {
 	if stock < 0 {
-		return errors.New("Stock cannot be negative")
+		return bizerr.New("product.stockNegative", "Stock cannot be negative")
 	}
 
 	product, err := s.productRepo.FindByID(id)
 	if err != nil {
-		return errors.New("Product not found")
+		return ErrProductNotFound
 	}
 
 	// Auto set to out of stock if inventory becomes 0
@@ -302,16 +371,20 @@ func (s *ProductService) UpdateStock(id uint, stock int) error {
 // DecrementStock Decrease inventory (used for orders)
 func (s *ProductService) DecrementStock(id uint, quantity int) error {
 	if quantity <= 0 {
-		return errors.New("Quantity must be greater than 0")
+		return bizerr.New("product.quantityInvalid", "Quantity must be greater than 0")
 	}
 
 	product, err := s.productRepo.FindByID(id)
 	if err != nil {
-		return errors.New("Product not found")
+		return ErrProductNotFound
 	}
 
 	if product.Stock < quantity {
-		return fmt.Errorf("Inventoryinsufficient, currentInventory：%d", product.Stock)
+		return bizerr.New("product.stockInsufficient", "Insufficient product stock").
+			WithParams(map[string]interface{}{
+				"available": product.Stock,
+				"requested": quantity,
+			})
 	}
 
 	return s.productRepo.DecrementStock(id, quantity)
@@ -326,9 +399,13 @@ func (s *ProductService) GetCategories() ([]string, error) {
 func (s *ProductService) ToggleFeatured(id uint) error {
 	product, err := s.productRepo.FindByID(id)
 	if err != nil {
-		return errors.New("Product not found")
+		return ErrProductNotFound
 	}
 
 	product.IsFeatured = !product.IsFeatured
 	return s.productRepo.Update(product)
+}
+
+func newProductSKUAlreadyExistsError() error {
+	return bizerr.New("product.skuAlreadyExists", "SKU already exists")
 }

@@ -1,12 +1,16 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
+	"os"
+	"strings"
 
 	"auralogic/internal/config"
 	"auralogic/internal/database"
 	adminHandler "auralogic/internal/handler/admin"
+	"auralogic/internal/jsworker"
 	"auralogic/internal/pkg/cache"
 	"auralogic/internal/pkg/jwt"
 	"auralogic/internal/repository"
@@ -20,6 +24,16 @@ import (
 var GitCommit = ""
 
 func main() {
+	// 同一后端二进制双模式运行：
+	// 1) 默认 API 服务模式
+	// 2) --js-worker 子进程模式（供插件管理器拉起）
+	if len(os.Args) > 1 && strings.EqualFold(strings.TrimSpace(os.Args[1]), "--js-worker") {
+		if err := jsworker.Run(os.Args[2:]); err != nil {
+			log.Fatalf("JS worker mode failed: %v", err)
+		}
+		return
+	}
+
 	if GitCommit == "" {
 		GitCommit = "dev"
 	}
@@ -33,13 +47,10 @@ func main() {
 	log.Printf("Config loaded from: %s", config.GetConfigPath())
 
 	// 初始化日志
-	logFile, err := config.InitLogger(&cfg.Log)
-	if err != nil {
+	if _, err := config.InitLogger(&cfg.Log); err != nil {
 		log.Fatalf("Failed to initialize logger: %v", err)
 	}
-	if logFile != nil {
-		defer logFile.Close()
-	}
+	defer config.CloseLogger()
 	log.Printf("Logger initialized (level=%s, format=%s, output=%s)", cfg.Log.Level, cfg.Log.Format, cfg.Log.Output)
 
 	// 初始化数据库
@@ -83,33 +94,57 @@ func main() {
 	marketingService := service.NewMarketingService(db, emailService, smsService)
 	bindingService := service.NewBindingService(bindingRepo, inventoryRepo, productRepo)
 	serialService := service.NewSerialService(serialRepo, productRepo, orderRepo)
+	serialGenerationService := service.NewSerialGenerationService(db, serialService)
 	virtualInventoryService := service.NewVirtualInventoryService(db)
 	orderService := service.NewOrderService(orderRepo, userRepo, productRepo, inventoryRepo, bindingService, serialService, virtualInventoryService, promoCodeRepo, cfg, emailService)
 	productService := service.NewProductService(productRepo, inventoryRepo)
 	productService.SetUploadConfig(cfg.Upload.Dir, cfg.App.URL)
+	pluginManagerService := service.NewPluginManagerService(db, cfg)
+	pluginManagerService.Start()
+	defer pluginManagerService.Stop()
+	log.Println("Plugin manager service started")
+	emailService.SetPluginManager(pluginManagerService)
+	smsService.SetPluginManager(pluginManagerService)
+	marketingService.SetPluginManager(pluginManagerService)
+	serialService.SetPluginManager(pluginManagerService)
+	orderService.SetPluginManager(pluginManagerService)
+	orderService.SetSerialGenerationService(serialGenerationService)
 
 	// 启动邮件队列处理（如果启用）
-	if cfg.SMTP.Enabled {
-		go emailService.ProcessEmailQueue()
+	emailService.Start()
+	defer emailService.Stop()
+	if emailService.IsEnabled() {
 		log.Println("Email service started")
 	}
 
-	go marketingService.ProcessQueue()
+	smsDelayedCtx, smsDelayedCancel := context.WithCancel(context.Background())
+	defer smsDelayedCancel()
+	go smsService.ProcessDelayedSMS(smsDelayedCtx)
+	log.Println("SMS delayed worker started")
+
+	marketingService.Start()
+	defer marketingService.Stop()
 	log.Println("Marketing queue worker started")
 
+	serialGenerationService.Start()
+	defer serialGenerationService.Stop()
+	log.Println("Serial generation worker started")
+
 	// 初始化内置付款方式
-	paymentMethodService := service.NewPaymentMethodService(db)
+	paymentMethodService := service.NewPaymentMethodService(db, cfg)
 	if err := paymentMethodService.InitBuiltinPaymentMethods(); err != nil {
 		log.Printf("Warning: Failed to initialize builtin payment methods: %v", err)
 	}
 
 	// 启动付款状态轮询服务
 	paymentPollingService := service.NewPaymentPollingService(db, virtualInventoryService, emailService, cfg)
+	paymentPollingService.SetPluginManager(pluginManagerService)
 	paymentPollingService.Start()
 	defer paymentPollingService.Stop()
 
 	// 启动订单自动取消服务
 	orderCancelService := service.NewOrderCancelService(db, cfg, inventoryRepo, promoCodeRepo, virtualInventoryService, serialService)
+	orderCancelService.SetPluginManager(pluginManagerService)
 	orderCancelService.Start()
 	defer orderCancelService.Stop()
 	log.Println("Order auto-cancel service started")
@@ -122,12 +157,13 @@ func main() {
 
 	// 启动工单超时自动关闭服务
 	ticketAutoCloseService := service.NewTicketAutoCloseService(db, cfg)
+	ticketAutoCloseService.SetPluginManager(pluginManagerService)
 	ticketAutoCloseService.Start()
 	defer ticketAutoCloseService.Stop()
 	log.Println("Ticket auto-close service started")
 
 	// 设置路由
-	r := router.SetupRouter(cfg, authService, orderService, productService, emailService, userRepo, db, paymentPollingService, GitCommit)
+	r := router.SetupRouter(cfg, authService, orderService, productService, emailService, userRepo, db, paymentPollingService, pluginManagerService, GitCommit)
 
 	// 启动服务器
 	addr := fmt.Sprintf(":%d", cfg.App.Port)

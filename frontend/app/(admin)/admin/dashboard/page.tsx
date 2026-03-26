@@ -4,7 +4,6 @@ import { useQuery } from '@tanstack/react-query'
 import { getDashboardStatistics, getRecentActivities } from '@/lib/api'
 import { StatsCard } from '@/components/admin/stats-card'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
 import { OrderStatusBadge } from '@/components/orders/order-status-badge'
 import { Package, Users, Truck, CheckCircle, TrendingUp, TrendingDown, UserCog, Key, Activity, DollarSign } from 'lucide-react'
 import { formatDate, formatCurrency } from '@/lib/utils'
@@ -13,6 +12,7 @@ import { useLocale } from '@/hooks/use-locale'
 import { getTranslations } from '@/lib/i18n'
 import { usePageTitle } from '@/hooks/use-page-title'
 import { usePermission } from '@/hooks/use-permission'
+import { PluginSlot } from '@/components/plugins/plugin-slot'
 
 export default function AdminDashboardPage() {
   const { locale } = useLocale()
@@ -81,21 +81,23 @@ export default function AdminDashboardPage() {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <h1 className="text-3xl font-bold">{t.admin.dashboard}</h1>
-          <div className="flex items-center gap-1.5">
-            <Badge variant="outline" className="text-xs font-mono">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs font-mono text-muted-foreground">
+            <span>
               {t.admin.frontendVersion} {process.env.NEXT_PUBLIC_GIT_COMMIT || '-'}
-            </Badge>
-            {statsData?.git_commit && (
-              <Badge variant="outline" className="text-xs font-mono">
+            </span>
+            {statsData?.git_commit ? (
+              <span>
                 {t.admin.backendVersion} {statsData.git_commit}
-              </Badge>
-            )}
+              </span>
+            ) : null}
           </div>
         </div>
         <div className="text-sm text-muted-foreground">
           {t.admin.lastUpdated}{new Date().toLocaleString(locale === 'zh' ? 'zh-CN' : 'en-US')}
         </div>
       </div>
+
+      <PluginSlot slot="admin.dashboard.top" />
 
       {/* Stats cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -319,9 +321,9 @@ export default function AdminDashboardPage() {
                 >
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
-                      <Badge variant="secondary" className="text-xs">
+                      <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
                         {actionLabels[activity.action] || activity.action}
-                      </Badge>
+                      </span>
                       <span className="text-sm">
                         {resourceLabels[activity.resource_type] || activity.resource_type}
                       </span>
@@ -360,6 +362,8 @@ export default function AdminDashboardPage() {
           </div>
         </CardContent>
       </Card>
+
+      <PluginSlot slot="admin.dashboard.bottom" />
     </div>
   )
 }

@@ -8,7 +8,9 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"auralogic/internal/config"
@@ -21,11 +23,24 @@ import (
 )
 
 type EmailService struct {
-	db        *gorm.DB
-	cfg       *config.SMTPConfig
-	appURL    string
-	dialer    *gomail.Dialer
-	templates map[string]*template.Template
+	db                  *gorm.DB
+	cfg                 *config.SMTPConfig
+	appURL              string
+	dialer              *gomail.Dialer
+	pluginManager       *PluginManagerService
+	mu                  sync.RWMutex
+	workerMu            sync.Mutex
+	workersRunning      bool
+	workerStopChan      chan struct{}
+	workerWG            sync.WaitGroup
+	templateDir         string
+	templates           map[string]*template.Template
+	templateSourceState map[string]emailTemplateSourceState
+}
+
+type emailTemplateSourceState struct {
+	Size    int64
+	ModTime time.Time
 }
 
 func NewEmailService(db *gorm.DB, cfg *config.SMTPConfig, appURL string) *EmailService {
@@ -41,8 +56,13 @@ func NewEmailService(db *gorm.DB, cfg *config.SMTPConfig, appURL string) *EmailS
 		log.Printf("Warning: Failed to load email templates: %v", err)
 	}
 
-	if !cfg.Enabled {
-		return service
+	service.RefreshConfig()
+	return service
+}
+
+func buildSMTPDialer(cfg *config.SMTPConfig) *gomail.Dialer {
+	if cfg == nil || !cfg.Enabled {
+		return nil
 	}
 
 	dialer := gomail.NewDialer(cfg.Host, cfg.Port, cfg.User, cfg.Password)
@@ -50,17 +70,125 @@ func NewEmailService(db *gorm.DB, cfg *config.SMTPConfig, appURL string) *EmailS
 		ServerName:         cfg.Host,
 		InsecureSkipVerify: false,
 	}
-	service.dialer = dialer
+	return dialer
+}
 
-	return service
+// RefreshConfig 重建运行时 SMTP 配置，并按启用状态启停后台 worker。
+func (s *EmailService) RefreshConfig() {
+	if s == nil {
+		return
+	}
+
+	appURL := s.appURL
+	if runtimeCfg := config.GetConfig(); runtimeCfg != nil {
+		appURL = runtimeCfg.App.URL
+	}
+
+	s.mu.Lock()
+	s.appURL = appURL
+	s.dialer = buildSMTPDialer(s.cfg)
+	s.mu.Unlock()
+
+	if s.IsEnabled() {
+		s.Start()
+		return
+	}
+	s.Stop()
+}
+
+func (s *EmailService) SetPluginManager(pluginManager *PluginManagerService) {
+	s.pluginManager = pluginManager
+}
+
+func (s *EmailService) IsEnabled() bool {
+	if s == nil {
+		return false
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.cfg != nil && s.cfg.Enabled && s.dialer != nil
+}
+
+func (s *EmailService) Start() {
+	if !s.IsEnabled() {
+		return
+	}
+
+	s.workerMu.Lock()
+	defer s.workerMu.Unlock()
+
+	if s.workersRunning {
+		return
+	}
+
+	stopChan := make(chan struct{})
+	s.workerStopChan = stopChan
+	s.workersRunning = true
+	s.workerWG.Add(2)
+
+	go func() {
+		defer s.workerWG.Done()
+		s.processEmailQueueLoop(stopChan)
+	}()
+	go func() {
+		defer s.workerWG.Done()
+		s.processDelayedEmailsLoop(stopChan)
+	}()
+}
+
+func (s *EmailService) Stop() {
+	s.workerMu.Lock()
+	defer s.workerMu.Unlock()
+
+	if !s.workersRunning {
+		return
+	}
+
+	close(s.workerStopChan)
+	s.workerStopChan = nil
+	s.workersRunning = false
+	s.workerWG.Wait()
 }
 
 // loadTemplates 加载邮件模板（支持多语言: {event}_{locale}.html）
 func (s *EmailService) loadTemplates() error {
-	// 尝试多个路径查找模板目录
-	candidates := []string{
-		"templates/email",
+	return s.ReloadTemplates()
+}
+
+// ReloadTemplates 重新加载邮件模板，用于管理端编辑或运行时热更新后立即生效。
+func (s *EmailService) ReloadTemplates() error {
+	templateDir, err := s.resolveTemplateDir()
+	if err != nil {
+		return err
 	}
+
+	templates, sourceState, err := loadEmailTemplatesFromDir(templateDir)
+	if err != nil {
+		return err
+	}
+
+	s.mu.Lock()
+	s.templateDir = templateDir
+	s.templates = templates
+	s.templateSourceState = sourceState
+	s.mu.Unlock()
+
+	log.Printf("Loaded %d email templates from %s", len(templates), templateDir)
+	return nil
+}
+
+func (s *EmailService) resolveTemplateDir() (string, error) {
+	s.mu.RLock()
+	cachedDir := strings.TrimSpace(s.templateDir)
+	s.mu.RUnlock()
+
+	// 尝试多个路径查找模板目录
+	candidates := make([]string, 0, 4)
+	if cachedDir != "" {
+		candidates = append(candidates, cachedDir)
+	}
+	candidates = append(candidates, "templates/email")
 
 	// 基于可执行文件位置查找
 	if execPath, err := os.Executable(); err == nil {
@@ -73,7 +201,11 @@ func (s *EmailService) loadTemplates() error {
 
 	var absPath string
 	for _, dir := range candidates {
-		p, err := filepath.Abs(dir)
+		trimmedDir := strings.TrimSpace(dir)
+		if trimmedDir == "" {
+			continue
+		}
+		p, err := filepath.Abs(trimmedDir)
 		if err != nil {
 			continue
 		}
@@ -84,61 +216,131 @@ func (s *EmailService) loadTemplates() error {
 	}
 
 	if absPath == "" {
-		return fmt.Errorf("template directory not found, tried: %v", candidates)
+		return "", fmt.Errorf("template directory not found, tried: %v", candidates)
+	}
+	return absPath, nil
+}
+
+func loadEmailTemplatesFromDir(templateDir string) (map[string]*template.Template, map[string]emailTemplateSourceState, error) {
+	entries, err := os.ReadDir(templateDir)
+	if err != nil {
+		return nil, nil, fmt.Errorf("read email template directory failed: %w", err)
 	}
 
-	// 事件列表
-	events := []string{
-		"welcome",
-		"email_verification",
-		"order_created",
-		"order_paid",
-		"order_shipped",
-		"order_completed",
-		"order_cancelled",
-		"order_resubmit",
-		"ticket_created",
-		"ticket_reply",
-		"ticket_resolved",
-		"login_code",
-		"password_reset",
-	}
+	templates := make(map[string]*template.Template)
+	sourceState := make(map[string]emailTemplateSourceState)
+	legacyFallbacks := make(map[string]*template.Template)
 
-	locales := []string{"zh", "en"}
-
-	for _, event := range events {
-		for _, locale := range locales {
-			key := event + "_" + locale
-			filename := key + ".html"
-			tmplPath := filepath.Join(absPath, filename)
-
-			tmpl, err := template.ParseFiles(tmplPath)
-			if err != nil {
-				log.Printf("Warning: Failed to load template %s: %v", filename, err)
-				continue
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(strings.ToLower(entry.Name()), ".html") {
+			continue
+		}
+		fullPath := filepath.Join(templateDir, entry.Name())
+		info, infoErr := entry.Info()
+		if infoErr != nil {
+			log.Printf("Warning: Failed to stat email template %s: %v", entry.Name(), infoErr)
+			continue
+		}
+		tmpl, parseErr := template.ParseFiles(fullPath)
+		if parseErr != nil {
+			log.Printf("Warning: Failed to load template %s: %v", entry.Name(), parseErr)
+			sourceState[entry.Name()] = emailTemplateSourceState{
+				Size:    info.Size(),
+				ModTime: info.ModTime().UTC(),
 			}
-			s.templates[key] = tmpl
+			continue
 		}
 
-		// 兼容旧模板（无语言后缀），作为 en 的回退
-		oldFilename := event + ".html"
-		oldPath := filepath.Join(absPath, oldFilename)
-		if _, err := os.Stat(oldPath); err == nil {
-			tmpl, err := template.ParseFiles(oldPath)
-			if err == nil {
-				// 仅当对应语言模板不存在时用作回退
-				if _, exists := s.templates[event+"_en"]; !exists {
-					s.templates[event+"_en"] = tmpl
-				}
-				if _, exists := s.templates[event+"_zh"]; !exists {
-					s.templates[event+"_zh"] = tmpl
-				}
-			}
+		key, event, locale := pluginHostParseEmailTemplateFilename(entry.Name())
+		if locale == "" {
+			legacyFallbacks[event] = tmpl
+		} else {
+			templates[key] = tmpl
+		}
+		sourceState[entry.Name()] = emailTemplateSourceState{
+			Size:    info.Size(),
+			ModTime: info.ModTime().UTC(),
 		}
 	}
 
-	log.Printf("Loaded %d email templates from %s", len(s.templates), absPath)
-	return nil
+	for event, tmpl := range legacyFallbacks {
+		if _, exists := templates[event+"_en"]; !exists {
+			templates[event+"_en"] = tmpl
+		}
+		if _, exists := templates[event+"_zh"]; !exists {
+			templates[event+"_zh"] = tmpl
+		}
+	}
+
+	return templates, sourceState, nil
+}
+
+func snapshotEmailTemplateSourceState(templateDir string) (map[string]emailTemplateSourceState, error) {
+	entries, err := os.ReadDir(templateDir)
+	if err != nil {
+		return nil, err
+	}
+
+	sourceState := make(map[string]emailTemplateSourceState)
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(strings.ToLower(entry.Name()), ".html") {
+			continue
+		}
+		info, infoErr := entry.Info()
+		if infoErr != nil {
+			return nil, infoErr
+		}
+		sourceState[entry.Name()] = emailTemplateSourceState{
+			Size:    info.Size(),
+			ModTime: info.ModTime().UTC(),
+		}
+	}
+	return sourceState, nil
+}
+
+func emailTemplateSourceStateEqual(left map[string]emailTemplateSourceState, right map[string]emailTemplateSourceState) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for key, leftValue := range left {
+		rightValue, exists := right[key]
+		if !exists {
+			return false
+		}
+		if leftValue.Size != rightValue.Size || !leftValue.ModTime.Equal(rightValue.ModTime) {
+			return false
+		}
+	}
+	return true
+}
+
+func (s *EmailService) refreshTemplatesIfChanged() {
+	s.mu.RLock()
+	templateDir := strings.TrimSpace(s.templateDir)
+	currentState := make(map[string]emailTemplateSourceState, len(s.templateSourceState))
+	for key, value := range s.templateSourceState {
+		currentState[key] = value
+	}
+	s.mu.RUnlock()
+
+	if templateDir == "" {
+		if err := s.ReloadTemplates(); err != nil {
+			log.Printf("Warning: Failed to reload email templates: %v", err)
+		}
+		return
+	}
+
+	nextState, err := snapshotEmailTemplateSourceState(templateDir)
+	if err != nil {
+		log.Printf("Warning: Failed to stat email templates for hot reload: %v", err)
+		return
+	}
+	if emailTemplateSourceStateEqual(currentState, nextState) {
+		return
+	}
+	if err := s.ReloadTemplates(); err != nil {
+		log.Printf("Warning: Failed to hot reload email templates: %v", err)
+	}
 }
 
 // resolveLocale 解析语言，默认 en
@@ -151,14 +353,18 @@ func resolveLocale(locale string) string {
 
 // renderTemplate 渲染模板（支持多语言）
 func (s *EmailService) renderTemplate(event, locale string, data interface{}) (string, error) {
+	s.refreshTemplatesIfChanged()
+
 	key := event + "_" + resolveLocale(locale)
+	s.mu.RLock()
 	tmpl, ok := s.templates[key]
 	if !ok {
 		// 回退到 en
 		tmpl, ok = s.templates[event+"_en"]
-		if !ok {
-			return "", fmt.Errorf("template %s not found", key)
-		}
+	}
+	s.mu.RUnlock()
+	if !ok {
+		return "", fmt.Errorf("template %s not found", key)
 	}
 
 	var buf bytes.Buffer
@@ -241,55 +447,134 @@ func (s *EmailService) SendMarketingAnnouncementEmailWithBatch(user *models.User
 
 // SendEmail 发送邮件
 func (s *EmailService) SendEmail(to, subject, content string) error {
-	if !s.cfg.Enabled {
+	s.mu.RLock()
+	enabled := s.cfg != nil && s.cfg.Enabled && s.dialer != nil
+	fromEmail := ""
+	var dialer *gomail.Dialer
+	if s.cfg != nil {
+		fromEmail = s.cfg.FromEmail
+	}
+	dialer = s.dialer
+	s.mu.RUnlock()
+
+	if !enabled {
 		log.Printf("Email service is disabled, skipping email to %s", to)
 		return nil
 	}
 
 	m := gomail.NewMessage()
-	m.SetHeader("From", s.cfg.FromEmail)
+	m.SetHeader("From", fromEmail)
 	m.SetHeader("To", to)
 	m.SetHeader("Subject", subject)
 	m.SetBody("text/html", content)
 
-	return s.dialer.DialAndSend(m)
+	return dialer.DialAndSend(m)
 }
 
-// checkMessageRateLimit checks hourly/daily Redis counters for a recipient.
-// Returns true if rate limit is exceeded.
-func checkMessageRateLimit(prefix, recipient string, rl config.MessageRateLimit) bool {
-	if rl.Hourly <= 0 && rl.Daily <= 0 {
-		return false
+func buildEmailHookPayload(emailLog *models.EmailLog) map[string]interface{} {
+	if emailLog == nil {
+		return map[string]interface{}{}
 	}
-	ctx := cache.RedisClient.Context()
-	now := time.Now()
-	if rl.Hourly > 0 {
-		key := fmt.Sprintf("%s_rate:%s:%s", prefix, recipient, now.Format("2006010215"))
-		val, _ := cache.RedisClient.Get(ctx, key).Int()
-		if val >= rl.Hourly {
-			return true
-		}
+
+	return map[string]interface{}{
+		"email_id":      emailLog.ID,
+		"to":            emailLog.ToEmail,
+		"subject":       emailLog.Subject,
+		"content":       emailLog.Content,
+		"event_type":    emailLog.EventType,
+		"order_id":      emailLog.OrderID,
+		"user_id":       emailLog.UserID,
+		"batch_id":      emailLog.BatchID,
+		"status":        emailLog.Status,
+		"error_message": emailLog.ErrorMessage,
+		"retry_count":   emailLog.RetryCount,
+		"expire_at":     emailLog.ExpireAt,
+		"sent_at":       emailLog.SentAt,
+		"created_at":    emailLog.CreatedAt,
+		"updated_at":    emailLog.UpdatedAt,
 	}
-	if rl.Daily > 0 {
-		key := fmt.Sprintf("%s_rate:%s:%s", prefix, recipient, now.Format("20060102"))
-		val, _ := cache.RedisClient.Get(ctx, key).Int()
-		if val >= rl.Daily {
-			return true
-		}
-	}
-	return false
 }
 
-// incrMessageRateCounters increments hourly/daily Redis counters for a recipient.
-func incrMessageRateCounters(prefix, recipient string) {
-	ctx := cache.RedisClient.Context()
-	now := time.Now()
-	hourKey := fmt.Sprintf("%s_rate:%s:%s", prefix, recipient, now.Format("2006010215"))
-	dayKey := fmt.Sprintf("%s_rate:%s:%s", prefix, recipient, now.Format("20060102"))
-	cache.RedisClient.Incr(ctx, hourKey)
-	cache.RedisClient.Expire(ctx, hourKey, time.Hour)
-	cache.RedisClient.Incr(ctx, dayKey)
-	cache.RedisClient.Expire(ctx, dayKey, 24*time.Hour)
+func (s *EmailService) applyEmailSendBeforeHook(emailLog *models.EmailLog) error {
+	if s.pluginManager == nil || emailLog == nil {
+		return nil
+	}
+
+	payload := buildEmailHookPayload(emailLog)
+	payload["source"] = "email_queue"
+	execCtx := buildServiceHookExecutionContext(emailLog.UserID, emailLog.OrderID, map[string]string{
+		"hook_source": "email_queue",
+		"email_id":    strconv.FormatUint(uint64(emailLog.ID), 10),
+		"event_type":  strings.TrimSpace(emailLog.EventType),
+	})
+	hookResult, hookErr := s.pluginManager.ExecuteHook(HookExecutionRequest{
+		Hook:    "email.send.before",
+		Payload: payload,
+	}, execCtx)
+	if hookErr != nil {
+		log.Printf("email.send.before hook execution failed: email=%d err=%v", emailLog.ID, hookErr)
+		return nil
+	}
+	if hookResult == nil {
+		return nil
+	}
+	if hookResult.Blocked {
+		reason := strings.TrimSpace(hookResult.BlockReason)
+		if reason == "" {
+			reason = "Email sending rejected by plugin"
+		}
+		return newHookBlockedError(reason)
+	}
+	if hookResult.Payload == nil {
+		return nil
+	}
+	if value, exists := hookResult.Payload["to"]; exists {
+		updated, convErr := serviceHookValueToString(value)
+		if convErr != nil {
+			log.Printf("email.send.before to patch ignored: email=%d err=%v", emailLog.ID, convErr)
+		} else {
+			emailLog.ToEmail = strings.TrimSpace(updated)
+		}
+	}
+	if value, exists := hookResult.Payload["subject"]; exists {
+		updated, convErr := serviceHookValueToString(value)
+		if convErr != nil {
+			log.Printf("email.send.before subject patch ignored: email=%d err=%v", emailLog.ID, convErr)
+		} else {
+			emailLog.Subject = strings.TrimSpace(updated)
+		}
+	}
+	if value, exists := hookResult.Payload["content"]; exists {
+		updated, convErr := serviceHookValueToString(value)
+		if convErr != nil {
+			log.Printf("email.send.before content patch ignored: email=%d err=%v", emailLog.ID, convErr)
+		} else {
+			emailLog.Content = updated
+		}
+	}
+	return nil
+}
+
+func (s *EmailService) emitEmailSendAfterHook(emailLog *models.EmailLog) {
+	if s.pluginManager == nil || emailLog == nil {
+		return
+	}
+
+	payload := buildEmailHookPayload(emailLog)
+	payload["source"] = "email_queue"
+	go func(execCtx *ExecutionContext, hookPayload map[string]interface{}, emailID uint) {
+		_, hookErr := s.pluginManager.ExecuteHook(HookExecutionRequest{
+			Hook:    "email.send.after",
+			Payload: hookPayload,
+		}, execCtx)
+		if hookErr != nil {
+			log.Printf("email.send.after hook execution failed: email=%d err=%v", emailID, hookErr)
+		}
+	}(cloneServiceHookExecutionContext(buildServiceHookExecutionContext(emailLog.UserID, emailLog.OrderID, map[string]string{
+		"hook_source": "email_queue",
+		"email_id":    strconv.FormatUint(uint64(emailLog.ID), 10),
+		"event_type":  strings.TrimSpace(emailLog.EventType),
+	})), payload, emailLog.ID)
 }
 
 // QueueEmail 将邮件加入队列
@@ -298,10 +583,25 @@ func (s *EmailService) QueueEmail(to, subject, content, eventType string, orderI
 }
 
 func (s *EmailService) queueEmail(to, subject, content, eventType string, orderID, userID, batchID *uint) error {
+	if !s.IsEnabled() {
+		return nil
+	}
+	if s.db == nil {
+		return fmt.Errorf("email log database is not initialized")
+	}
+	if cache.RedisClient == nil {
+		return fmt.Errorf("email queue redis client is not initialized")
+	}
+
 	rl := config.GetConfig().EmailRateLimit
 
-	// Check rate limit
-	if checkMessageRateLimit("email", to, rl) {
+	allowed, availableAt, rateLimitErr := reserveMessageRateLimitSlot("email", to, rl)
+	if rateLimitErr != nil {
+		log.Printf("Warning: email rate limit reservation failed for %s: %v", to, rateLimitErr)
+		allowed = true
+	}
+
+	if !allowed {
 		if rl.ExceedAction == "delay" {
 			// Push to delayed sorted set, use same 30-min ExpireAt as normal emails
 			expireAt := time.Now().Add(30 * time.Minute)
@@ -321,7 +621,7 @@ func (s *EmailService) queueEmail(to, subject, content, eventType string, orderI
 			}
 			ctx := cache.RedisClient.Context()
 			cache.RedisClient.ZAdd(ctx, "email:delayed", &redis.Z{
-				Score:  float64(time.Now().Unix()),
+				Score:  float64(availableAt.Unix()),
 				Member: emailLog.ID,
 			})
 			return nil
@@ -330,8 +630,6 @@ func (s *EmailService) queueEmail(to, subject, content, eventType string, orderI
 		log.Printf("Email rate limited for %s, skipping", to)
 		return nil
 	}
-
-	incrMessageRateCounters("email", to)
 
 	expireAt := time.Now().Add(30 * time.Minute)
 	emailLog := &models.EmailLog{
@@ -360,9 +658,24 @@ func (s *EmailService) queueEmail(to, subject, content, eventType string, orderI
 
 // ProcessDelayedEmails periodically moves ready items from the delayed set to the main queue.
 func (s *EmailService) ProcessDelayedEmails() {
+	s.processDelayedEmailsLoop(nil)
+}
+
+func (s *EmailService) processDelayedEmailsLoop(stopChan <-chan struct{}) {
+	if !s.IsEnabled() || cache.RedisClient == nil {
+		return
+	}
+
 	ctx := cache.RedisClient.Context()
 	for {
-		time.Sleep(30 * time.Second)
+		timer := time.NewTimer(30 * time.Second)
+		select {
+		case <-stopChan:
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
+
 		now := float64(time.Now().Unix())
 		results, err := cache.RedisClient.ZRangeByScore(ctx, "email:delayed", &redis.ZRangeBy{
 			Min: "-inf", Max: fmt.Sprintf("%f", now), Count: 50,
@@ -371,6 +684,25 @@ func (s *EmailService) ProcessDelayedEmails() {
 			continue
 		}
 		for _, idStr := range results {
+			var emailLog models.EmailLog
+			if err := s.db.First(&emailLog, idStr).Error; err != nil {
+				cache.RedisClient.ZRem(ctx, "email:delayed", idStr)
+				continue
+			}
+
+			allowed, availableAt, rateLimitErr := reserveMessageRateLimitSlot("email", emailLog.ToEmail, config.GetConfig().EmailRateLimit)
+			if rateLimitErr != nil {
+				log.Printf("Warning: delayed email rate limit reservation failed for email=%s id=%s: %v", emailLog.ToEmail, idStr, rateLimitErr)
+				allowed = true
+			}
+			if !allowed {
+				cache.RedisClient.ZAdd(ctx, "email:delayed", &redis.Z{
+					Score:  float64(availableAt.Unix()),
+					Member: idStr,
+				})
+				continue
+			}
+
 			cache.RedisClient.ZRem(ctx, "email:delayed", idStr)
 			cache.RedisClient.RPush(ctx, "email:queue", idStr)
 		}
@@ -379,16 +711,31 @@ func (s *EmailService) ProcessDelayedEmails() {
 
 // ProcessEmailQueue 处理邮件队列
 func (s *EmailService) ProcessEmailQueue() {
-	if !s.cfg.Enabled {
+	s.processEmailQueueLoop(nil)
+}
+
+func (s *EmailService) processEmailQueueLoop(stopChan <-chan struct{}) {
+	if !s.IsEnabled() || cache.RedisClient == nil {
 		log.Println("Email service is disabled")
 		return
 	}
 
 	ctx := cache.RedisClient.Context()
 	for {
+		select {
+		case <-stopChan:
+			return
+		default:
+		}
+
 		// 从队列中取出邮件ID
 		result, err := cache.RedisClient.BLPop(ctx, 5*time.Second, "email:queue").Result()
 		if err != nil {
+			select {
+			case <-stopChan:
+				return
+			default:
+			}
 			continue
 		}
 
@@ -412,6 +759,24 @@ func (s *EmailService) ProcessEmailQueue() {
 				log.Printf("Failed to update expired email log %s: %v", emailID, err)
 				continue
 			}
+			s.emitEmailSendAfterHook(&emailLog)
+			s.syncMarketingTaskStatus(&emailLog)
+			continue
+		}
+
+		if err := s.applyEmailSendBeforeHook(&emailLog); err != nil {
+			emailLog.Status = models.EmailLogStatusFailed
+			emailLog.ErrorMessage = err.Error()
+			if isHookBlockedError(err) {
+				emailLog.RetryCount = 3
+			} else {
+				emailLog.RetryCount++
+			}
+			if saveErr := s.db.Save(&emailLog).Error; saveErr != nil {
+				log.Printf("Failed to save blocked email log %s: %v", emailID, saveErr)
+				continue
+			}
+			s.emitEmailSendAfterHook(&emailLog)
 			s.syncMarketingTaskStatus(&emailLog)
 			continue
 		}
@@ -438,6 +803,7 @@ func (s *EmailService) ProcessEmailQueue() {
 			log.Printf("Failed to save email log %s: %v", emailID, err)
 			continue
 		}
+		s.emitEmailSendAfterHook(&emailLog)
 		s.syncMarketingTaskStatus(&emailLog)
 	}
 }

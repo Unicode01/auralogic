@@ -1,8 +1,15 @@
 'use client'
 
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { getOperationLogs, getEmailLogs, getSmsLogs, getLogStatistics, retryFailedEmails, getInventoryLogs } from '@/lib/api'
+import {
+  getOperationLogs,
+  getEmailLogs,
+  getSmsLogs,
+  getLogStatistics,
+  retryFailedEmails,
+  getInventoryLogs,
+} from '@/lib/api'
 import { DataTable } from '@/components/admin/data-table'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -15,20 +22,123 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useToast } from '@/hooks/use-toast'
-import { FileText, Mail, BarChart3, RefreshCw, Search, Package, Smartphone } from 'lucide-react'
+import { FileText, Mail, RefreshCw, Package, Smartphone } from 'lucide-react'
 import { formatDate } from '@/lib/utils'
 import { useLocale } from '@/hooks/use-locale'
 import { getTranslations } from '@/lib/i18n'
 import { usePageTitle } from '@/hooks/use-page-title'
+import { resolveApiErrorMessage } from '@/lib/api-error'
+import { PluginSlot } from '@/components/plugins/plugin-slot'
+
+const operationResourceOrder = [
+  'auth',
+  'order',
+  'user',
+  'admin',
+  'api_key',
+  'product',
+  'inventory',
+  'payment_method',
+  'payment',
+  'marketing_batch',
+  'plugin',
+  'system',
+  'system_config',
+] as const
+
+const operationActionsByResource: Record<string, string[]> = {
+  auth: ['login'],
+  order: [
+    'assign_tracking',
+    'complete',
+    'cancel',
+    'refund',
+    'mark_paid',
+    'deliver_virtual_stock',
+    'delete',
+    'request_resubmit',
+    'batch_complete_orders',
+    'batch_cancel_orders',
+    'batch_delete_orders',
+    'create_draft',
+    'create_draft_failed',
+    'admin_create_order',
+    'update_price',
+    'form_submit',
+    'form_submit_failed',
+    'payment_method_selected',
+  ],
+  user: ['create', 'update', 'delete', 'register', 'verify_email', 'auto_create'],
+  admin: ['create', 'update', 'delete', 'login'],
+  api_key: ['create', 'update', 'delete'],
+  product: ['create', 'update', 'delete'],
+  inventory: ['create', 'update', 'delete', 'adjust_stock'],
+  payment_method: [
+    'create',
+    'update',
+    'delete',
+    'import',
+    'payment_method_market_preview',
+    'payment_method_init',
+    'payment_method_legacy_migration',
+  ],
+  payment: [
+    'payment_method_selected',
+    'payment_success',
+    'payment_update_failed',
+    'payment_polling_add',
+    'payment_polling_timeout',
+    'payment_polling_max_retries',
+    'payment_polling_check_failed',
+    'payment_polling_backfill',
+    'check_auto_delivery_failed',
+    'virtual_delivery_failed',
+    'order_auto_cancelled',
+  ],
+  marketing_batch: ['queue_marketing'],
+  plugin: [],
+  system: [
+    'maintenance',
+    'order_cancel_service_start',
+    'order_cancel_service_stop',
+    'order_auto_cancel',
+    'payment_polling_start',
+    'payment_polling_stop',
+    'payment_polling_backfill',
+    'payment_polling_recover',
+    'ticket_attachment_cleanup_start',
+    'ticket_attachment_cleanup_stop',
+    'ticket_attachment_cleanup',
+    'ticket_auto_close_start',
+    'ticket_auto_close_stop',
+    'ticket_auto_close',
+  ],
+  system_config: ['update'],
+}
+
+function uniqueStrings(values: string[]): string[] {
+  const seen = new Set<string>()
+  const out: string[] = []
+  values.forEach((value) => {
+    const normalized = String(value || '').trim()
+    if (!normalized || seen.has(normalized)) {
+      return
+    }
+    seen.add(normalized)
+    out.push(normalized)
+  })
+  return out
+}
+
+function humanizeLogToken(value: string): string {
+  return String(value || '')
+    .trim()
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (char) => char.toUpperCase())
+}
 
 export default function LogsPage() {
   const { locale } = useLocale()
@@ -73,6 +183,8 @@ export default function LogsPage() {
 
   const queryClient = useQueryClient()
   const toast = useToast()
+  const resolveLogError = (error: unknown, fallback: string) =>
+    resolveApiErrorMessage(error, t, fallback)
 
   // 操作日志查询
   const { data: operationLogs, isLoading: operationLoading } = useQuery({
@@ -101,14 +213,273 @@ export default function LogsPage() {
   // 库存日志查询
   const { data: inventoryLogs, isLoading: inventoryLoading } = useQuery({
     queryKey: ['inventoryLogs', inventoryPage, inventoryFilters],
-    queryFn: () => getInventoryLogs({
-      ...inventoryFilters,
-      inventory_id: inventoryFilters.inventory_id ? (parseInt(inventoryFilters.inventory_id) || undefined) : undefined,
-      page: inventoryPage,
-      limit: 20
-    }),
+    queryFn: () =>
+      getInventoryLogs({
+        ...inventoryFilters,
+        inventory_id: inventoryFilters.inventory_id
+          ? parseInt(inventoryFilters.inventory_id) || undefined
+          : undefined,
+        page: inventoryPage,
+        limit: 20,
+      }),
   })
-
+  const activeLogTabLabel =
+    activeTab === 'operations'
+      ? t.admin.operationLogs
+      : activeTab === 'emails'
+        ? t.admin.emailLogs
+        : activeTab === 'inventories'
+          ? t.admin.inventoryLogs
+          : activeTab === 'sms'
+            ? t.admin.smsLogs
+            : t.admin.systemLogs
+  const activeLogFilters = (
+    activeTab === 'operations'
+      ? [
+          operationFilters.action,
+          operationFilters.resource_type,
+          operationFilters.user_id,
+          operationFilters.start_date,
+          operationFilters.end_date,
+        ]
+      : activeTab === 'emails'
+        ? [
+            emailFilters.status,
+            emailFilters.event_type,
+            emailFilters.to_email,
+            emailFilters.start_date,
+            emailFilters.end_date,
+          ]
+        : activeTab === 'inventories'
+          ? [
+              inventoryFilters.source,
+              inventoryFilters.type,
+              inventoryFilters.inventory_id,
+              inventoryFilters.order_no,
+              inventoryFilters.start_date,
+              inventoryFilters.end_date,
+            ]
+          : [
+              smsFilters.status,
+              smsFilters.event_type,
+              smsFilters.phone,
+              smsFilters.start_date,
+              smsFilters.end_date,
+            ]
+  ).filter(Boolean)
+  const resolveOperationResourceLabel = (resourceType: string) => {
+    switch (resourceType) {
+      case 'auth':
+        return t.admin.resourceAuth
+      case 'order':
+        return t.admin.resourceOrder
+      case 'user':
+        return t.admin.resourceUser
+      case 'admin':
+        return t.admin.resourceAdmin
+      case 'api_key':
+        return t.admin.resourceApiKey
+      case 'product':
+        return t.admin.logResourceProduct
+      case 'inventory':
+        return t.admin.logResourceInventory
+      case 'payment_method':
+        return t.admin.logResourcePaymentMethod
+      case 'payment':
+        return t.admin.logResourcePayment
+      case 'marketing_batch':
+        return t.admin.logResourceMarketingBatch
+      case 'plugin':
+        return t.admin.logResourcePlugin
+      case 'system':
+        return t.admin.system
+      case 'system_config':
+        return t.admin.logResourceSystemConfig
+      default:
+        return locale === 'zh' ? String(resourceType || '') : humanizeLogToken(resourceType)
+    }
+  }
+  const resolveOperationActionLabel = (action: string) => {
+    switch (action) {
+      case 'create':
+        return t.admin.actionCreate
+      case 'update':
+        return t.admin.actionUpdate
+      case 'delete':
+        return t.admin.actionDelete
+      case 'login':
+        return t.admin.actionLogin
+      case 'register':
+        return t.admin.logActionRegister
+      case 'verify_email':
+        return t.admin.logActionVerifyEmail
+      case 'assign_tracking':
+        return t.admin.logActionAssignTracking
+      case 'complete':
+        return t.admin.logActionComplete
+      case 'cancel':
+        return t.admin.logActionCancel
+      case 'refund':
+        return t.admin.logActionRefund
+      case 'mark_paid':
+        return t.admin.logActionMarkPaid
+      case 'deliver_virtual_stock':
+        return t.admin.logActionDeliverVirtualStock
+      case 'request_resubmit':
+        return t.admin.logActionRequestResubmit
+      case 'batch_complete_orders':
+        return t.admin.logActionBatchCompleteOrders
+      case 'batch_cancel_orders':
+        return t.admin.logActionBatchCancelOrders
+      case 'batch_delete_orders':
+        return t.admin.logActionBatchDeleteOrders
+      case 'create_draft':
+        return t.admin.logActionCreateDraft
+      case 'create_draft_failed':
+        return t.admin.logActionCreateDraftFailed
+      case 'admin_create_order':
+        return t.admin.logActionAdminCreateOrder
+      case 'update_price':
+        return t.admin.logActionUpdatePrice
+      case 'form_submit':
+        return t.admin.logActionFormSubmit
+      case 'form_submit_failed':
+        return t.admin.logActionFormSubmitFailed
+      case 'payment_method_selected':
+        return t.admin.logActionPaymentMethodSelected
+      case 'adjust_stock':
+        return t.admin.logActionAdjustStock
+      case 'import':
+        return t.admin.logActionImport
+      case 'payment_method_market_preview':
+        return t.admin.logActionPaymentMethodMarketPreview
+      case 'payment_method_init':
+        return t.admin.logActionPaymentMethodInit
+      case 'payment_method_legacy_migration':
+        return t.admin.logActionPaymentMethodLegacyMigration
+      case 'payment_success':
+        return t.admin.logActionPaymentSuccess
+      case 'payment_update_failed':
+        return t.admin.logActionPaymentUpdateFailed
+      case 'payment_polling_add':
+        return t.admin.logActionPaymentPollingAdd
+      case 'payment_polling_timeout':
+        return t.admin.logActionPaymentPollingTimeout
+      case 'payment_polling_max_retries':
+        return t.admin.logActionPaymentPollingMaxRetries
+      case 'payment_polling_check_failed':
+        return t.admin.logActionPaymentPollingCheckFailed
+      case 'payment_polling_backfill':
+        return t.admin.logActionPaymentPollingBackfill
+      case 'check_auto_delivery_failed':
+        return t.admin.logActionCheckAutoDeliveryFailed
+      case 'virtual_delivery_failed':
+        return t.admin.logActionVirtualDeliveryFailed
+      case 'order_auto_cancelled':
+        return t.admin.logActionOrderAutoCancelled
+      case 'queue_marketing':
+        return t.admin.logActionQueueMarketing
+      case 'maintenance':
+        return t.admin.logActionMaintenance
+      case 'order_cancel_service_start':
+        return t.admin.logActionOrderCancelServiceStart
+      case 'order_cancel_service_stop':
+        return t.admin.logActionOrderCancelServiceStop
+      case 'order_auto_cancel':
+        return t.admin.logActionOrderAutoCancel
+      case 'payment_polling_start':
+        return t.admin.logActionPaymentPollingStart
+      case 'payment_polling_stop':
+        return t.admin.logActionPaymentPollingStop
+      case 'payment_polling_recover':
+        return t.admin.logActionPaymentPollingRecover
+      case 'ticket_attachment_cleanup_start':
+        return t.admin.logActionTicketAttachmentCleanupStart
+      case 'ticket_attachment_cleanup_stop':
+        return t.admin.logActionTicketAttachmentCleanupStop
+      case 'ticket_attachment_cleanup':
+        return t.admin.logActionTicketAttachmentCleanup
+      case 'ticket_auto_close_start':
+        return t.admin.logActionTicketAutoCloseStart
+      case 'ticket_auto_close_stop':
+        return t.admin.logActionTicketAutoCloseStop
+      case 'ticket_auto_close':
+        return t.admin.logActionTicketAutoClose
+      default:
+        return locale === 'zh' ? String(action || '') : humanizeLogToken(action)
+    }
+  }
+  const operationResourceOptions = useMemo(() => {
+    const observedResourceTypes = uniqueStrings(
+      (operationLogs?.data?.items || []).map((item: any) => item?.resource_type)
+    )
+    const orderedValues = uniqueStrings([
+      ...operationResourceOrder,
+      ...observedResourceTypes,
+    ])
+    return orderedValues.map((value) => ({
+      value,
+      label: resolveOperationResourceLabel(value),
+    }))
+  }, [operationLogs?.data?.items, t])
+  const operationActionOptions = useMemo(() => {
+    const selectedResourceType = operationFilters.resource_type
+    const defaultActions = selectedResourceType
+      ? operationActionsByResource[selectedResourceType] || []
+      : Object.values(operationActionsByResource).flat()
+    const observedActions = uniqueStrings(
+      (operationLogs?.data?.items || []).map((item: any) => item?.action)
+    )
+    const orderedValues = uniqueStrings([...defaultActions, ...observedActions])
+    return orderedValues.map((value) => ({
+      value,
+      label: resolveOperationActionLabel(value),
+    }))
+  }, [operationFilters.resource_type, operationLogs?.data?.items, t])
+  const adminLogsPluginContext = {
+    view: 'admin_logs',
+    active_tab: activeTab,
+    filters: {
+      operations: operationFilters,
+      emails: emailFilters,
+      inventories: inventoryFilters,
+      sms: smsFilters,
+    },
+    pagination: {
+      operations: {
+        page: operationPage,
+        total_pages: operationLogs?.data?.pagination?.total_pages,
+        total: operationLogs?.data?.pagination?.total,
+        limit: operationLogs?.data?.pagination?.limit,
+      },
+      emails: {
+        page: emailPage,
+        total_pages: emailLogs?.data?.pagination?.total_pages,
+        total: emailLogs?.data?.pagination?.total,
+        limit: emailLogs?.data?.pagination?.limit,
+      },
+      inventories: {
+        page: inventoryPage,
+        total_pages: inventoryLogs?.data?.pagination?.total_pages,
+        total: inventoryLogs?.data?.pagination?.total,
+        limit: inventoryLogs?.data?.pagination?.limit,
+      },
+      sms: {
+        page: smsPage,
+        total_pages: smsLogs?.data?.pagination?.total_pages,
+        total: smsLogs?.data?.pagination?.total,
+        limit: smsLogs?.data?.pagination?.limit,
+      },
+    },
+    selection: {
+      selected_email_count: selectedEmails.length,
+      selected_email_ids: selectedEmails.slice(0, 20),
+    },
+    summary: {
+      active_filter_count: activeLogFilters.length,
+      active_tab_label: activeLogTabLabel,
+    },
+  }
   // 重试邮件
   const retryMutation = useMutation<any, Error, number[]>({
     mutationFn: async (emailIds: number[]) => {
@@ -119,8 +490,8 @@ export default function LogsPage() {
       queryClient.invalidateQueries({ queryKey: ['emailLogs'] })
       setSelectedEmails([])
     },
-    onError: (error: any) => {
-      toast.error(error.message || t.admin.retryError)
+    onError: (error: unknown) => {
+      toast.error(resolveLogError(error, t.admin.retryError))
     },
   })
 
@@ -137,7 +508,7 @@ export default function LogsPage() {
       header: t.admin.actions,
       accessorKey: 'action',
       cell: ({ row }: { row: { original: any } }) => (
-        <Badge variant="outline">{row.original.action}</Badge>
+        <Badge variant="outline">{resolveOperationActionLabel(row.original.action)}</Badge>
       ),
     },
     {
@@ -145,7 +516,7 @@ export default function LogsPage() {
       accessorKey: 'resource_type',
       cell: ({ row }: { row: { original: any } }) =>
         row.original.resource_type ? (
-          <span className="text-sm">{row.original.resource_type}</span>
+          <span className="text-sm">{resolveOperationResourceLabel(row.original.resource_type)}</span>
         ) : (
           <span className="text-muted-foreground">-</span>
         ),
@@ -170,7 +541,9 @@ export default function LogsPage() {
           </div>
         ) : row.original.user ? (
           <div className="flex flex-col">
-            <span className="text-sm font-medium">{row.original.user.name || row.original.user.email}</span>
+            <span className="text-sm font-medium">
+              {row.original.user.name || row.original.user.email}
+            </span>
             <span className="text-xs text-muted-foreground">{row.original.user.role}</span>
           </div>
         ) : (
@@ -182,7 +555,7 @@ export default function LogsPage() {
       accessorKey: 'ip_address',
       cell: ({ row }: { row: { original: any } }) =>
         row.original.ip_address ? (
-          <code className="text-xs bg-muted px-2 py-1 rounded">{row.original.ip_address}</code>
+          <code className="rounded bg-muted px-2 py-1 text-xs">{row.original.ip_address}</code>
         ) : (
           <span className="text-muted-foreground">-</span>
         ),
@@ -214,7 +587,7 @@ export default function LogsPage() {
       header: t.admin.subject,
       accessorKey: 'subject',
       cell: ({ row }: { row: { original: any } }) => (
-        <span className="text-sm truncate max-w-xs block">{row.original.subject}</span>
+        <span className="block max-w-xs truncate text-sm">{row.original.subject}</span>
       ),
     },
     {
@@ -256,14 +629,22 @@ export default function LogsPage() {
     {
       header: t.admin.sentTime,
       cell: ({ row }: { row: { original: any } }) =>
-        row.original.sent_at ? formatDate(row.original.sent_at) : <span className="text-muted-foreground">-</span>,
+        row.original.sent_at ? (
+          formatDate(row.original.sent_at)
+        ) : (
+          <span className="text-muted-foreground">-</span>
+        ),
     },
   ]
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold">{t.admin.systemLogs}</h1>
+      <PluginSlot slot="admin.logs.top" context={adminLogsPluginContext} />
+      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+        <div>
+          <h1 className="text-3xl font-bold">{t.admin.systemLogs}</h1>
+          <p className="mt-1 text-sm text-muted-foreground">{activeLogTabLabel}</p>
+        </div>
       </div>
 
       {/* 统计卡片 */}
@@ -275,7 +656,9 @@ export default function LogsPage() {
               <FileText className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{statistics.data.operation_log_count?.today ?? 0}</div>
+              <div className="text-2xl font-bold">
+                {statistics.data.operation_log_count?.today ?? 0}
+              </div>
               <p className="text-xs text-muted-foreground">
                 {t.admin.thisWeek}: {statistics.data.operation_log_count?.week ?? 0}
               </p>
@@ -287,7 +670,9 @@ export default function LogsPage() {
               <Mail className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{statistics.data.email_log_count?.today ?? 0}</div>
+              <div className="text-2xl font-bold">
+                {statistics.data.email_log_count?.today ?? 0}
+              </div>
               <p className="text-xs text-muted-foreground">
                 {t.admin.thisWeek}: {statistics.data.email_log_count?.week ?? 0}
               </p>
@@ -374,31 +759,18 @@ export default function LogsPage() {
             <CardContent>
               <div className="grid gap-4 md:grid-cols-5">
                 <div>
-                  <Label htmlFor="action">{t.admin.operationType}</Label>
-                  <Select
-                    value={operationFilters.action || 'all'}
-                    onValueChange={(value) =>
-                      setOperationFilters({ ...operationFilters, action: value === 'all' ? '' : value })
-                    }
-                  >
-                    <SelectTrigger id="action">
-                      <SelectValue placeholder={t.admin.all} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">{t.admin.all}</SelectItem>
-                      <SelectItem value="create">{t.admin.actionCreate}</SelectItem>
-                      <SelectItem value="update">{t.admin.actionUpdate}</SelectItem>
-                      <SelectItem value="delete">{t.admin.actionDelete}</SelectItem>
-                      <SelectItem value="login">{t.admin.actionLogin}</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
                   <Label htmlFor="resource_type">{t.admin.resourceType}</Label>
                   <Select
                     value={operationFilters.resource_type || 'all'}
                     onValueChange={(value) =>
-                      setOperationFilters({ ...operationFilters, resource_type: value === 'all' ? '' : value })
+                      {
+                        setOperationFilters({
+                          ...operationFilters,
+                          resource_type: value === 'all' ? '' : value,
+                          action: '',
+                        })
+                        setOperationPage(1)
+                      }
                     }
                   >
                     <SelectTrigger id="resource_type">
@@ -406,10 +778,38 @@ export default function LogsPage() {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">{t.admin.all}</SelectItem>
-                      <SelectItem value="order">{t.admin.order}</SelectItem>
-                      <SelectItem value="user">{t.admin.user}</SelectItem>
-                      <SelectItem value="admin">{t.admin.admin}</SelectItem>
-                      <SelectItem value="api_key">{t.admin.resourceApiKey}</SelectItem>
+                      {operationResourceOptions.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label htmlFor="action">{t.admin.operationType}</Label>
+                  <Select
+                    value={operationFilters.action || 'all'}
+                    onValueChange={(value) =>
+                      {
+                        setOperationFilters({
+                          ...operationFilters,
+                          action: value === 'all' ? '' : value,
+                        })
+                        setOperationPage(1)
+                      }
+                    }
+                  >
+                    <SelectTrigger id="action">
+                      <SelectValue placeholder={t.admin.all} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">{t.admin.all}</SelectItem>
+                      {operationActionOptions.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </div>
@@ -419,9 +819,10 @@ export default function LogsPage() {
                     id="start_date"
                     type="date"
                     value={operationFilters.start_date}
-                    onChange={(e) =>
+                    onChange={(e) => {
                       setOperationFilters({ ...operationFilters, start_date: e.target.value })
-                    }
+                      setOperationPage(1)
+                    }}
                   />
                 </div>
                 <div>
@@ -430,9 +831,10 @@ export default function LogsPage() {
                     id="end_date"
                     type="date"
                     value={operationFilters.end_date}
-                    onChange={(e) =>
+                    onChange={(e) => {
                       setOperationFilters({ ...operationFilters, end_date: e.target.value })
-                    }
+                      setOperationPage(1)
+                    }}
                   />
                 </div>
                 <div className="flex items-end">
@@ -503,9 +905,7 @@ export default function LogsPage() {
                     type="email"
                     placeholder={t.admin.searchEmail}
                     value={emailFilters.to_email}
-                    onChange={(e) =>
-                      setEmailFilters({ ...emailFilters, to_email: e.target.value })
-                    }
+                    onChange={(e) => setEmailFilters({ ...emailFilters, to_email: e.target.value })}
                   />
                 </div>
                 <div>
@@ -525,9 +925,7 @@ export default function LogsPage() {
                     id="email_end_date"
                     type="date"
                     value={emailFilters.end_date}
-                    onChange={(e) =>
-                      setEmailFilters({ ...emailFilters, end_date: e.target.value })
-                    }
+                    onChange={(e) => setEmailFilters({ ...emailFilters, end_date: e.target.value })}
                   />
                 </div>
                 <div className="flex items-end gap-2">
@@ -585,7 +983,10 @@ export default function LogsPage() {
                   <Select
                     value={inventoryFilters.source || 'all'}
                     onValueChange={(value) =>
-                      setInventoryFilters({ ...inventoryFilters, source: value === 'all' ? '' : value })
+                      setInventoryFilters({
+                        ...inventoryFilters,
+                        source: value === 'all' ? '' : value,
+                      })
                     }
                   >
                     <SelectTrigger id="inv_source">
@@ -603,7 +1004,10 @@ export default function LogsPage() {
                   <Select
                     value={inventoryFilters.type || 'all'}
                     onValueChange={(value) =>
-                      setInventoryFilters({ ...inventoryFilters, type: value === 'all' ? '' : value })
+                      setInventoryFilters({
+                        ...inventoryFilters,
+                        type: value === 'all' ? '' : value,
+                      })
                     }
                   >
                     <SelectTrigger id="inv_type">
@@ -683,18 +1087,25 @@ export default function LogsPage() {
               {
                 header: 'ID',
                 accessorKey: 'id',
-                cell: ({ row }: any) => <span className="text-xs text-muted-foreground">#{row.original.id}</span>,
+                cell: ({ row }: any) => (
+                  <span className="text-xs text-muted-foreground">#{row.original.id}</span>
+                ),
               },
               {
                 header: t.admin.inventoryIdLabel,
                 accessorKey: 'inventory_id',
-                cell: ({ row }: any) => <Badge variant="outline">{row.original.inventory_id}</Badge>,
+                cell: ({ row }: any) => (
+                  <Badge variant="outline">{row.original.inventory_id}</Badge>
+                ),
               },
               {
                 header: t.admin.type,
                 accessorKey: 'type',
                 cell: ({ row }: any) => {
-                  const typeMap: Record<string, { label: string; color: 'default' | 'secondary' | 'destructive' }> = {
+                  const typeMap: Record<
+                    string,
+                    { label: string; color: 'default' | 'secondary' | 'destructive' }
+                  > = {
                     in: { label: t.admin.stockIn, color: 'default' },
                     out: { label: t.admin.stockOut, color: 'destructive' },
                     reserve: { label: t.admin.reserve, color: 'secondary' },
@@ -704,7 +1115,10 @@ export default function LogsPage() {
                     deliver: { label: t.admin.stockDeliver, color: 'default' },
                     delete: { label: t.admin.stockDelete, color: 'destructive' },
                   }
-                  const config = typeMap[row.original.type] || { label: row.original.type, color: 'secondary' }
+                  const config = typeMap[row.original.type] || {
+                    label: row.original.type,
+                    color: 'secondary',
+                  }
                   return <Badge variant={config.color}>{config.label}</Badge>
                 },
               },
@@ -713,31 +1127,48 @@ export default function LogsPage() {
                 accessorKey: 'quantity',
                 cell: ({ row }: any) => (
                   <span className={row.original.quantity > 0 ? 'text-green-600' : 'text-red-600'}>
-                    {row.original.quantity > 0 ? '+' : ''}{row.original.quantity}
+                    {row.original.quantity > 0 ? '+' : ''}
+                    {row.original.quantity}
                   </span>
                 ),
               },
               {
                 header: t.admin.beforeChange,
                 accessorKey: 'before_stock',
-                cell: ({ row }: any) => row.original.source === 'virtual' ? <span className="text-muted-foreground">-</span> : row.original.before_stock,
+                cell: ({ row }: any) =>
+                  row.original.source === 'virtual' ? (
+                    <span className="text-muted-foreground">-</span>
+                  ) : (
+                    row.original.before_stock
+                  ),
               },
               {
                 header: t.admin.afterChange,
                 accessorKey: 'after_stock',
-                cell: ({ row }: any) => row.original.source === 'virtual' ? <span className="text-muted-foreground">-</span> : row.original.after_stock,
+                cell: ({ row }: any) =>
+                  row.original.source === 'virtual' ? (
+                    <span className="text-muted-foreground">-</span>
+                  ) : (
+                    row.original.after_stock
+                  ),
               },
               {
                 header: t.admin.batchNo,
                 accessorKey: 'batch_no',
-                cell: ({ row }: any) => row.original.batch_no ? (
-                  <code className="text-xs bg-muted px-2 py-1 rounded">{row.original.batch_no}</code>
-                ) : <span className="text-muted-foreground">-</span>,
+                cell: ({ row }: any) =>
+                  row.original.batch_no ? (
+                    <code className="rounded bg-muted px-2 py-1 text-xs">
+                      {row.original.batch_no}
+                    </code>
+                  ) : (
+                    <span className="text-muted-foreground">-</span>
+                  ),
               },
               {
                 header: t.admin.orderNoLabel,
                 accessorKey: 'order_no',
-                cell: ({ row }: any) => row.original.order_no || <span className="text-muted-foreground">-</span>,
+                cell: ({ row }: any) =>
+                  row.original.order_no || <span className="text-muted-foreground">-</span>,
               },
               {
                 header: t.admin.operator,
@@ -747,7 +1178,7 @@ export default function LogsPage() {
                 header: t.admin.reason,
                 accessorKey: 'reason',
                 cell: ({ row }: any) => (
-                  <span className="text-sm max-w-xs truncate block">{row.original.reason}</span>
+                  <span className="block max-w-xs truncate text-sm">{row.original.reason}</span>
                 ),
               },
               {
@@ -799,9 +1230,7 @@ export default function LogsPage() {
                     id="sms_phone"
                     placeholder={t.admin.smsPhone}
                     value={smsFilters.phone}
-                    onChange={(e) =>
-                      setSmsFilters({ ...smsFilters, phone: e.target.value })
-                    }
+                    onChange={(e) => setSmsFilters({ ...smsFilters, phone: e.target.value })}
                   />
                 </div>
                 <div>
@@ -810,9 +1239,7 @@ export default function LogsPage() {
                     id="sms_start_date"
                     type="date"
                     value={smsFilters.start_date}
-                    onChange={(e) =>
-                      setSmsFilters({ ...smsFilters, start_date: e.target.value })
-                    }
+                    onChange={(e) => setSmsFilters({ ...smsFilters, start_date: e.target.value })}
                   />
                 </div>
                 <div>
@@ -821,9 +1248,7 @@ export default function LogsPage() {
                     id="sms_end_date"
                     type="date"
                     value={smsFilters.end_date}
-                    onChange={(e) =>
-                      setSmsFilters({ ...smsFilters, end_date: e.target.value })
-                    }
+                    onChange={(e) => setSmsFilters({ ...smsFilters, end_date: e.target.value })}
                   />
                 </div>
                 <div className="flex items-end">
@@ -852,7 +1277,9 @@ export default function LogsPage() {
               {
                 header: 'ID',
                 accessorKey: 'id',
-                cell: ({ row }: any) => <span className="text-xs text-muted-foreground">#{row.original.id}</span>,
+                cell: ({ row }: any) => (
+                  <span className="text-xs text-muted-foreground">#{row.original.id}</span>
+                ),
               },
               {
                 header: t.admin.smsPhone,
@@ -863,7 +1290,7 @@ export default function LogsPage() {
                 header: t.admin.smsContent,
                 accessorKey: 'content',
                 cell: ({ row }: any) => (
-                  <span className="text-sm truncate max-w-xs block">{row.original.content}</span>
+                  <span className="block max-w-xs truncate text-sm">{row.original.content}</span>
                 ),
               },
               {
@@ -886,7 +1313,10 @@ export default function LogsPage() {
                 accessorKey: 'status',
                 cell: ({ row }: any) => {
                   const status = row.original.status
-                  const variants: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
+                  const variants: Record<
+                    string,
+                    'default' | 'secondary' | 'destructive' | 'outline'
+                  > = {
                     sent: 'default',
                     pending: 'secondary',
                     failed: 'destructive',

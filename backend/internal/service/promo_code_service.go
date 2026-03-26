@@ -1,11 +1,13 @@
 package service
 
 import (
-	"fmt"
+	"errors"
 	"strings"
 
 	"auralogic/internal/models"
+	"auralogic/internal/pkg/bizerr"
 	"auralogic/internal/repository"
+	"gorm.io/gorm"
 )
 
 type PromoCodeService struct {
@@ -24,13 +26,16 @@ func NewPromoCodeService(repo *repository.PromoCodeRepository, productRepo *repo
 func (s *PromoCodeService) Create(promoCode *models.PromoCode) error {
 	promoCode.Code = strings.ToUpper(strings.TrimSpace(promoCode.Code))
 	if promoCode.Code == "" {
-		return fmt.Errorf("promo code cannot be empty")
+		return bizerr.New("promo_code.codeRequired", "Promo code cannot be empty")
 	}
 
 	// 检查是否已存在
 	existing, err := s.repo.FindByCode(promoCode.Code)
 	if err == nil && existing.ID > 0 {
-		return fmt.Errorf("promo code already exists")
+		return bizerr.New("promo_code.codeAlreadyExists", "Promo code already exists")
+	}
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return err
 	}
 
 	return s.repo.Create(promoCode)
@@ -40,7 +45,7 @@ func (s *PromoCodeService) Create(promoCode *models.PromoCode) error {
 func (s *PromoCodeService) Update(id uint, updates *models.PromoCode) error {
 	existing, err := s.repo.FindByID(id)
 	if err != nil {
-		return err
+		return translatePromoCodeLookupError(err)
 	}
 
 	existing.Name = updates.Name
@@ -71,12 +76,12 @@ func (s *PromoCodeService) List(page, limit int, status string, search string) (
 func (s *PromoCodeService) Delete(id uint) error {
 	promoCode, err := s.repo.FindByID(id)
 	if err != nil {
-		return err
+		return translatePromoCodeLookupError(err)
 	}
 
 	// 有预留中的不允许删除
 	if promoCode.ReservedQuantity > 0 {
-		return fmt.Errorf("promo code has reserved usage, cannot delete")
+		return bizerr.New("promo_code.hasReservedUsage", "Promo code has reserved usage, cannot delete")
 	}
 
 	return s.repo.Delete(id)
@@ -85,13 +90,17 @@ func (s *PromoCodeService) Delete(id uint) error {
 // ValidateCode 验证优惠码是否可用于指定商品
 func (s *PromoCodeService) ValidateCode(code string, productIDs []uint, orderAmount int64) (*models.PromoCode, int64, error) {
 	code = strings.ToUpper(strings.TrimSpace(code))
+	if code == "" {
+		return nil, 0, bizerr.New("promo_code.codeRequired", "Promo code cannot be empty")
+	}
+
 	promoCode, err := s.repo.FindByCode(code)
 	if err != nil {
-		return nil, 0, fmt.Errorf("promo code not found")
+		return nil, 0, translatePromoCodeLookupError(err)
 	}
 
 	if !promoCode.IsAvailable() {
-		return nil, 0, fmt.Errorf("promo code is not available")
+		return nil, 0, bizerr.New("promo_code.unavailable", "Promo code is not available")
 	}
 
 	// 检查是否适用于指定商品
@@ -104,13 +113,14 @@ func (s *PromoCodeService) ValidateCode(code string, productIDs []uint, orderAmo
 			}
 		}
 		if !applicable {
-			return nil, 0, fmt.Errorf("promo code is not applicable to the selected products")
+			return nil, 0, bizerr.New("promo_code.notApplicable", "Promo code is not applicable to the selected products")
 		}
 	}
 
 	// 检查最低订单金额
 	if promoCode.MinOrderAmount > 0 && orderAmount < promoCode.MinOrderAmount {
-		return nil, 0, fmt.Errorf("order amount does not meet the minimum requirement")
+		return nil, 0, bizerr.New("promo_code.minOrderAmountNotMet", "Order amount does not meet the minimum requirement").
+			WithParams(map[string]interface{}{"minimum": promoCode.MinOrderAmount})
 	}
 
 	discount := promoCode.CalculateDiscount(orderAmount)
@@ -130,4 +140,14 @@ func (s *PromoCodeService) ReleaseReserve(promoCodeID uint, orderNo string) erro
 // Deduct 扣减优惠码
 func (s *PromoCodeService) Deduct(promoCodeID uint, orderNo string) error {
 	return s.repo.Deduct(promoCodeID, orderNo)
+}
+
+func translatePromoCodeLookupError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return bizerr.New("promo_code.notFound", "Promo code not found")
+	}
+	return err
 }

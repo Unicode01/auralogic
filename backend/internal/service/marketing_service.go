@@ -6,6 +6,7 @@ import (
 	"log"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"auralogic/internal/models"
@@ -21,9 +22,14 @@ const (
 )
 
 type MarketingService struct {
-	db           *gorm.DB
-	emailService *EmailService
-	smsService   *SMSService
+	db            *gorm.DB
+	emailService  *EmailService
+	smsService    *SMSService
+	pluginManager *PluginManagerService
+	workerMu      sync.Mutex
+	workerWG      sync.WaitGroup
+	workerStop    chan struct{}
+	workerRunning bool
 }
 
 func NewMarketingService(db *gorm.DB, emailService *EmailService, smsService *SMSService) *MarketingService {
@@ -32,6 +38,115 @@ func NewMarketingService(db *gorm.DB, emailService *EmailService, smsService *SM
 		emailService: emailService,
 		smsService:   smsService,
 	}
+}
+
+func (s *MarketingService) SetPluginManager(pluginManager *PluginManagerService) {
+	s.pluginManager = pluginManager
+}
+
+func (s *MarketingService) Start() {
+	if cache.RedisClient == nil {
+		log.Println("Marketing queue worker not started: redis client is not initialized")
+		return
+	}
+
+	s.workerMu.Lock()
+	defer s.workerMu.Unlock()
+
+	if s.workerRunning {
+		return
+	}
+
+	stopChan := make(chan struct{})
+	s.workerStop = stopChan
+	s.workerRunning = true
+	s.workerWG.Add(1)
+
+	go func() {
+		defer s.workerWG.Done()
+		s.processQueueLoop(stopChan)
+	}()
+}
+
+func (s *MarketingService) Stop() {
+	s.workerMu.Lock()
+	defer s.workerMu.Unlock()
+
+	if !s.workerRunning {
+		return
+	}
+
+	close(s.workerStop)
+	s.workerStop = nil
+	s.workerRunning = false
+	s.workerWG.Wait()
+}
+
+func buildMarketingBatchServiceHookPayload(batch *models.MarketingBatch) map[string]interface{} {
+	if batch == nil {
+		return map[string]interface{}{}
+	}
+
+	return map[string]interface{}{
+		"batch_id":             batch.ID,
+		"batch_no":             batch.BatchNo,
+		"title":                batch.Title,
+		"content":              batch.Content,
+		"send_email":           batch.SendEmail,
+		"send_sms":             batch.SendSMS,
+		"target_all":           batch.TargetAll,
+		"audience_mode":        batch.AudienceMode,
+		"audience_query":       batch.AudienceQuery,
+		"status":               batch.Status,
+		"total_tasks":          batch.TotalTasks,
+		"processed_tasks":      batch.ProcessedTasks,
+		"requested_user_count": batch.RequestedUserCount,
+		"targeted_users":       batch.TargetedUsers,
+		"email_sent":           batch.EmailSent,
+		"email_failed":         batch.EmailFailed,
+		"email_skipped":        batch.EmailSkipped,
+		"sms_sent":             batch.SmsSent,
+		"sms_failed":           batch.SmsFailed,
+		"sms_skipped":          batch.SmsSkipped,
+		"failed_reason":        batch.FailedReason,
+		"operator_id":          batch.OperatorID,
+		"operator_name":        batch.OperatorName,
+		"started_at":           batch.StartedAt,
+		"completed_at":         batch.CompletedAt,
+		"created_at":           batch.CreatedAt,
+		"updated_at":           batch.UpdatedAt,
+	}
+}
+
+func buildMarketingTaskServiceHookPayload(batch *models.MarketingBatch, user *models.User, task *models.MarketingBatchTask) map[string]interface{} {
+	payload := map[string]interface{}{}
+	if batch != nil {
+		for key, value := range buildMarketingBatchServiceHookPayload(batch) {
+			payload[key] = value
+		}
+	}
+	if task != nil {
+		payload["task_id"] = task.ID
+		payload["channel"] = task.Channel
+		payload["task_status"] = task.Status
+		payload["task_error_message"] = task.ErrorMessage
+		payload["task_processed_at"] = task.ProcessedAt
+		payload["task_created_at"] = task.CreatedAt
+		payload["task_updated_at"] = task.UpdatedAt
+		payload["user_id"] = task.UserID
+	}
+	if user != nil {
+		payload["user_email"] = user.Email
+		payload["user_name"] = user.Name
+		payload["user_locale"] = user.Locale
+		payload["user_email_verified"] = user.EmailVerified
+		payload["user_email_notify_marketing"] = user.EmailNotifyMarketing
+		payload["user_sms_notify_marketing"] = user.SMSNotifyMarketing
+		if user.Phone != nil {
+			payload["user_phone"] = *user.Phone
+		}
+	}
+	return payload
 }
 
 func (s *MarketingService) EnqueueBatch(batchID uint) error {
@@ -45,6 +160,10 @@ func (s *MarketingService) EnqueueBatch(batchID uint) error {
 }
 
 func (s *MarketingService) ProcessQueue() {
+	s.processQueueLoop(nil)
+}
+
+func (s *MarketingService) processQueueLoop(stopChan <-chan struct{}) {
 	if cache.RedisClient == nil {
 		log.Println("Marketing queue worker not started: redis client is not initialized")
 		return
@@ -52,8 +171,19 @@ func (s *MarketingService) ProcessQueue() {
 
 	ctx := cache.RedisClient.Context()
 	for {
+		select {
+		case <-stopChan:
+			return
+		default:
+		}
+
 		result, err := cache.RedisClient.BLPop(ctx, 5*time.Second, marketingQueueKey).Result()
 		if err != nil {
+			select {
+			case <-stopChan:
+				return
+			default:
+			}
 			if err == redis.Nil {
 				continue
 			}
@@ -118,6 +248,23 @@ func (s *MarketingService) processBatch(batchID uint) error {
 	if err := s.db.First(&batch, batchID).Error; err != nil {
 		return err
 	}
+	if s.pluginManager != nil {
+		afterPayload := buildMarketingBatchServiceHookPayload(&batch)
+		afterPayload["source"] = "marketing_worker"
+		go func(execCtx *ExecutionContext, payload map[string]interface{}, currentBatchID uint) {
+			_, hookErr := s.pluginManager.ExecuteHook(HookExecutionRequest{
+				Hook:    "marketing.batch.start.after",
+				Payload: payload,
+			}, execCtx)
+			if hookErr != nil {
+				log.Printf("marketing.batch.start.after hook execution failed: batch=%d err=%v", currentBatchID, hookErr)
+			}
+		}(cloneServiceHookExecutionContext(buildServiceHookExecutionContext(batch.OperatorID, nil, map[string]string{
+			"hook_source": "marketing_worker",
+			"hook_phase":  "start",
+			"batch_id":    strconv.FormatUint(uint64(batch.ID), 10),
+		})), afterPayload, batch.ID)
+	}
 
 	for {
 		var tasks []models.MarketingBatchTask
@@ -164,6 +311,159 @@ func (s *MarketingService) processBatch(batchID uint) error {
 		}).Error
 }
 
+func (s *MarketingService) executeMarketingTaskDispatchBeforeHook(
+	batch *models.MarketingBatch,
+	user *models.User,
+	task *models.MarketingBatchTask,
+	title *string,
+	content *string,
+	emailSubject *string,
+	emailHTML *string,
+	smsText *string,
+) error {
+	if s.pluginManager == nil || batch == nil || task == nil {
+		return nil
+	}
+
+	payload := buildMarketingTaskServiceHookPayload(batch, user, task)
+	payload["title"] = derefString(title)
+	payload["content"] = derefString(content)
+	payload["email_subject"] = derefString(emailSubject)
+	payload["email_html"] = derefString(emailHTML)
+	payload["sms_text"] = derefString(smsText)
+	payload["source"] = "marketing_worker"
+
+	execCtx := buildServiceHookExecutionContext(&task.UserID, nil, map[string]string{
+		"hook_source": "marketing_worker",
+		"batch_id":    strconv.FormatUint(uint64(batch.ID), 10),
+		"task_id":     strconv.FormatUint(uint64(task.ID), 10),
+		"channel":     string(task.Channel),
+	})
+	hookResult, hookErr := s.pluginManager.ExecuteHook(HookExecutionRequest{
+		Hook:    "marketing.task.dispatch.before",
+		Payload: payload,
+	}, execCtx)
+	if hookErr != nil {
+		log.Printf("marketing.task.dispatch.before hook execution failed: batch=%d task=%d err=%v", batch.ID, task.ID, hookErr)
+		return nil
+	}
+	if hookResult == nil {
+		return nil
+	}
+	if hookResult.Blocked {
+		reason := strings.TrimSpace(hookResult.BlockReason)
+		if reason == "" {
+			reason = "Marketing task dispatch rejected by plugin"
+		}
+		return newHookBlockedError(reason)
+	}
+	if hookResult.Payload == nil {
+		return nil
+	}
+
+	if title != nil {
+		if value, exists := hookResult.Payload["title"]; exists {
+			updated, convErr := serviceHookValueToString(value)
+			if convErr != nil {
+				log.Printf("marketing.task.dispatch.before title patch ignored: batch=%d task=%d err=%v", batch.ID, task.ID, convErr)
+			} else {
+				*title = strings.TrimSpace(updated)
+			}
+		}
+	}
+	if content != nil {
+		if value, exists := hookResult.Payload["content"]; exists {
+			updated, convErr := serviceHookValueToString(value)
+			if convErr != nil {
+				log.Printf("marketing.task.dispatch.before content patch ignored: batch=%d task=%d err=%v", batch.ID, task.ID, convErr)
+			} else {
+				*content = strings.TrimSpace(updated)
+			}
+		}
+	}
+	if emailSubject != nil {
+		if value, exists := hookResult.Payload["email_subject"]; exists {
+			updated, convErr := serviceHookValueToString(value)
+			if convErr != nil {
+				log.Printf("marketing.task.dispatch.before email_subject patch ignored: batch=%d task=%d err=%v", batch.ID, task.ID, convErr)
+			} else {
+				*emailSubject = strings.TrimSpace(updated)
+			}
+		}
+	}
+	if emailHTML != nil {
+		if value, exists := hookResult.Payload["email_html"]; exists {
+			updated, convErr := serviceHookValueToString(value)
+			if convErr != nil {
+				log.Printf("marketing.task.dispatch.before email_html patch ignored: batch=%d task=%d err=%v", batch.ID, task.ID, convErr)
+			} else {
+				*emailHTML = updated
+			}
+		}
+	}
+	if smsText != nil {
+		if value, exists := hookResult.Payload["sms_text"]; exists {
+			updated, convErr := serviceHookValueToString(value)
+			if convErr != nil {
+				log.Printf("marketing.task.dispatch.before sms_text patch ignored: batch=%d task=%d err=%v", batch.ID, task.ID, convErr)
+			} else {
+				*smsText = strings.TrimSpace(updated)
+			}
+		}
+	}
+
+	return nil
+}
+
+func (s *MarketingService) emitMarketingTaskDispatchAfterHook(
+	batch *models.MarketingBatch,
+	user *models.User,
+	task *models.MarketingBatchTask,
+	title string,
+	content string,
+	emailSubject string,
+	emailHTML string,
+	smsText string,
+	status models.MarketingTaskStatus,
+	errMessage string,
+) {
+	if s.pluginManager == nil || batch == nil || task == nil {
+		return
+	}
+
+	payload := buildMarketingTaskServiceHookPayload(batch, user, task)
+	payload["title"] = title
+	payload["content"] = content
+	payload["email_subject"] = emailSubject
+	payload["email_html"] = emailHTML
+	payload["sms_text"] = smsText
+	payload["status"] = status
+	payload["error_message"] = strings.TrimSpace(errMessage)
+	payload["source"] = "marketing_worker"
+
+	go func(execCtx *ExecutionContext, hookPayload map[string]interface{}, batchID uint, taskID uint) {
+		_, hookErr := s.pluginManager.ExecuteHook(HookExecutionRequest{
+			Hook:    "marketing.task.dispatch.after",
+			Payload: hookPayload,
+		}, execCtx)
+		if hookErr != nil {
+			log.Printf("marketing.task.dispatch.after hook execution failed: batch=%d task=%d err=%v", batchID, taskID, hookErr)
+		}
+	}(cloneServiceHookExecutionContext(buildServiceHookExecutionContext(&task.UserID, nil, map[string]string{
+		"hook_source": "marketing_worker",
+		"batch_id":    strconv.FormatUint(uint64(batch.ID), 10),
+		"task_id":     strconv.FormatUint(uint64(task.ID), 10),
+		"channel":     string(task.Channel),
+	})), payload, batch.ID, task.ID)
+}
+
+func derefString(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
+}
+
 func (s *MarketingService) processTask(batch *models.MarketingBatch, task *models.MarketingBatchTask) error {
 	var user models.User
 	if err := s.db.Select("id", "name", "email", "phone", "locale", "email_verified", "email_notify_marketing", "sms_notify_marketing").
@@ -188,20 +488,58 @@ func (s *MarketingService) processEmailTask(batch *models.MarketingBatch, user *
 	if user.Email == "" || !user.EmailVerified || !user.EmailNotifyMarketing {
 		return s.updateTaskResult(taskID, models.MarketingTaskStatusSkipped, "")
 	}
-	if s.emailService == nil {
-		return s.updateTaskResult(taskID, models.MarketingTaskStatusFailed, "email service unavailable")
+	if s.emailService == nil || !s.emailService.IsEnabled() {
+		return s.updateTaskResult(taskID, models.MarketingTaskStatusFailed, "email service is not enabled")
 	}
 
-	rendered := RenderMarketingContent(batch.Title, batch.Content, user)
-	if strings.TrimSpace(rendered.EmailHTML) == "" {
+	task := &models.MarketingBatchTask{
+		ID:      taskID,
+		BatchID: batch.ID,
+		UserID:  user.ID,
+		Channel: models.MarketingTaskChannelEmail,
+	}
+	title := batch.Title
+	content := batch.Content
+	rendered := RenderMarketingContent(title, content, user)
+	emailSubject := rendered.EmailSubject
+	emailHTML := rendered.EmailHTML
+	if strings.TrimSpace(emailHTML) == "" {
 		return s.updateTaskResult(taskID, models.MarketingTaskStatusSkipped, "")
+	}
+	if hookErr := s.executeMarketingTaskDispatchBeforeHook(batch, user, task, &title, &content, &emailSubject, &emailHTML, nil); hookErr != nil {
+		status := models.MarketingTaskStatusFailed
+		errMessage := hookErr.Error()
+		if updateErr := s.updateTaskResult(taskID, status, errMessage); updateErr != nil {
+			return updateErr
+		}
+		s.emitMarketingTaskDispatchAfterHook(batch, user, task, title, content, emailSubject, emailHTML, "", status, errMessage)
+		return nil
+	}
+	if strings.TrimSpace(emailHTML) == "" {
+		status := models.MarketingTaskStatusSkipped
+		if updateErr := s.updateTaskResult(taskID, status, ""); updateErr != nil {
+			return updateErr
+		}
+		s.emitMarketingTaskDispatchAfterHook(batch, user, task, title, content, emailSubject, emailHTML, "", status, "")
+		return nil
 	}
 
 	batchID := batch.ID
-	if err := s.emailService.SendMarketingAnnouncementEmailWithBatch(user, rendered.EmailSubject, rendered.EmailHTML, &batchID); err != nil {
-		return s.updateTaskResult(taskID, models.MarketingTaskStatusFailed, err.Error())
+	if err := s.emailService.queueEmail(user.Email, emailSubject, emailHTML, "marketing.announcement", nil, &user.ID, &batchID); err != nil {
+		status := models.MarketingTaskStatusFailed
+		errMessage := err.Error()
+		if updateErr := s.updateTaskResult(taskID, status, errMessage); updateErr != nil {
+			return updateErr
+		}
+		s.emitMarketingTaskDispatchAfterHook(batch, user, task, title, content, emailSubject, emailHTML, "", status, errMessage)
+		return nil
 	}
-	return s.updateTaskResult(taskID, models.MarketingTaskStatusQueued, "")
+	status := models.MarketingTaskStatusQueued
+	if err := s.updateTaskResult(taskID, status, ""); err != nil {
+		return err
+	}
+	s.emitMarketingTaskDispatchAfterHook(batch, user, task, title, content, emailSubject, emailHTML, "", status, "")
+	return nil
 }
 
 func (s *MarketingService) processSMSTask(batch *models.MarketingBatch, user *models.User, taskID uint) error {
@@ -216,16 +554,53 @@ func (s *MarketingService) processSMSTask(batch *models.MarketingBatch, user *mo
 		return s.updateTaskResult(taskID, models.MarketingTaskStatusFailed, "sms service unavailable")
 	}
 
-	rendered := RenderMarketingContent(batch.Title, batch.Content, user)
-	if strings.TrimSpace(rendered.SMSText) == "" {
+	task := &models.MarketingBatchTask{
+		ID:      taskID,
+		BatchID: batch.ID,
+		UserID:  user.ID,
+		Channel: models.MarketingTaskChannelSMS,
+	}
+	title := batch.Title
+	content := batch.Content
+	rendered := RenderMarketingContent(title, content, user)
+	smsText := rendered.SMSText
+	if strings.TrimSpace(smsText) == "" {
 		return s.updateTaskResult(taskID, models.MarketingTaskStatusSkipped, "")
+	}
+	if hookErr := s.executeMarketingTaskDispatchBeforeHook(batch, user, task, &title, &content, nil, nil, &smsText); hookErr != nil {
+		status := models.MarketingTaskStatusFailed
+		errMessage := hookErr.Error()
+		if updateErr := s.updateTaskResult(taskID, status, errMessage); updateErr != nil {
+			return updateErr
+		}
+		s.emitMarketingTaskDispatchAfterHook(batch, user, task, title, content, "", "", smsText, status, errMessage)
+		return nil
+	}
+	if strings.TrimSpace(smsText) == "" {
+		status := models.MarketingTaskStatusSkipped
+		if updateErr := s.updateTaskResult(taskID, status, ""); updateErr != nil {
+			return updateErr
+		}
+		s.emitMarketingTaskDispatchAfterHook(batch, user, task, title, content, "", "", smsText, status, "")
+		return nil
 	}
 
 	batchID := batch.ID
-	if err := s.smsService.SendMarketingSMSWithBatch(user, rendered.SMSText, &batchID); err != nil {
-		return s.updateTaskResult(taskID, models.MarketingTaskStatusFailed, err.Error())
+	if err := s.smsService.sendMarketingDirect(phone, "", smsText, &user.ID, &batchID); err != nil {
+		status := models.MarketingTaskStatusFailed
+		errMessage := err.Error()
+		if updateErr := s.updateTaskResult(taskID, status, errMessage); updateErr != nil {
+			return updateErr
+		}
+		s.emitMarketingTaskDispatchAfterHook(batch, user, task, title, content, "", "", smsText, status, errMessage)
+		return nil
 	}
-	return s.updateTaskResult(taskID, models.MarketingTaskStatusSent, "")
+	status := models.MarketingTaskStatusSent
+	if err := s.updateTaskResult(taskID, status, ""); err != nil {
+		return err
+	}
+	s.emitMarketingTaskDispatchAfterHook(batch, user, task, title, content, "", "", smsText, status, "")
+	return nil
 }
 
 func (s *MarketingService) updateTaskResult(taskID uint, status models.MarketingTaskStatus, errMessage string) error {

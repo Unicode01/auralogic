@@ -1,26 +1,73 @@
 package admin
 
 import (
+	"encoding/json"
 	"fmt"
+	"log"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/gin-gonic/gin"
-	"github.com/xuri/excelize/v2"
 	"auralogic/internal/models"
 	"auralogic/internal/pkg/constants"
 	"auralogic/internal/pkg/response"
+	"auralogic/internal/service"
+	"github.com/gin-gonic/gin"
+	"github.com/xuri/excelize/v2"
 )
 
 // ExportOrdersRequest 导出Order请求
 type ExportOrdersRequest struct {
-	Status        string `form:"status"`         // Order状态过滤
-	Search        string `form:"search"`         // 搜索关键词
-	Country       string `form:"country"`        // 国家过滤
-	ProductSearch string `form:"product_search"` // ProductSKU/名称搜索
-	PromoCode     string `form:"promo_code"`     // Promo code
-	PromoCodeID   string `form:"promo_code_id"`  // Promo code id
+	Status        string `form:"status" json:"status"`                 // Order状态过滤
+	Search        string `form:"search" json:"search"`                 // 搜索关键词
+	Country       string `form:"country" json:"country"`               // 国家过滤
+	ProductSearch string `form:"product_search" json:"product_search"` // ProductSKU/名称搜索
+	PromoCode     string `form:"promo_code" json:"promo_code"`         // Promo code
+	PromoCodeID   string `form:"promo_code_id" json:"promo_code_id"`   // Promo code id
+}
+
+type orderImportEntry struct {
+	RowIndex   int      `json:"row_index"`
+	OrderNo    string   `json:"order_no"`
+	TrackingNo string   `json:"tracking_no"`
+	Columns    []string `json:"columns,omitempty"`
+}
+
+func decodeOrderImportEntries(value interface{}) ([]orderImportEntry, error) {
+	if value == nil {
+		return nil, nil
+	}
+
+	body, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+
+	var entries []orderImportEntry
+	if err := json.Unmarshal(body, &entries); err != nil {
+		return nil, err
+	}
+	return entries, nil
+}
+
+func buildOrderImportEntries(rows [][]string) []orderImportEntry {
+	entries := make([]orderImportEntry, 0, len(rows))
+	for i, row := range rows {
+		entry := orderImportEntry{
+			RowIndex: i + 2,
+		}
+		if len(row) > 0 {
+			entry.OrderNo = row[0]
+		}
+		if len(row) > 12 {
+			entry.TrackingNo = row[12]
+		}
+		if len(row) > 0 {
+			entry.Columns = append([]string(nil), row...)
+		}
+		entries = append(entries, entry)
+	}
+	return entries
 }
 
 // ExportOrders 导出Order到Excel
@@ -29,6 +76,47 @@ func (h *OrderHandler) ExportOrders(c *gin.Context) {
 	if err := c.ShouldBindQuery(&req); err != nil {
 		response.BadRequest(c, "Invalid request parameters")
 		return
+	}
+	adminID := getOptionalUserID(c)
+	adminIDValue := uint(0)
+	if adminID != nil {
+		adminIDValue = *adminID
+	}
+	if h.pluginManager != nil {
+		originalReq := req
+		hookPayload, payloadErr := adminHookStructToPayload(req)
+		if payloadErr != nil {
+			log.Printf("order.export.before payload build failed: admin=%d err=%v", adminIDValue, payloadErr)
+		} else {
+			hookPayload["admin_id"] = adminIDValue
+			hookPayload["source"] = "admin_api"
+			hookResult, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+				Hook:    "order.export.before",
+				Payload: hookPayload,
+			}, buildAdminHookExecutionContext(c, adminID, map[string]string{
+				"hook_resource": "order",
+				"hook_source":   "admin_api",
+				"hook_action":   "export",
+			}))
+			if hookErr != nil {
+				log.Printf("order.export.before hook execution failed: admin=%d err=%v", adminIDValue, hookErr)
+			} else if hookResult != nil {
+				if hookResult.Blocked {
+					reason := strings.TrimSpace(hookResult.BlockReason)
+					if reason == "" {
+						reason = "Order export rejected by plugin"
+					}
+					response.BadRequest(c, reason)
+					return
+				}
+				if hookResult.Payload != nil {
+					if mergeErr := mergeAdminHookStructPatch(&req, hookResult.Payload); mergeErr != nil {
+						log.Printf("order.export.before payload apply failed, fallback to original request: admin=%d err=%v", adminIDValue, mergeErr)
+						req = originalReq
+					}
+				}
+			}
+		}
 	}
 
 	// get所有匹配条件的Order（不分页）
@@ -215,10 +303,45 @@ func (h *OrderHandler) ExportOrders(c *gin.Context) {
 		response.InternalError(c, "Export failed")
 		return
 	}
+
+	if h.pluginManager != nil {
+		afterPayload := map[string]interface{}{
+			"status":                 req.Status,
+			"search":                 req.Search,
+			"country":                req.Country,
+			"product_search":         req.ProductSearch,
+			"promo_code":             req.PromoCode,
+			"promo_code_id":          req.PromoCodeID,
+			"exported_count":         len(orders),
+			"matched_total":          len(orders),
+			"file_name":              fileName,
+			"has_privacy_permission": hasPrivacyPerm,
+			"admin_id":               adminIDValue,
+			"source":                 "admin_api",
+		}
+		go func(execCtx *service.ExecutionContext, payload map[string]interface{}, exportedCount int) {
+			_, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+				Hook:    "order.export.after",
+				Payload: payload,
+			}, execCtx)
+			if hookErr != nil {
+				log.Printf("order.export.after hook execution failed: admin=%d exported=%d err=%v", adminIDValue, exportedCount, hookErr)
+			}
+		}(cloneAdminHookExecutionContext(buildAdminHookExecutionContext(c, adminID, map[string]string{
+			"hook_resource": "order",
+			"hook_source":   "admin_api",
+			"hook_action":   "export",
+		})), afterPayload, len(orders))
+	}
 }
 
 // ImportOrders 导入Order（批量分配物流Info）
 func (h *OrderHandler) ImportOrders(c *gin.Context) {
+	adminID := getOptionalUserID(c)
+	adminIDValue := uint(0)
+	if adminID != nil {
+		adminIDValue = *adminID
+	}
 	// get上传的文件
 	file, err := c.FormFile("file")
 	if err != nil {
@@ -274,25 +397,61 @@ func (h *OrderHandler) ImportOrders(c *gin.Context) {
 		return
 	}
 
+	entries := buildOrderImportEntries(rows[1:])
+	if h.pluginManager != nil {
+		hookPayload := map[string]interface{}{
+			"filename":    file.Filename,
+			"sheet_name":  sheetName,
+			"entry_count": len(entries),
+			"entries":     entries,
+			"admin_id":    adminIDValue,
+			"source":      "admin_api",
+		}
+		hookResult, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+			Hook:    "order.import.before",
+			Payload: hookPayload,
+		}, buildAdminHookExecutionContext(c, adminID, map[string]string{
+			"hook_resource": "order",
+			"hook_source":   "admin_api",
+			"hook_action":   "import",
+		}))
+		if hookErr != nil {
+			log.Printf("order.import.before hook execution failed: admin=%d filename=%s err=%v", adminIDValue, file.Filename, hookErr)
+		} else if hookResult != nil {
+			if hookResult.Blocked {
+				reason := strings.TrimSpace(hookResult.BlockReason)
+				if reason == "" {
+					reason = "Order import rejected by plugin"
+				}
+				response.BadRequest(c, reason)
+				return
+			}
+			if hookResult.Payload != nil {
+				if rawEntries, exists := hookResult.Payload["entries"]; exists {
+					updatedEntries, decodeErr := decodeOrderImportEntries(rawEntries)
+					if decodeErr != nil {
+						log.Printf("order.import.before entries patch ignored: admin=%d filename=%s err=%v", adminIDValue, file.Filename, decodeErr)
+					} else {
+						entries = updatedEntries
+					}
+				}
+			}
+		}
+	}
+
 	// 解析数据并UpdateOrder
 	var successCount, skipCount, errorCount int
 	var errors []string
 
-	for i, row := range rows {
-		if i == 0 {
-			// 跳过表头
-			continue
-		}
-
-		// 确保行有足够的列（至少到M列，即物流单号）
-		if len(row) < 13 {
+	for _, entry := range entries {
+		if len(entry.Columns) > 0 && len(entry.Columns) < 13 && strings.TrimSpace(entry.TrackingNo) == "" {
 			errorCount++
-			errors = append(errors, fmt.Sprintf("Row %d: Insufficient columns (actual columns:%d, need at least 13 columns)", i+1, len(row)))
+			errors = append(errors, fmt.Sprintf("Row %d: Insufficient columns (actual columns:%d, need at least 13 columns)", entry.RowIndex, len(entry.Columns)))
 			continue
 		}
 
-		orderNo := row[0]
-		trackingNo := row[12] // M列：物流单号
+		orderNo := strings.TrimSpace(entry.OrderNo)
+		trackingNo := strings.TrimSpace(entry.TrackingNo)
 
 		// 检查Order号是否为空
 		if orderNo == "" {
@@ -310,7 +469,7 @@ func (h *OrderHandler) ImportOrders(c *gin.Context) {
 		order, err := h.orderService.GetOrderByNo(orderNo)
 		if err != nil {
 			errorCount++
-			errors = append(errors, fmt.Sprintf("Row %d: Order %s does not exist", i+1, orderNo))
+			errors = append(errors, fmt.Sprintf("Row %d: Order %s does not exist", entry.RowIndex, orderNo))
 			continue
 		}
 
@@ -329,25 +488,52 @@ func (h *OrderHandler) ImportOrders(c *gin.Context) {
 			if statusText == "" {
 				statusText = string(order.Status)
 			}
-			errors = append(errors, fmt.Sprintf("Row %d: Order %s status is [%s], tracking number assignment not allowed", i+1, orderNo, statusText))
+			errors = append(errors, fmt.Sprintf("Row %d: Order %s status is [%s], tracking number assignment not allowed", entry.RowIndex, orderNo, statusText))
 			continue
 		}
 
 		// 检查Order是否已有物流Info
 		if order.TrackingNo != "" {
 			skipCount++
-			errors = append(errors, fmt.Sprintf("Row %d: Order %s already has tracking number [%s]", i+1, orderNo, order.TrackingNo))
+			errors = append(errors, fmt.Sprintf("Row %d: Order %s already has tracking number [%s]", entry.RowIndex, orderNo, order.TrackingNo))
 			continue
 		}
 
 		// Update物流Info
 		if err := h.orderService.AssignTracking(order.ID, trackingNo); err != nil {
 			errorCount++
-			errors = append(errors, fmt.Sprintf("Row %d: Failed to update order %s: %v", i+1, orderNo, err))
+			errors = append(errors, fmt.Sprintf("Row %d: Failed to update order %s: %v", entry.RowIndex, orderNo, err))
 			continue
 		}
 
 		successCount++
+	}
+
+	if h.pluginManager != nil {
+		afterPayload := map[string]interface{}{
+			"filename":      file.Filename,
+			"sheet_name":    sheetName,
+			"entry_count":   len(entries),
+			"success_count": successCount,
+			"skip_count":    skipCount,
+			"error_count":   errorCount,
+			"errors":        errors,
+			"admin_id":      adminIDValue,
+			"source":        "admin_api",
+		}
+		go func(execCtx *service.ExecutionContext, payload map[string]interface{}, successCount int, errorCount int) {
+			_, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+				Hook:    "order.import.after",
+				Payload: payload,
+			}, execCtx)
+			if hookErr != nil {
+				log.Printf("order.import.after hook execution failed: admin=%d success=%d error=%d err=%v", adminIDValue, successCount, errorCount, hookErr)
+			}
+		}(cloneAdminHookExecutionContext(buildAdminHookExecutionContext(c, adminID, map[string]string{
+			"hook_resource": "order",
+			"hook_source":   "admin_api",
+			"hook_action":   "import",
+		})), afterPayload, successCount, errorCount)
 	}
 
 	// 返回导入结果

@@ -1,4 +1,5 @@
 'use client'
+/* eslint-disable @next/next/no-img-element */
 
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
@@ -23,14 +24,58 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useQuery } from '@tanstack/react-query'
 import { getPublicConfig, getCaptcha, sendLoginCode, sendPhoneCode } from '@/lib/api'
-import { useState, useEffect, useRef } from 'react'
+import { Suspense, useState, useEffect, useMemo, useRef } from 'react'
 import { useTheme } from '@/contexts/theme-context'
 import toast from 'react-hot-toast'
 import { AuthBrandingPanel } from '@/components/auth-branding-panel'
 import { PhoneInput } from '@/components/phone-input'
+import { PluginSlot } from '@/components/plugins/plugin-slot'
+import { PluginSlotBatchBoundary } from '@/lib/plugin-slot-batch'
+import { readAuthReturnState, type AuthReturnState } from '@/lib/auth-return-state'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { resolveAuthApiErrorMessage } from '@/lib/api-error'
+
+function getLoginReturnHint(state: AuthReturnState | null, t: any) {
+  if (!state) return null
+
+  if (state.cart) {
+    return {
+      title: t.auth.loginReturnTitle,
+      description: t.auth.loginReturnCartDesc,
+    }
+  }
+
+  if (state.product) {
+    return {
+      title: t.auth.loginReturnTitle,
+      description: t.auth.loginReturnProductDesc,
+    }
+  }
+
+  if (state.redirectPath.startsWith('/plugin-pages/')) {
+    return {
+      title: t.auth.loginReturnTitle,
+      description: t.auth.loginReturnPluginPageDesc,
+    }
+  }
+
+  return {
+    title: t.auth.loginReturnTitle,
+    description: t.auth.loginReturnGenericDesc,
+  }
+}
 
 export default function LoginPage() {
-  const { login, loginWithCode, loginWithPhoneCode, isLoggingIn, isLoggingInWithCode, isLoggingInWithPhoneCode, isAuthenticated, isLoading } = useAuth()
+  const {
+    login,
+    loginWithCode,
+    loginWithPhoneCode,
+    isLoggingIn,
+    isLoggingInWithCode,
+    isLoggingInWithPhoneCode,
+    isAuthenticated,
+    isLoading,
+  } = useAuth()
   const router = useRouter()
   const { locale } = useLocale()
   const t = getTranslations(locale)
@@ -39,9 +84,15 @@ export default function LoginPage() {
   // 已登录用户自动跳转到商品页
   useEffect(() => {
     if (!isLoading && isAuthenticated) {
-      router.replace('/products')
+      const pendingReturnState = readAuthReturnState()
+      router.replace(pendingReturnState?.redirectPath || '/products')
     }
   }, [isLoading, isAuthenticated, router])
+
+  useEffect(() => {
+    setPendingReturnState(readAuthReturnState())
+  }, [])
+
   const [captchaToken, setCaptchaToken] = useState('')
   const [builtinCode, setBuiltinCode] = useState('')
   const [loginMode, setLoginMode] = useState<'password' | 'code' | 'phone'>('password')
@@ -57,6 +108,7 @@ export default function LoginPage() {
   const [isSendingPhoneCode, setIsSendingPhoneCode] = useState(false)
   const [phoneCodeSent, setPhoneCodeSent] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
+  const [pendingReturnState, setPendingReturnState] = useState<AuthReturnState | null>(null)
   const { resolvedTheme } = useTheme()
   const captchaContainerRef = useRef<HTMLDivElement>(null)
   const widgetRendered = useRef(false)
@@ -73,12 +125,12 @@ export default function LoginPage() {
   const allowEmailLogin = publicConfig?.data?.allow_email_login
   const allowPasswordReset = publicConfig?.data?.allow_password_reset
   const captchaConfig = publicConfig?.data?.captcha
-  const needCaptcha = captchaConfig?.provider && captchaConfig.provider !== 'none' && captchaConfig.enable_for_login
+  const needCaptcha =
+    captchaConfig?.provider && captchaConfig.provider !== 'none' && captchaConfig.enable_for_login
   const emailCodeAvailable = smtpEnabled && allowEmailLogin
   const smsEnabled = publicConfig?.data?.sms_enabled
   const allowPhoneLogin = publicConfig?.data?.allow_phone_login
   const phoneLoginAvailable = smsEnabled && allowPhoneLogin
-
   // 密码登录禁用时自动切换到可用模式
   useEffect(() => {
     if (!publicConfig) return
@@ -135,7 +187,10 @@ export default function LoginPage() {
   useEffect(() => {
     if (!needCaptcha) return
 
-    if (captchaConfig.provider === 'cloudflare' && !document.getElementById('cf-turnstile-script')) {
+    if (
+      captchaConfig.provider === 'cloudflare' &&
+      !document.getElementById('cf-turnstile-script')
+    ) {
       const script = document.createElement('script')
       script.id = 'cf-turnstile-script'
       script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?onload=onTurnstileLoad'
@@ -152,7 +207,10 @@ export default function LoginPage() {
         }
       }
       document.head.appendChild(script)
-    } else if (captchaConfig.provider === 'google' && !document.getElementById('recaptcha-script')) {
+    } else if (
+      captchaConfig.provider === 'google' &&
+      !document.getElementById('recaptcha-script')
+    ) {
       const script = document.createElement('script')
       script.id = 'recaptcha-script'
       script.src = 'https://www.google.com/recaptcha/api.js?onload=onRecaptchaLoad&render=explicit'
@@ -170,7 +228,7 @@ export default function LoginPage() {
       }
       document.head.appendChild(script)
     }
-  }, [needCaptcha, captchaConfig])
+  }, [needCaptcha, captchaConfig, resolvedTheme])
 
   // Render widget if script already loaded
   useEffect(() => {
@@ -193,7 +251,7 @@ export default function LoginPage() {
         'expired-callback': () => setCaptchaToken(''),
       })
     }
-  }, [needCaptcha, captchaConfig, loginMode])
+  }, [needCaptcha, captchaConfig, loginMode, resolvedTheme])
 
   // Auto-submit/send when CF/Google captcha completes
   useEffect(() => {
@@ -205,7 +263,13 @@ export default function LoginPage() {
       }
     } else if (loginMode === 'code' && codeEmail && !codeSent && !isSendingCode && countdown <= 0) {
       handleSendCode()
-    } else if (loginMode === 'phone' && phoneNumber && !phoneCodeSent && !isSendingPhoneCode && phoneCountdown <= 0) {
+    } else if (
+      loginMode === 'phone' &&
+      phoneNumber &&
+      !phoneCodeSent &&
+      !isSendingPhoneCode &&
+      phoneCountdown <= 0
+    ) {
       handleSendPhoneCode()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -243,15 +307,18 @@ export default function LoginPage() {
     if (needCaptcha && captchaConfig.provider === 'builtin') {
       token = `${builtinCaptcha?.data?.captcha_id}:${builtinCode}`
     }
-    login({ ...values, captcha_token: token || undefined }, {
-      onError: () => resetCaptcha(),
-    })
+    login(
+      { ...values, captcha_token: token || undefined },
+      {
+        onError: () => resetCaptcha(),
+      }
+    )
   }
 
   async function handleSendCode() {
     if (!codeEmail || countdown > 0 || isSendingCode) return
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(codeEmail)) {
-      toast.error(t.auth.invalidEmail || 'Please enter a valid email address')
+      toast.error(t.auth.invalidEmail)
       return
     }
     let token = captchaToken
@@ -265,10 +332,9 @@ export default function LoginPage() {
       setCountdown(60)
       setCodeSent(true)
       resetCaptcha()
-    } catch (e: any) {
-      const msg = e?.code === 42902 ? t.auth.cooldownWait : (e?.message || t.auth.requestFailed)
-      toast.error(msg)
-      if (e?.code !== 42902) resetCaptcha()
+    } catch (error) {
+      toast.error(resolveAuthApiErrorMessage(error, t, t.auth.requestFailed))
+      if ((error as any)?.code !== 42902) resetCaptcha()
     } finally {
       setIsSendingCode(false)
     }
@@ -276,9 +342,12 @@ export default function LoginPage() {
 
   function onCodeSubmit() {
     if (!codeEmail || !codeValue) return
-    loginWithCode({ email: codeEmail, code: codeValue }, {
-      onError: () => setCodeValue(''),
-    })
+    loginWithCode(
+      { email: codeEmail, code: codeValue },
+      {
+        onError: () => setCodeValue(''),
+      }
+    )
   }
 
   async function handleSendPhoneCode() {
@@ -289,15 +358,18 @@ export default function LoginPage() {
     }
     setIsSendingPhoneCode(true)
     try {
-      await sendPhoneCode({ phone: phoneNumber, phone_code: phoneCountryCode, captcha_token: token || undefined })
+      await sendPhoneCode({
+        phone: phoneNumber,
+        phone_code: phoneCountryCode,
+        captcha_token: token || undefined,
+      })
       toast.success(t.auth.phoneCodeSent)
       setPhoneCountdown(60)
       setPhoneCodeSent(true)
       resetCaptcha()
-    } catch (e: any) {
-      const msg = e?.code === 42902 ? t.auth.cooldownWait : (e?.message || t.auth.requestFailed)
-      toast.error(msg)
-      if (e?.code !== 42902) resetCaptcha()
+    } catch (error) {
+      toast.error(resolveAuthApiErrorMessage(error, t, t.auth.requestFailed))
+      if ((error as any)?.code !== 42902) resetCaptcha()
     } finally {
       setIsSendingPhoneCode(false)
     }
@@ -305,364 +377,654 @@ export default function LoginPage() {
 
   function onPhoneCodeSubmit() {
     if (!phoneNumber || !phoneCode) return
-    loginWithPhoneCode({ phone: phoneNumber, phone_code: phoneCountryCode, code: phoneCode }, {
-      onError: () => setPhoneCode(''),
-    })
+    loginWithPhoneCode(
+      { phone: phoneNumber, phone_code: phoneCountryCode, code: phoneCode },
+      {
+        onError: () => setPhoneCode(''),
+      }
+    )
   }
 
+  const loginReturnHint = getLoginReturnHint(pendingReturnState, t)
+  const availableLoginMethods = [
+    allowPasswordLogin,
+    emailCodeAvailable,
+    phoneLoginAvailable,
+  ].filter(Boolean).length
+  const authLoginPluginContext = {
+    view: 'auth_login',
+    auth: {
+      mode: loginMode,
+      is_authenticated: isAuthenticated,
+      is_loading: isLoading,
+    },
+    capabilities: {
+      password_login_enabled: Boolean(allowPasswordLogin),
+      email_code_login_enabled: Boolean(emailCodeAvailable),
+      phone_login_enabled: Boolean(phoneLoginAvailable),
+      registration_enabled: Boolean(allowRegistration),
+      password_reset_enabled: Boolean(allowPasswordReset),
+      captcha_required: Boolean(needCaptcha),
+      available_method_count: availableLoginMethods,
+    },
+    state: {
+      mode: loginMode,
+      mode_switcher_visible: availableLoginMethods >= 2,
+      email_code_sent: codeSent,
+      email_code_countdown: countdown,
+      sending_email_code: isSendingCode,
+      code_submitting: isLoggingInWithCode,
+      phone_code_sent: phoneCodeSent,
+      phone_code_countdown: phoneCountdown,
+      sending_phone_code: isSendingPhoneCode,
+      phone_submitting: isLoggingInWithPhoneCode,
+      password_submitting: isLoggingIn,
+      return_hint_visible: Boolean(loginReturnHint),
+      redirect_path: pendingReturnState?.redirectPath || undefined,
+    },
+  }
+  const loginBatchItems = useMemo(
+    () => [
+      {
+        slot: 'auth.login.top',
+        hostContext: authLoginPluginContext,
+      },
+      {
+        slot: 'auth.login.return_hint.after',
+        hostContext: { ...authLoginPluginContext, section: 'return_hint' },
+      },
+      {
+        slot: 'auth.login.methods.after',
+        hostContext: { ...authLoginPluginContext, section: 'methods' },
+      },
+      {
+        slot: 'auth.login.password.submit.before',
+        hostContext: { ...authLoginPluginContext, section: 'password_form' },
+      },
+      {
+        slot: 'auth.login.password.form.after',
+        hostContext: { ...authLoginPluginContext, section: 'password_form' },
+      },
+      {
+        slot: 'auth.login.code.alert.after',
+        hostContext: { ...authLoginPluginContext, section: 'code_form' },
+      },
+      {
+        slot: 'auth.login.code.request.after',
+        hostContext: { ...authLoginPluginContext, section: 'code_form' },
+      },
+      {
+        slot: 'auth.login.code.form.after',
+        hostContext: { ...authLoginPluginContext, section: 'code_form' },
+      },
+      {
+        slot: 'auth.login.phone.alert.after',
+        hostContext: { ...authLoginPluginContext, section: 'phone_form' },
+      },
+      {
+        slot: 'auth.login.phone.request.after',
+        hostContext: { ...authLoginPluginContext, section: 'phone_form' },
+      },
+      {
+        slot: 'auth.login.phone.form.after',
+        hostContext: { ...authLoginPluginContext, section: 'phone_form' },
+      },
+    ],
+    [authLoginPluginContext]
+  )
+
   return (
-    <div className="min-h-screen flex">
+    <div className="flex min-h-screen">
       <AuthBrandingPanel />
 
       {/* Right form panel */}
-      <div className="flex-1 flex items-center justify-center p-6 sm:p-12 bg-background">
-        <div className="w-full max-w-sm space-y-6 sm:space-y-8">
-          {/* Mobile logo */}
-          <div className="lg:hidden text-center">
-            <h1 className="text-2xl font-bold text-foreground tracking-tight">
-              AuraLogic
-            </h1>
-          </div>
-
-          {/* Header */}
-          <div className="space-y-2">
-            <h2 className="text-2xl font-semibold tracking-tight text-foreground">
-              {t.auth.welcomeBack}
-            </h2>
-            <p className="text-sm text-muted-foreground">
-              {t.auth.signInDescription}
-            </p>
-          </div>
-
-          {/* Mode switcher - show when 2+ methods available */}
-          {[allowPasswordLogin, emailCodeAvailable, phoneLoginAvailable].filter(Boolean).length >= 2 && (
-            <div className="flex rounded-lg border border-border p-1 bg-muted/50">
-              {allowPasswordLogin && (
-                <button
-                  type="button"
-                  className={`flex-1 text-xs sm:text-sm py-2 rounded-md transition-colors whitespace-nowrap ${loginMode === 'password' ? 'bg-background text-foreground shadow-sm font-medium' : 'text-muted-foreground hover:text-foreground'}`}
-                  onClick={() => { setLoginMode('password'); widgetRendered.current = false }}
-                >
-                  <Lock className="inline h-3.5 w-3.5 mr-1 -mt-0.5" />
-                  {t.auth.passwordLogin}
-                </button>
-              )}
-              {emailCodeAvailable && (
-                <button
-                  type="button"
-                  className={`flex-1 text-xs sm:text-sm py-2 rounded-md transition-colors whitespace-nowrap ${loginMode === 'code' ? 'bg-background text-foreground shadow-sm font-medium' : 'text-muted-foreground hover:text-foreground'}`}
-                  onClick={() => { setLoginMode('code'); widgetRendered.current = false }}
-                >
-                  <KeyRound className="inline h-3.5 w-3.5 mr-1 -mt-0.5" />
-                  {t.auth.emailCodeLogin}
-                </button>
-              )}
-              {phoneLoginAvailable && (
-                <button
-                  type="button"
-                  className={`flex-1 text-xs sm:text-sm py-2 rounded-md transition-colors whitespace-nowrap ${loginMode === 'phone' ? 'bg-background text-foreground shadow-sm font-medium' : 'text-muted-foreground hover:text-foreground'}`}
-                  onClick={() => { setLoginMode('phone'); widgetRendered.current = false }}
-                >
-                  <Phone className="inline h-3.5 w-3.5 mr-1 -mt-0.5" />
-                  {t.auth.phoneLogin}
-                </button>
-              )}
+      <div className="flex flex-1 items-center justify-center bg-background p-6 sm:p-12">
+        <PluginSlotBatchBoundary scope="public" path="/login" items={loginBatchItems}>
+          <div className="w-full max-w-sm space-y-6 sm:space-y-8">
+            {/* Mobile logo */}
+            <div className="text-center lg:hidden">
+              <h1 className="text-2xl font-bold tracking-tight text-foreground">AuraLogic</h1>
             </div>
-          )}
 
-          {/* Password login form */}
-          {loginMode === 'password' && <Form {...form}>
-            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-5">
-              <FormField
-                control={form.control}
-                name="email"
-                render={({ field }) => (
-                  <FormItem className="space-y-2">
-                    <FormLabel className="text-sm font-medium">{t.auth.email}</FormLabel>
-                    <FormControl>
-                      <div className="relative">
-                        <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                        <Input
-                          type="email"
-                          placeholder={t.auth.emailPlaceholder}
-                          className="pl-10 h-11"
-                          {...field}
-                        />
-                      </div>
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
+            <Suspense fallback={null}>
+              <PluginSlot slot="auth.login.top" context={authLoginPluginContext} />
+            </Suspense>
 
-              <FormField
-                control={form.control}
-                name="password"
-                render={({ field }) => (
-                  <FormItem className="space-y-2">
-                    <FormLabel className="text-sm font-medium">{t.auth.password}</FormLabel>
-                    <FormControl>
-                      <div className="relative">
-                        <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                        <Input
-                          type={showPassword ? "text" : "password"}
-                          placeholder={t.auth.passwordPlaceholder}
-                          className="pl-10 pr-10 h-11"
-                          {...field}
-                        />
-                        <button type="button" onClick={() => setShowPassword(!showPassword)}
-                          className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors">
-                          {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                        </button>
-                      </div>
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
+            {/* Header */}
+            <div className="space-y-2">
+              <h2 className="text-2xl font-semibold tracking-tight text-foreground">
+                {t.auth.welcomeBack}
+              </h2>
+              <p className="text-sm text-muted-foreground">{t.auth.signInDescription}</p>
+            </div>
 
-              {/* Captcha */}
-              {needCaptcha && (
-                <div className="space-y-2">
-                  {(captchaConfig.provider === 'cloudflare' || captchaConfig.provider === 'google') && (
-                    <div ref={captchaContainerRef} />
-                  )}
-                  {captchaConfig.provider === 'builtin' && builtinCaptcha?.data && (
-                    <>
-                      <label className="text-sm font-medium">{t.auth.captcha}</label>
-                      <div className="flex items-center gap-2">
-                        <Input
-                          placeholder={t.auth.captchaPlaceholder}
-                          value={builtinCode}
-                          onChange={(e) => setBuiltinCode(e.target.value)}
-                          maxLength={4}
-                          className="h-11"
-                        />
-                        <img
-                          src={builtinCaptcha.data.image}
-                          alt="captcha"
-                          className="border border-border rounded-md h-11 shrink-0 cursor-pointer dark:brightness-90"
-                          onClick={() => { refetchCaptcha(); setBuiltinCode('') }}
-                          title={t.auth.captchaRefresh}
-                        />
-                      </div>
-                    </>
-                  )}
-                </div>
-              )}
-
-              <Button
-                type="submit"
-                className="w-full h-11 text-sm font-medium"
-                disabled={isLoggingIn}
-              >
-                {isLoggingIn ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    {t.auth.loggingIn}
-                  </>
-                ) : (
-                  <>
-                    {t.auth.login}
-                    <ArrowRight className="ml-2 h-4 w-4" />
-                  </>
-                )}
-              </Button>
-            </form>
-          </Form>}
-
-          {/* Email code login form */}
-          {loginMode === 'code' && (
-            <div className="space-y-5">
-              <div className="space-y-2">
-                <label className="text-sm font-medium">{t.auth.email}</label>
-                <div className="relative">
-                  <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                  <Input
-                    type="email"
-                    placeholder={t.auth.emailPlaceholder}
-                    className="pl-10 h-11"
-                    value={codeEmail}
-                    onChange={(e) => setCodeEmail(e.target.value)}
+            {loginReturnHint && (
+              <>
+                <Alert className="border-primary/20 bg-primary/5">
+                  <ArrowRight className="h-4 w-4 text-primary" />
+                  <AlertTitle>{loginReturnHint.title}</AlertTitle>
+                  <AlertDescription>{loginReturnHint.description}</AlertDescription>
+                </Alert>
+                <Suspense fallback={null}>
+                  <PluginSlot
+                    slot="auth.login.return_hint.after"
+                    context={{ ...authLoginPluginContext, section: 'return_hint' }}
                   />
-                </div>
+                </Suspense>
+              </>
+            )}
+            {/* Mode switcher - show when 2+ methods available */}
+            {availableLoginMethods >= 2 && (
+              <div className="flex rounded-lg border border-border bg-muted/50 p-1">
+                {allowPasswordLogin && (
+                  <button
+                    type="button"
+                    aria-pressed={loginMode === 'password'}
+                    className={`flex-1 whitespace-nowrap rounded-md py-2 text-xs transition-colors sm:text-sm ${loginMode === 'password' ? 'bg-background font-medium text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+                    onClick={() => {
+                      setLoginMode('password')
+                      widgetRendered.current = false
+                    }}
+                  >
+                    <Lock className="-mt-0.5 mr-1 inline h-3.5 w-3.5" />
+                    {t.auth.passwordLogin}
+                  </button>
+                )}
+                {emailCodeAvailable && (
+                  <button
+                    type="button"
+                    aria-pressed={loginMode === 'code'}
+                    className={`flex-1 whitespace-nowrap rounded-md py-2 text-xs transition-colors sm:text-sm ${loginMode === 'code' ? 'bg-background font-medium text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+                    onClick={() => {
+                      setLoginMode('code')
+                      widgetRendered.current = false
+                    }}
+                  >
+                    <KeyRound className="-mt-0.5 mr-1 inline h-3.5 w-3.5" />
+                    {t.auth.emailCodeLogin}
+                  </button>
+                )}
+                {phoneLoginAvailable && (
+                  <button
+                    type="button"
+                    aria-pressed={loginMode === 'phone'}
+                    className={`flex-1 whitespace-nowrap rounded-md py-2 text-xs transition-colors sm:text-sm ${loginMode === 'phone' ? 'bg-background font-medium text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+                    onClick={() => {
+                      setLoginMode('phone')
+                      widgetRendered.current = false
+                    }}
+                  >
+                    <Phone className="-mt-0.5 mr-1 inline h-3.5 w-3.5" />
+                    {t.auth.phoneLogin}
+                  </button>
+                )}
               </div>
+            )}
+            <Suspense fallback={null}>
+              <PluginSlot
+                slot="auth.login.methods.after"
+                context={{ ...authLoginPluginContext, section: 'methods' }}
+              />
+            </Suspense>
 
-              {/* Captcha - hide after code sent */}
-              {needCaptcha && !codeSent && (
-                <div className="space-y-2">
-                  {(captchaConfig.provider === 'cloudflare' || captchaConfig.provider === 'google') && (
-                    <div ref={captchaContainerRef} />
+            {/* Password login form */}
+            {loginMode === 'password' && (
+              <Form {...form}>
+                <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-5">
+                  <FormField
+                    control={form.control}
+                    name="email"
+                    render={({ field }) => (
+                      <FormItem className="space-y-2">
+                        <FormLabel className="text-sm font-medium">{t.auth.email}</FormLabel>
+                        <FormControl>
+                          <div className="relative">
+                            <Mail className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                            <Input
+                              type="email"
+                              placeholder={t.auth.emailPlaceholder}
+                              className="h-11 pl-10"
+                              {...field}
+                            />
+                          </div>
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name="password"
+                    render={({ field }) => (
+                      <FormItem className="space-y-2">
+                        <FormLabel className="text-sm font-medium">{t.auth.password}</FormLabel>
+                        <FormControl>
+                          <div className="relative">
+                            <Lock className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                            <Input
+                              type={showPassword ? 'text' : 'password'}
+                              placeholder={t.auth.passwordPlaceholder}
+                              className="h-11 pl-10 pr-10"
+                              {...field}
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setShowPassword(!showPassword)}
+                              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground transition-colors hover:text-foreground"
+                              aria-label={showPassword ? t.auth.hidePassword : t.auth.showPassword}
+                              title={showPassword ? t.auth.hidePassword : t.auth.showPassword}
+                            >
+                              {showPassword ? (
+                                <EyeOff className="h-4 w-4" />
+                              ) : (
+                                <Eye className="h-4 w-4" />
+                              )}
+                            </button>
+                          </div>
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  {/* Captcha */}
+                  {needCaptcha && (
+                    <div className="space-y-2">
+                      {(captchaConfig.provider === 'cloudflare' ||
+                        captchaConfig.provider === 'google') && <div ref={captchaContainerRef} />}
+                      {captchaConfig.provider === 'builtin' && builtinCaptcha?.data && (
+                        <>
+                          <label className="text-sm font-medium">{t.auth.captcha}</label>
+                          <div className="flex items-center gap-2">
+                            <Input
+                              placeholder={t.auth.captchaPlaceholder}
+                              value={builtinCode}
+                              onChange={(e) => setBuiltinCode(e.target.value)}
+                              maxLength={4}
+                              className="h-11"
+                              aria-label={t.auth.captcha}
+                            />
+                            <img
+                              src={builtinCaptcha.data.image}
+                              alt={t.auth.captcha}
+                              className="h-11 shrink-0 cursor-pointer rounded-md border border-border dark:brightness-90"
+                              onClick={() => {
+                                refetchCaptcha()
+                                setBuiltinCode('')
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter' || e.key === ' ') {
+                                  e.preventDefault()
+                                  refetchCaptcha()
+                                  setBuiltinCode('')
+                                }
+                              }}
+                              role="button"
+                              tabIndex={0}
+                              aria-label={t.auth.captchaRefresh}
+                              title={t.auth.captchaRefresh}
+                            />
+                          </div>
+                        </>
+                      )}
+                    </div>
                   )}
-                  {captchaConfig.provider === 'builtin' && builtinCaptcha?.data && (
+
+                  <Suspense fallback={null}>
+                    <PluginSlot
+                      slot="auth.login.password.submit.before"
+                      context={{ ...authLoginPluginContext, section: 'password_form' }}
+                    />
+                  </Suspense>
+                  <Button
+                    type="submit"
+                    className="h-11 w-full text-sm font-medium"
+                    disabled={isLoggingIn}
+                  >
+                    {isLoggingIn ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        {t.auth.loggingIn}
+                      </>
+                    ) : (
+                      <>
+                        {t.auth.login}
+                        <ArrowRight className="ml-2 h-4 w-4" />
+                      </>
+                    )}
+                  </Button>
+                  <Suspense fallback={null}>
+                    <PluginSlot
+                      slot="auth.login.password.form.after"
+                      context={{ ...authLoginPluginContext, section: 'password_form' }}
+                    />
+                  </Suspense>
+                </form>
+              </Form>
+            )}
+
+            {/* Email code login form */}
+            {loginMode === 'code' && (
+              <div className="space-y-5">
+                {codeSent && codeEmail && (
+                  <>
+                    <Alert>
+                      <Mail className="h-4 w-4" />
+                      <AlertDescription className="space-y-1">
+                        <p>{t.auth.codeSent}</p>
+                        <p className="break-all">
+                          {(t.auth.sentTo as string).replace('{target}', codeEmail)}
+                        </p>
+                      </AlertDescription>
+                    </Alert>
+                    <Suspense fallback={null}>
+                      <PluginSlot
+                        slot="auth.login.code.alert.after"
+                        context={{ ...authLoginPluginContext, section: 'code_form' }}
+                      />
+                    </Suspense>
+                  </>
+                )}
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">{t.auth.email}</label>
+                  <div className="relative">
+                    <Mail className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                    <Input
+                      type="email"
+                      placeholder={t.auth.emailPlaceholder}
+                      className="h-11 pl-10"
+                      value={codeEmail}
+                      onChange={(e) => setCodeEmail(e.target.value)}
+                    />
+                  </div>
+                </div>
+
+                {/* Captcha - hide after code sent */}
+                {needCaptcha && !codeSent && (
+                  <div className="space-y-2">
+                    {(captchaConfig.provider === 'cloudflare' ||
+                      captchaConfig.provider === 'google') && <div ref={captchaContainerRef} />}
+                    {captchaConfig.provider === 'builtin' && builtinCaptcha?.data && (
+                      <>
+                        <label className="text-sm font-medium">{t.auth.captcha}</label>
+                        <div className="flex items-center gap-2">
+                          <Input
+                            placeholder={t.auth.captchaPlaceholder}
+                            value={builtinCode}
+                            onChange={(e) => setBuiltinCode(e.target.value)}
+                            maxLength={4}
+                            className="h-11"
+                            aria-label={t.auth.captcha}
+                          />
+                          <img
+                            src={builtinCaptcha.data.image}
+                            alt={t.auth.captcha}
+                            className="h-11 shrink-0 cursor-pointer rounded-md border border-border dark:brightness-90"
+                            onClick={() => {
+                              refetchCaptcha()
+                              setBuiltinCode('')
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' || e.key === ' ') {
+                                e.preventDefault()
+                                refetchCaptcha()
+                                setBuiltinCode('')
+                              }
+                            }}
+                            role="button"
+                            tabIndex={0}
+                            aria-label={t.auth.captchaRefresh}
+                            title={t.auth.captchaRefresh}
+                          />
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
+
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">{t.auth.emailCode}</label>
+                  <div className="flex gap-2">
+                    <Input
+                      placeholder={t.auth.codePlaceholder}
+                      value={codeValue}
+                      onChange={(e) => setCodeValue(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                      maxLength={6}
+                      className="h-11"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="h-11 shrink-0 text-sm"
+                      disabled={
+                        !codeEmail ||
+                        countdown > 0 ||
+                        isSendingCode ||
+                        (needCaptcha &&
+                          !captchaToken &&
+                          !(captchaConfig?.provider === 'builtin' && builtinCode))
+                      }
+                      onClick={handleSendCode}
+                    >
+                      {isSendingCode
+                        ? t.auth.sendingCode
+                        : countdown > 0
+                          ? (t.auth.codeResendIn as string).replace('{n}', String(countdown))
+                          : t.auth.sendCode}
+                    </Button>
+                  </div>
+                </div>
+                <Suspense fallback={null}>
+                  <PluginSlot
+                    slot="auth.login.code.request.after"
+                    context={{ ...authLoginPluginContext, section: 'code_form' }}
+                  />
+                </Suspense>
+
+                <Button
+                  className="h-11 w-full text-sm font-medium"
+                  disabled={isLoggingInWithCode || codeValue.length !== 6}
+                  onClick={onCodeSubmit}
+                >
+                  {isLoggingInWithCode ? (
                     <>
-                      <label className="text-sm font-medium">{t.auth.captcha}</label>
-                      <div className="flex items-center gap-2">
-                        <Input
-                          placeholder={t.auth.captchaPlaceholder}
-                          value={builtinCode}
-                          onChange={(e) => setBuiltinCode(e.target.value)}
-                          maxLength={4}
-                          className="h-11"
-                        />
-                        <img
-                          src={builtinCaptcha.data.image}
-                          alt="captcha"
-                          className="border border-border rounded-md h-11 shrink-0 cursor-pointer dark:brightness-90"
-                          onClick={() => { refetchCaptcha(); setBuiltinCode('') }}
-                          title={t.auth.captchaRefresh}
-                        />
-                      </div>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      {t.auth.loggingIn}
+                    </>
+                  ) : (
+                    <>
+                      {t.auth.login}
+                      <ArrowRight className="ml-2 h-4 w-4" />
                     </>
                   )}
-                </div>
-              )}
+                </Button>
+                <Suspense fallback={null}>
+                  <PluginSlot
+                    slot="auth.login.code.form.after"
+                    context={{ ...authLoginPluginContext, section: 'code_form' }}
+                  />
+                </Suspense>
+              </div>
+            )}
 
-              <div className="space-y-2">
-                <label className="text-sm font-medium">{t.auth.emailCode}</label>
-                <div className="flex gap-2">
-                  <Input
-                    placeholder={t.auth.codePlaceholder}
-                    value={codeValue}
-                    onChange={(e) => setCodeValue(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                    maxLength={6}
+            {/* Phone login form */}
+            {loginMode === 'phone' && (
+              <div className="space-y-5">
+                {phoneCodeSent && phoneNumber && (
+                  <>
+                    <Alert>
+                      <Phone className="h-4 w-4" />
+                      <AlertDescription className="space-y-1">
+                        <p>{t.auth.phoneCodeSent}</p>
+                        <p className="break-all">
+                          {(t.auth.sentTo as string).replace(
+                            '{target}',
+                            `${phoneCountryCode} ${phoneNumber}`
+                          )}
+                        </p>
+                      </AlertDescription>
+                    </Alert>
+                    <Suspense fallback={null}>
+                      <PluginSlot
+                        slot="auth.login.phone.alert.after"
+                        context={{ ...authLoginPluginContext, section: 'phone_form' }}
+                      />
+                    </Suspense>
+                  </>
+                )}
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">{t.auth.phone}</label>
+                  <PhoneInput
+                    countryCode={phoneCountryCode}
+                    onCountryCodeChange={setPhoneCountryCode}
+                    phone={phoneNumber}
+                    onPhoneChange={setPhoneNumber}
+                    placeholder={t.auth.phonePlaceholder}
                     className="h-11"
                   />
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="h-11 shrink-0 text-sm"
-                    disabled={!codeEmail || countdown > 0 || isSendingCode || (needCaptcha && !captchaToken && !(captchaConfig?.provider === 'builtin' && builtinCode))}
-                    onClick={handleSendCode}
-                  >
-                    {isSendingCode ? t.auth.sendingCode
-                      : countdown > 0 ? (t.auth.codeResendIn as string).replace('{n}', String(countdown))
-                      : t.auth.sendCode}
-                  </Button>
                 </div>
-              </div>
 
-              <Button
-                className="w-full h-11 text-sm font-medium"
-                disabled={isLoggingInWithCode || codeValue.length !== 6}
-                onClick={onCodeSubmit}
-              >
-                {isLoggingInWithCode ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    {t.auth.loggingIn}
-                  </>
-                ) : (
-                  <>
-                    {t.auth.login}
-                    <ArrowRight className="ml-2 h-4 w-4" />
-                  </>
+                {needCaptcha && !phoneCodeSent && (
+                  <div className="space-y-2">
+                    {(captchaConfig.provider === 'cloudflare' ||
+                      captchaConfig.provider === 'google') && <div ref={captchaContainerRef} />}
+                    {captchaConfig.provider === 'builtin' && builtinCaptcha?.data && (
+                      <>
+                        <label className="text-sm font-medium">{t.auth.captcha}</label>
+                        <div className="flex items-center gap-2">
+                          <Input
+                            placeholder={t.auth.captchaPlaceholder}
+                            value={builtinCode}
+                            onChange={(e) => setBuiltinCode(e.target.value)}
+                            maxLength={4}
+                            className="h-11"
+                            aria-label={t.auth.captcha}
+                          />
+                          <img
+                            src={builtinCaptcha.data.image}
+                            alt={t.auth.captcha}
+                            className="h-11 shrink-0 cursor-pointer rounded-md border border-border dark:brightness-90"
+                            onClick={() => {
+                              refetchCaptcha()
+                              setBuiltinCode('')
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' || e.key === ' ') {
+                                e.preventDefault()
+                                refetchCaptcha()
+                                setBuiltinCode('')
+                              }
+                            }}
+                            role="button"
+                            tabIndex={0}
+                            aria-label={t.auth.captchaRefresh}
+                            title={t.auth.captchaRefresh}
+                          />
+                        </div>
+                      </>
+                    )}
+                  </div>
                 )}
-              </Button>
-            </div>
-          )}
 
-          {/* Phone login form */}
-          {loginMode === 'phone' && (
-            <div className="space-y-5">
-              <div className="space-y-2">
-                <label className="text-sm font-medium">{t.auth.phone}</label>
-                <PhoneInput countryCode={phoneCountryCode} onCountryCodeChange={setPhoneCountryCode}
-                  phone={phoneNumber} onPhoneChange={setPhoneNumber} placeholder={t.auth.phonePlaceholder} className="h-11" />
-              </div>
-
-              {needCaptcha && !phoneCodeSent && (
                 <div className="space-y-2">
-                  {(captchaConfig.provider === 'cloudflare' || captchaConfig.provider === 'google') && (
-                    <div ref={captchaContainerRef} />
-                  )}
-                  {captchaConfig.provider === 'builtin' && builtinCaptcha?.data && (
+                  <label className="text-sm font-medium">{t.auth.phoneCode}</label>
+                  <div className="flex gap-2">
+                    <Input
+                      placeholder={t.auth.phoneCodePlaceholder}
+                      value={phoneCode}
+                      onChange={(e) => setPhoneCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                      maxLength={6}
+                      className="h-11"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="h-11 shrink-0 text-sm"
+                      disabled={
+                        !phoneNumber ||
+                        phoneCountdown > 0 ||
+                        isSendingPhoneCode ||
+                        (needCaptcha &&
+                          !captchaToken &&
+                          !(captchaConfig?.provider === 'builtin' && builtinCode))
+                      }
+                      onClick={handleSendPhoneCode}
+                    >
+                      {isSendingPhoneCode
+                        ? t.auth.sendingCode
+                        : phoneCountdown > 0
+                          ? (t.auth.codeResendIn as string).replace('{n}', String(phoneCountdown))
+                          : t.auth.sendPhoneCode}
+                    </Button>
+                  </div>
+                </div>
+                <Suspense fallback={null}>
+                  <PluginSlot
+                    slot="auth.login.phone.request.after"
+                    context={{ ...authLoginPluginContext, section: 'phone_form' }}
+                  />
+                </Suspense>
+
+                <Button
+                  className="h-11 w-full text-sm font-medium"
+                  disabled={isLoggingInWithPhoneCode || phoneCode.length !== 6}
+                  onClick={onPhoneCodeSubmit}
+                >
+                  {isLoggingInWithPhoneCode ? (
                     <>
-                      <label className="text-sm font-medium">{t.auth.captcha}</label>
-                      <div className="flex items-center gap-2">
-                        <Input
-                          placeholder={t.auth.captchaPlaceholder}
-                          value={builtinCode}
-                          onChange={(e) => setBuiltinCode(e.target.value)}
-                          maxLength={4}
-                          className="h-11"
-                        />
-                        <img
-                          src={builtinCaptcha.data.image}
-                          alt="captcha"
-                          className="border border-border rounded-md h-11 shrink-0 cursor-pointer dark:brightness-90"
-                          onClick={() => { refetchCaptcha(); setBuiltinCode('') }}
-                          title={t.auth.captchaRefresh}
-                        />
-                      </div>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      {t.auth.loggingIn}
+                    </>
+                  ) : (
+                    <>
+                      {t.auth.login}
+                      <ArrowRight className="ml-2 h-4 w-4" />
                     </>
                   )}
-                </div>
-              )}
-
-              <div className="space-y-2">
-                <label className="text-sm font-medium">{t.auth.phoneCode}</label>
-                <div className="flex gap-2">
-                  <Input
-                    placeholder={t.auth.phoneCodePlaceholder}
-                    value={phoneCode}
-                    onChange={(e) => setPhoneCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                    maxLength={6}
-                    className="h-11"
+                </Button>
+                <Suspense fallback={null}>
+                  <PluginSlot
+                    slot="auth.login.phone.form.after"
+                    context={{ ...authLoginPluginContext, section: 'phone_form' }}
                   />
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="h-11 shrink-0 text-sm"
-                    disabled={!phoneNumber || phoneCountdown > 0 || isSendingPhoneCode || (needCaptcha && !captchaToken && !(captchaConfig?.provider === 'builtin' && builtinCode))}
-                    onClick={handleSendPhoneCode}
-                  >
-                    {isSendingPhoneCode ? t.auth.sendingCode
-                      : phoneCountdown > 0 ? (t.auth.codeResendIn as string).replace('{n}', String(phoneCountdown))
-                      : t.auth.sendPhoneCode}
-                  </Button>
-                </div>
+                </Suspense>
               </div>
+            )}
 
-              <Button
-                className="w-full h-11 text-sm font-medium"
-                disabled={isLoggingInWithPhoneCode || phoneCode.length !== 6}
-                onClick={onPhoneCodeSubmit}
-              >
-                {isLoggingInWithPhoneCode ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    {t.auth.loggingIn}
-                  </>
-                ) : (
-                  <>
-                    {t.auth.login}
-                    <ArrowRight className="ml-2 h-4 w-4" />
-                  </>
-                )}
-              </Button>
-            </div>
-          )}
+            {/* Forgot Password */}
+            {allowPasswordReset && (
+              <div className="text-center">
+                <Link
+                  href="/forgot-password"
+                  className="text-sm text-muted-foreground transition-colors hover:text-primary"
+                >
+                  {t.auth.forgotPassword}
+                </Link>
+              </div>
+            )}
 
-          {/* Forgot Password */}
-          {allowPasswordReset && (
-            <div className="text-center">
-              <Link href="/forgot-password" className="text-sm text-muted-foreground hover:text-primary transition-colors">
-                {t.auth.forgotPassword}
-              </Link>
-            </div>
-          )}
+            <Suspense fallback={null}>
+              <PluginSlot slot="auth.login.bottom" context={authLoginPluginContext} />
+            </Suspense>
 
-          {/* Footer */}
-          {allowRegistration && (
-            <p className="text-center text-xs text-muted-foreground">
-              {t.auth.noAccount}{' '}
-              <Link href="/register" className="text-primary hover:underline">
-                {t.auth.register}
-              </Link>
-            </p>
-          )}
-        </div>
+            {/* Footer */}
+            <Suspense fallback={null}>
+              <PluginSlot
+                slot="auth.login.footer.before"
+                context={{ ...authLoginPluginContext, section: 'footer' }}
+              />
+            </Suspense>
+            {allowRegistration && (
+              <p className="text-center text-xs text-muted-foreground">
+                {t.auth.noAccount}{' '}
+                <Link href="/register" className="text-primary hover:underline">
+                  {t.auth.register}
+                </Link>
+              </p>
+            )}
+          </div>
+        </PluginSlotBatchBoundary>
       </div>
     </div>
   )

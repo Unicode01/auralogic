@@ -76,6 +76,8 @@ import { usePageTitle } from '@/hooks/use-page-title'
 import dynamic from 'next/dynamic'
 import { useTheme } from '@/contexts/theme-context'
 import { ConfigEditor } from '@/components/admin/config-editor'
+import { resolveApiErrorMessage } from '@/lib/api-error'
+import { PluginSlot } from '@/components/plugins/plugin-slot'
 
 const CodeMirror = dynamic(() => import('@uiw/react-codemirror'), { ssr: false })
 const loadJsLang = () => import('@codemirror/lang-javascript').then(m => m.javascript())
@@ -420,6 +422,10 @@ export default function VirtualInventoryEditPage() {
   usePageTitle(t.pageTitle.adminVirtualInventory)
   const { resolvedTheme } = useTheme()
   const cmTheme = resolvedTheme === 'dark' ? 'dark' as const : 'light' as const
+  const formatActionError = (error: unknown, fallback: string) => {
+    const detail = resolveApiErrorMessage(error, t, fallback)
+    return detail === fallback ? fallback : `${fallback}: ${detail}`
+  }
 
   const [page, setPage] = useState(1)
   const [limit] = useState(20)
@@ -493,8 +499,8 @@ export default function VirtualInventoryEditPage() {
       toast.success(t.admin.saveSuccess)
       refetchInventory()
     },
-    onError: (error: Error) => {
-      toast.error(`${t.admin.saveFailed}: ${error.message}`)
+    onError: (error: unknown) => {
+      toast.error(formatActionError(error, t.admin.saveFailed))
     },
   })
 
@@ -509,8 +515,8 @@ export default function VirtualInventoryEditPage() {
       refetchStocks()
       refetchInventory()
     },
-    onError: (error: Error) => {
-      toast.error(`${t.admin.importFailedMsg}: ${error.message}`)
+    onError: (error: unknown) => {
+      toast.error(formatActionError(error, t.admin.importFailedMsg))
     },
   })
 
@@ -525,8 +531,8 @@ export default function VirtualInventoryEditPage() {
       refetchStocks()
       refetchInventory()
     },
-    onError: (error: Error) => {
-      toast.error(`${t.admin.addFailed}: ${error.message}`)
+    onError: (error: unknown) => {
+      toast.error(formatActionError(error, t.admin.addFailed))
     },
   })
 
@@ -537,8 +543,8 @@ export default function VirtualInventoryEditPage() {
       refetchStocks()
       refetchInventory()
     },
-    onError: (error: Error) => {
-      toast.error(`${t.admin.deleteFailedMsg}: ${error.message}`)
+    onError: (error: unknown) => {
+      toast.error(formatActionError(error, t.admin.deleteFailedMsg))
     },
   })
 
@@ -549,8 +555,8 @@ export default function VirtualInventoryEditPage() {
       refetchStocks()
       refetchInventory()
     },
-    onError: (error: Error) => {
-      toast.error(`${t.admin.reserveFailed}: ${error.message}`)
+    onError: (error: unknown) => {
+      toast.error(formatActionError(error, t.admin.reserveFailed))
     },
   })
 
@@ -561,8 +567,8 @@ export default function VirtualInventoryEditPage() {
       refetchStocks()
       refetchInventory()
     },
-    onError: (error: Error) => {
-      toast.error(`${t.admin.releaseFailed}: ${error.message}`)
+    onError: (error: unknown) => {
+      toast.error(formatActionError(error, t.admin.releaseFailed))
     },
   })
 
@@ -573,9 +579,10 @@ export default function VirtualInventoryEditPage() {
       setTestResult(data?.data)
       toast.success(t.admin.scriptTestSuccess)
     },
-    onError: (error: Error) => {
-      setTestResult({ error: error.message })
-      toast.error(`${t.admin.scriptTestFailed}: ${error.message}`)
+    onError: (error: unknown) => {
+      const message = formatActionError(error, t.admin.scriptTestFailed)
+      setTestResult({ error: message })
+      toast.error(message)
     },
   })
 
@@ -583,6 +590,48 @@ export default function VirtualInventoryEditPage() {
   const stocks = stocksData?.data?.items || []
   const total = stocksData?.data?.pagination?.total || 0
   const totalPages = Math.ceil(total / limit)
+  const adminVirtualInventoryDetailPluginContext = {
+    view: 'admin_virtual_inventory_detail',
+    inventory: inventory
+      ? {
+          id: inventoryId,
+          name: inventory.name,
+          sku: inventory.sku,
+          type: inventory.type,
+          is_active: inventory.is_active,
+          total_limit: inventory.total_limit,
+          sold: inventory.sold,
+          remaining: inventory.remaining,
+        }
+      : undefined,
+    form: {
+      name: editForm.name || undefined,
+      sku: editForm.sku || undefined,
+      type: editForm.type,
+      is_active: editForm.is_active,
+      total_limit: Number(editForm.total_limit || 0),
+      description_length: editForm.description.length,
+      notes_length: editForm.notes.length,
+      script_length: editForm.script.length,
+      script_config_length: editForm.script_config.length,
+    },
+    filters: {
+      page,
+      limit,
+      status: statusFilter === 'all' ? undefined : statusFilter,
+    },
+    dialogs: {
+      import_open: importDialogOpen,
+      manual_open: manualDialogOpen,
+    },
+    summary: {
+      total_stocks: total,
+      total_pages: totalPages,
+      visible_count: stocks.length,
+      test_quantity: testQuantity,
+      has_test_result: Boolean(testResult),
+    },
+  }
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -692,6 +741,10 @@ export default function VirtualInventoryEditPage() {
 
   return (
     <div className="space-y-6">
+      <PluginSlot
+        slot="admin.virtual_inventory_detail.top"
+        context={adminVirtualInventoryDetailPluginContext}
+      />
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
           <Button variant="outline" size="sm" asChild>

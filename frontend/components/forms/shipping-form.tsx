@@ -1,4 +1,5 @@
 'use client'
+/* eslint-disable @next/next/no-img-element */
 
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
@@ -26,10 +27,13 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { submitShippingForm, getCountries } from '@/lib/api'
+import { resolveApiErrorMessage } from '@/lib/api-error'
 import { shippingFormSchema } from '@/lib/validators'
 import toast from 'react-hot-toast'
 import { Globe, Package } from 'lucide-react'
 import { phoneCodeMap } from '@/lib/phone-codes'
+import { getTranslations } from '@/lib/i18n'
+import { PluginSlot } from '@/components/plugins/plugin-slot'
 
 interface ShippingFormProps {
   formToken: string
@@ -46,87 +50,26 @@ interface ShippingFormProps {
   onSuccess?: () => void
   hideOrderItems?: boolean
   hidePassword?: boolean
+  pluginSlotNamespace?: string
+  pluginSlotContext?: Record<string, any>
 }
 
-// 翻译文本
-const translations = {
-  zh: {
-    orderItems: '订单商品',
-    quantity: '数量',
-    shippingInfo: '填写发货信息',
-    shippingDesc: '请填写准确的收货地址，以便快速发货',
-    receiverName: '收货人姓名',
-    phone: '手机号',
-    email: '邮箱',
-    emailDesc: '用于创建账号和接收通知',
-    emailLocked: '邮箱已由第三方平台指定，不可修改',
-    country: '国家/地区',
-    province: '省份',
-    city: '城市',
-    district: '区县',
-    cityOptional: '城市（可选）',
-    provinceOptional: '州/省（可选）',
-    address: '详细地址',
-    addressPlaceholder: '街道、门牌号等',
-    postcode: '邮政编码',
-    postcodeOptional: '邮政编码（可选）',
-    privacyProtection: '隐私保护',
-    privacyDesc: '开启后，除发货管理员外，其他管理员无法查看完整收货信息',
-    setPassword: '设置密码（可选）',
-    passwordDesc: '不设置密码时，系统将自动生成并发送到您的邮箱',
-    remark: '备注（可选）',
-    remarkPlaceholder: '请输入备注信息',
-    submit: '提交',
-    submitting: '提交中...',
-    submitSuccess: '提交成功',
-    submitFailed: '提交失败',
-    accountCreated: '账号已自动创建，请查收邮件获取密码',
-    passwordHint1: '如果您是首次使用该邮箱，此密码将用于登录',
-    passwordHint2: '如果该邮箱已注册，此处设置的密码将无效，请使用原密码登录',
-    passwordHint3: '留空则自动生成强密码并发送到邮箱',
-  },
-  en: {
-    orderItems: 'Order Items',
-    quantity: 'Quantity',
-    shippingInfo: 'Shipping Information',
-    shippingDesc: 'Please provide accurate shipping address for fast delivery',
-    receiverName: 'Receiver Name',
-    phone: 'Phone Number',
-    email: 'Email',
-    emailDesc: 'For account creation and notifications',
-    emailLocked: 'Email is fixed by the platform and cannot be changed',
-    country: 'Country/Region',
-    province: 'Province',
-    city: 'City',
-    district: 'District',
-    cityOptional: 'City (Optional)',
-    provinceOptional: 'State/Province (Optional)',
-    address: 'Detailed Address',
-    addressPlaceholder: 'Street, building number, etc.',
-    postcode: 'Postal Code',
-    postcodeOptional: 'Postal Code (Optional)',
-    privacyProtection: 'Privacy Protection',
-    privacyDesc: 'When enabled, only shipping managers can view complete shipping information',
-    setPassword: 'Set Password (Optional)',
-    passwordDesc: 'If not set, system will generate and send to your email',
-    remark: 'Remark (Optional)',
-    remarkPlaceholder: 'Enter remark information',
-    submit: 'Submit',
-    submitting: 'Submitting...',
-    submitSuccess: 'Submitted successfully',
-    submitFailed: 'Submission failed',
-    accountCreated: 'Account created automatically, please check your email for the password',
-    passwordHint1: 'If this is your first time using this email, this password will be used to log in',
-    passwordHint2: 'If this email is already registered, the password set here will be ignored. Please use your existing password',
-    passwordHint3: 'Leave blank to auto-generate a strong password and send it to your email',
-  }
-}
-
-export function ShippingForm({ formToken, orderInfo, lang = 'zh', onSuccess, hideOrderItems = false, hidePassword = false }: ShippingFormProps) {
+export function ShippingForm({
+  formToken,
+  orderInfo,
+  lang = 'zh',
+  onSuccess,
+  hideOrderItems = false,
+  hidePassword = false,
+  pluginSlotNamespace,
+  pluginSlotContext,
+}: ShippingFormProps) {
   const router = useRouter()
   const [currentLang, setCurrentLang] = useState(lang)
   const isEnglish = currentLang === 'en'
-  const t = translations[currentLang as 'zh' | 'en']
+  const activeLocale = currentLang === 'en' ? 'en' : 'zh'
+  const translations = getTranslations(activeLocale)
+  const t = translations.shippingForm
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [countries, setCountries] = useState<any[]>([])
 
@@ -185,9 +128,11 @@ export function ShippingForm({ formToken, orderInfo, lang = 'zh', onSuccess, hid
         setCountries(response.data || [])
       })
       .catch(err => {
-        console.error('获取国家列表失败:', err)
+        const currentTranslations = getTranslations(activeLocale)
+        toast.error(resolveApiErrorMessage(err, currentTranslations, currentTranslations.common.failed))
+        console.error('Failed to load countries:', err)
       })
-  }, [])
+  }, [activeLocale])
 
   // 为区号选择器生成选项列表
   const phoneCodeOptions = countries.map((country) => {
@@ -241,6 +186,37 @@ export function ShippingForm({ formToken, orderInfo, lang = 'zh', onSuccess, hid
 
   // 判断是否是中国（需要填写省市区）
   const isChina = selectedCountry === 'CN'
+  const shippingFormPluginContext = pluginSlotNamespace
+    ? {
+        ...(pluginSlotContext || {}),
+        shipping_form: {
+          token_present: Boolean(formToken),
+          is_submitting: isSubmitting,
+          hide_order_items: hideOrderItems,
+          hide_password: hidePassword,
+          has_fixed_email: Boolean(fixedEmail),
+          selected_country: selectedCountry || undefined,
+        },
+        state: {
+          ...((pluginSlotContext && typeof pluginSlotContext.state === 'object'
+            ? pluginSlotContext.state
+            : {}) as Record<string, unknown>),
+          ready: true,
+          submitting: isSubmitting,
+          is_china: isChina,
+          has_fixed_email: Boolean(fixedEmail),
+          hide_order_items: hideOrderItems,
+          hide_password: hidePassword,
+        },
+      }
+    : null
+  const renderPluginSlot = (suffix: string, section: string) =>
+    pluginSlotNamespace && shippingFormPluginContext ? (
+      <PluginSlot
+        slot={`${pluginSlotNamespace}.${suffix}`}
+        context={{ ...shippingFormPluginContext, section }}
+      />
+    ) : null
 
   async function onSubmit(values: z.infer<typeof shippingFormSchema>) {
     setIsSubmitting(true)
@@ -277,7 +253,7 @@ export function ShippingForm({ formToken, orderInfo, lang = 'zh', onSuccess, hid
         }
       }
     } catch (error: any) {
-      toast.error(error.message || t.submitFailed)
+      toast.error(resolveApiErrorMessage(error, translations, t.submitFailed))
     } finally {
       setIsSubmitting(false)
     }
@@ -286,6 +262,7 @@ export function ShippingForm({ formToken, orderInfo, lang = 'zh', onSuccess, hid
   const formContent = (
     <Form {...form}>
       <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+        {renderPluginSlot('form.top', 'form')}
         <FormField
           control={form.control}
           name="receiver_name"
@@ -307,7 +284,7 @@ export function ShippingForm({ formToken, orderInfo, lang = 'zh', onSuccess, hid
             name="phone_code"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>{isEnglish ? 'Code' : '区号'} *</FormLabel>
+                <FormLabel>{t.phoneCodeLabel} *</FormLabel>
                 <Select
                   onValueChange={(value) => {
                     const phoneCode = extractPhoneCode(value)
@@ -398,11 +375,11 @@ export function ShippingForm({ formToken, orderInfo, lang = 'zh', onSuccess, hid
                 }}
                 value={normalizeCountryCode(field.value, countries)}
               >
-                <FormControl>
-                  <SelectTrigger>
-                    <SelectValue placeholder={isEnglish ? "Select Country/Region" : "请选择国家/地区"} />
-                  </SelectTrigger>
-                </FormControl>
+                  <FormControl>
+                    <SelectTrigger>
+                      <SelectValue placeholder={t.selectCountryPlaceholder} />
+                    </SelectTrigger>
+                  </FormControl>
                 <SelectContent className="max-h-[300px]">
                   {countries.map((country) => (
                     <SelectItem key={country.code} value={country.code}>
@@ -425,7 +402,7 @@ export function ShippingForm({ formToken, orderInfo, lang = 'zh', onSuccess, hid
                 <FormItem>
                   <FormLabel>{t.province} *</FormLabel>
                   <FormControl>
-                    <Input placeholder={isEnglish ? "Guangdong" : "广东省"} {...field} />
+                    <Input placeholder={t.provincePlaceholderCn} {...field} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -438,7 +415,7 @@ export function ShippingForm({ formToken, orderInfo, lang = 'zh', onSuccess, hid
                 <FormItem>
                   <FormLabel>{t.city} *</FormLabel>
                   <FormControl>
-                    <Input placeholder={isEnglish ? "Shenzhen" : "深圳市"} {...field} />
+                    <Input placeholder={t.cityPlaceholderCn} {...field} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -451,7 +428,7 @@ export function ShippingForm({ formToken, orderInfo, lang = 'zh', onSuccess, hid
                 <FormItem>
                   <FormLabel>{t.district} *</FormLabel>
                   <FormControl>
-                    <Input placeholder={isEnglish ? "Nanshan" : "南山区"} {...field} />
+                    <Input placeholder={t.districtPlaceholderCn} {...field} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -469,7 +446,7 @@ export function ShippingForm({ formToken, orderInfo, lang = 'zh', onSuccess, hid
                 <FormItem>
                   <FormLabel>{t.cityOptional}</FormLabel>
                   <FormControl>
-                    <Input placeholder="City" {...field} />
+                    <Input placeholder={t.cityPlaceholder} {...field} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -482,7 +459,7 @@ export function ShippingForm({ formToken, orderInfo, lang = 'zh', onSuccess, hid
                 <FormItem>
                   <FormLabel>{t.provinceOptional}</FormLabel>
                   <FormControl>
-                    <Input placeholder="State/Province" {...field} />
+                    <Input placeholder={t.provincePlaceholder} {...field} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -512,13 +489,14 @@ export function ShippingForm({ formToken, orderInfo, lang = 'zh', onSuccess, hid
               <FormItem>
                 <FormLabel>{t.postcodeOptional}</FormLabel>
                 <FormControl>
-                  <Input placeholder={isEnglish ? "ZIP/Postal Code" : "邮政编码"} {...field} />
+                  <Input placeholder={t.postcodePlaceholder} {...field} />
                 </FormControl>
                 <FormMessage />
               </FormItem>
             )}
           />
         </div>
+        {renderPluginSlot('fields.after', 'fields')}
 
         <FormField
           control={form.control}
@@ -590,9 +568,11 @@ export function ShippingForm({ formToken, orderInfo, lang = 'zh', onSuccess, hid
         />
         )}
 
+        {renderPluginSlot('submit.before', 'submit')}
         <Button type="submit" className="w-full" disabled={isSubmitting}>
           {isSubmitting ? t.submitting : t.submit}
         </Button>
+        {renderPluginSlot('form.bottom', 'form')}
       </form>
     </Form>
   )
@@ -626,7 +606,7 @@ export function ShippingForm({ formToken, orderInfo, lang = 'zh', onSuccess, hid
                 <div>
                   <p className="font-medium">{item.name}</p>
                   <p className="text-sm text-muted-foreground">
-                    {t.quantity}：{item.quantity}
+                    {t.quantity}: {item.quantity}
                   </p>
                 </div>
               </div>
@@ -634,6 +614,7 @@ export function ShippingForm({ formToken, orderInfo, lang = 'zh', onSuccess, hid
           })}
         </CardContent>
       </Card>
+      {renderPluginSlot('order_items.after', 'order_items')}
 
       <Card>
         <CardHeader>

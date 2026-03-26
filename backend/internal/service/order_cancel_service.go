@@ -3,6 +3,8 @@ package service
 import (
 	"fmt"
 	"log"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -23,8 +25,11 @@ type OrderCancelService struct {
 	promoCodeRepo       *repository.PromoCodeRepository
 	virtualInventorySvc *VirtualInventoryService
 	serialService       *SerialService
+	pluginManager       *PluginManagerService
+	lifecycleMu         sync.Mutex
+	running             bool
 	stopChan            chan struct{}
-	wg                  sync.WaitGroup
+	doneChan            chan struct{}
 	checkInterval       time.Duration // 检查间隔
 }
 
@@ -44,9 +49,98 @@ func NewOrderCancelService(
 		promoCodeRepo:       promoCodeRepo,
 		virtualInventorySvc: virtualInventorySvc,
 		serialService:       serialService,
-		stopChan:            make(chan struct{}),
 		checkInterval:       5 * time.Minute, // 每5分钟检查一次
 	}
+}
+
+func (s *OrderCancelService) SetPluginManager(pluginManager *PluginManagerService) {
+	s.pluginManager = pluginManager
+}
+
+func cloneOrderCancelExecutionContext(execCtx *ExecutionContext) *ExecutionContext {
+	if execCtx == nil {
+		return nil
+	}
+	cloned := &ExecutionContext{
+		SessionID:      execCtx.SessionID,
+		RequestContext: execCtx.RequestContext,
+	}
+	if execCtx.UserID != nil {
+		userID := *execCtx.UserID
+		cloned.UserID = &userID
+	}
+	if execCtx.OrderID != nil {
+		orderID := *execCtx.OrderID
+		cloned.OrderID = &orderID
+	}
+	if len(execCtx.Metadata) > 0 {
+		cloned.Metadata = make(map[string]string, len(execCtx.Metadata))
+		for key, value := range execCtx.Metadata {
+			cloned.Metadata[key] = value
+		}
+	}
+	return cloned
+}
+
+func orderCancelHookValueToOptionalString(value interface{}) (string, error) {
+	if value == nil {
+		return "", nil
+	}
+	str, ok := value.(string)
+	if !ok {
+		return "", fmt.Errorf("value must be string")
+	}
+	return str, nil
+}
+
+func (s *OrderCancelService) buildInventoryHookExecutionContext(order *models.Order) *ExecutionContext {
+	if order == nil {
+		return nil
+	}
+	orderID := order.ID
+	metadata := map[string]string{
+		"source":   "order_auto_cancel",
+		"order_no": order.OrderNo,
+	}
+	var userID *uint
+	if order.UserID != nil {
+		uid := *order.UserID
+		userID = &uid
+		metadata["user_id"] = strconv.FormatUint(uint64(uid), 10)
+	}
+	return &ExecutionContext{
+		UserID:   userID,
+		OrderID:  &orderID,
+		Metadata: metadata,
+	}
+}
+
+func (s *OrderCancelService) releaseReservedInventoryWithHook(order *models.Order, inventoryID uint, quantity int) error {
+	releaseErr := s.inventoryRepo.ReleaseReserve(inventoryID, quantity, order.OrderNo)
+	if s.pluginManager != nil {
+		payload := map[string]interface{}{
+			"order_id":     order.ID,
+			"order_no":     order.OrderNo,
+			"user_id":      order.UserID,
+			"inventory_id": inventoryID,
+			"quantity":     quantity,
+			"success":      releaseErr == nil,
+			"source":       "order_auto_cancel",
+		}
+		if releaseErr != nil {
+			payload["error"] = releaseErr.Error()
+		}
+		go func(execCtx *ExecutionContext, hookPayload map[string]interface{}, orderNo string, inventory uint) {
+			_, hookErr := s.pluginManager.ExecuteHook(HookExecutionRequest{
+				Hook:    "inventory.release.after",
+				Payload: hookPayload,
+			}, execCtx)
+			if hookErr != nil {
+				log.Printf("inventory.release.after hook execution failed: order=%s inventory=%d err=%v", orderNo, inventory, hookErr)
+			}
+		}(cloneOrderCancelExecutionContext(s.buildInventoryHookExecutionContext(order)), payload, order.OrderNo, inventoryID)
+	}
+	return releaseErr
 }
 
 // getAutoCancelHours 获取自动取消小时数，未配置时使用默认值
@@ -59,6 +153,18 @@ func (s *OrderCancelService) getAutoCancelHours() int {
 
 // Start 启动自动取消服务
 func (s *OrderCancelService) Start() {
+	s.lifecycleMu.Lock()
+	if s.running {
+		s.lifecycleMu.Unlock()
+		return
+	}
+	stopChan := make(chan struct{})
+	doneChan := make(chan struct{})
+	s.stopChan = stopChan
+	s.doneChan = doneChan
+	s.running = true
+	s.lifecycleMu.Unlock()
+
 	autoCancelHours := s.getAutoCancelHours()
 
 	logger.LogSystemOperation(s.db, "order_cancel_service_start", "system", nil, map[string]interface{}{
@@ -66,20 +172,31 @@ func (s *OrderCancelService) Start() {
 		"check_interval":    s.checkInterval.String(),
 	})
 
-	s.wg.Add(1)
-	go s.cancelLoop()
+	go s.cancelLoop(stopChan, doneChan)
 }
 
 // Stop 停止自动取消服务
 func (s *OrderCancelService) Stop() {
+	s.lifecycleMu.Lock()
+	if !s.running {
+		s.lifecycleMu.Unlock()
+		return
+	}
+	stopChan := s.stopChan
+	doneChan := s.doneChan
+	s.stopChan = nil
+	s.doneChan = nil
+	s.running = false
+
 	logger.LogSystemOperation(s.db, "order_cancel_service_stop", "system", nil, nil)
-	close(s.stopChan)
-	s.wg.Wait()
+	close(stopChan)
+	<-doneChan
+	s.lifecycleMu.Unlock()
 }
 
 // cancelLoop 取消循环
-func (s *OrderCancelService) cancelLoop() {
-	defer s.wg.Done()
+func (s *OrderCancelService) cancelLoop(stopChan <-chan struct{}, doneChan chan struct{}) {
+	defer close(doneChan)
 
 	// 启动时立即执行一次
 	s.cancelExpiredOrders()
@@ -89,7 +206,7 @@ func (s *OrderCancelService) cancelLoop() {
 
 	for {
 		select {
-		case <-s.stopChan:
+		case <-stopChan:
 			return
 		case <-ticker.C:
 			s.cancelExpiredOrders()
@@ -118,11 +235,14 @@ func (s *OrderCancelService) cancelExpiredOrders() {
 
 	cancelledCount := 0
 	for _, order := range orders {
-		if err := s.cancelOrder(&order, autoCancelHours); err != nil {
+		cancelled, err := s.cancelOrder(&order, autoCancelHours)
+		if err != nil {
 			log.Printf("[OrderCancel] Error cancelling order %s: %v", order.OrderNo, err)
 			continue
 		}
-		cancelledCount++
+		if cancelled {
+			cancelledCount++
+		}
 	}
 
 	if cancelledCount > 0 {
@@ -135,9 +255,63 @@ func (s *OrderCancelService) cancelExpiredOrders() {
 }
 
 // cancelOrder 取消单个订单
-func (s *OrderCancelService) cancelOrder(order *models.Order, autoCancelHours int) error {
+func (s *OrderCancelService) cancelOrder(order *models.Order, autoCancelHours int) (bool, error) {
+	if order == nil {
+		return false, fmt.Errorf("order is nil")
+	}
+
+	beforeStatus := order.Status
 	// 先原子更新订单状态为已取消（WHERE status 条件防止并发重复处理）
 	adminRemark := fmt.Sprintf("System auto-cancelled: order unpaid after %d hours", autoCancelHours)
+	hookExecCtx := cloneOrderCancelExecutionContext(s.buildInventoryHookExecutionContext(order))
+	if s.pluginManager != nil {
+		hookPayload := map[string]interface{}{
+			"order_id":          order.ID,
+			"order_no":          order.OrderNo,
+			"user_id":           order.UserID,
+			"status_before":     beforeStatus,
+			"auto_cancel_hours": autoCancelHours,
+			"admin_remark":      adminRemark,
+			"source":            "order_auto_cancel",
+		}
+		hookResult, hookErr := s.pluginManager.ExecuteHook(HookExecutionRequest{
+			Hook:    "order.auto_cancel.before",
+			Payload: hookPayload,
+		}, hookExecCtx)
+		if hookErr != nil {
+			log.Printf("order.auto_cancel.before hook execution failed: order=%s err=%v", order.OrderNo, hookErr)
+		} else if hookResult != nil {
+			if hookResult.Blocked {
+				reason := strings.TrimSpace(hookResult.BlockReason)
+				if reason == "" {
+					reason = "order auto-cancel blocked by plugin"
+				}
+				log.Printf("[OrderCancel] Skip auto-cancel order %s: %s", order.OrderNo, reason)
+				return false, nil
+			}
+			if hookResult.Payload != nil {
+				if rawRemark, exists := hookResult.Payload["admin_remark"]; exists {
+					remark, convErr := orderCancelHookValueToOptionalString(rawRemark)
+					if convErr != nil {
+						log.Printf("order.auto_cancel.before payload admin_remark decode failed, fallback to default: order=%s err=%v", order.OrderNo, convErr)
+					} else {
+						adminRemark = strings.TrimSpace(remark)
+					}
+				} else if rawReason, exists := hookResult.Payload["reason"]; exists {
+					reason, convErr := orderCancelHookValueToOptionalString(rawReason)
+					if convErr != nil {
+						log.Printf("order.auto_cancel.before payload reason decode failed, fallback to default: order=%s err=%v", order.OrderNo, convErr)
+					} else {
+						adminRemark = strings.TrimSpace(reason)
+					}
+				}
+				if adminRemark == "" {
+					adminRemark = fmt.Sprintf("System auto-cancelled: order unpaid after %d hours", autoCancelHours)
+				}
+			}
+		}
+	}
+
 	result := s.db.Model(order).
 		Where("status = ?", models.OrderStatusPendingPayment).
 		Updates(map[string]interface{}{
@@ -145,12 +319,22 @@ func (s *OrderCancelService) cancelOrder(order *models.Order, autoCancelHours in
 			"admin_remark": adminRemark,
 		})
 	if result.Error != nil {
-		return result.Error
+		return false, result.Error
 	}
 	if result.RowsAffected == 0 {
 		// 订单状态已被其他流程修改，跳过
-		return nil
+		return false, nil
 	}
+
+	syncUserPurchaseStatsTransitionBestEffort(
+		repository.NewOrderRepository(s.db),
+		order.UserID,
+		order.UserID,
+		beforeStatus,
+		models.OrderStatusCancelled,
+		order.Items,
+		"auto_cancel_order",
+	)
 
 	// 状态已更新，开始释放资源（即使部分失败也不影响订单状态）
 
@@ -158,7 +342,7 @@ func (s *OrderCancelService) cancelOrder(order *models.Order, autoCancelHours in
 	for i := range order.Items {
 		item := &order.Items[i]
 		if inventoryID, exists := order.InventoryBindings[i]; exists && inventoryID > 0 {
-			if err := s.inventoryRepo.ReleaseReserve(inventoryID, item.Quantity, order.OrderNo); err != nil {
+			if err := s.releaseReservedInventoryWithHook(order, inventoryID, item.Quantity); err != nil {
 				log.Printf("[OrderCancel] Order %s failed to release inventory %d: %v", order.OrderNo, inventoryID, err)
 			}
 		}
@@ -191,5 +375,27 @@ func (s *OrderCancelService) cancelOrder(order *models.Order, autoCancelHours in
 		"reason":     "pending_payment_timeout",
 	})
 
-	return nil
+	if s.pluginManager != nil {
+		afterPayload := map[string]interface{}{
+			"order_id":          order.ID,
+			"order_no":          order.OrderNo,
+			"user_id":           order.UserID,
+			"status_before":     beforeStatus,
+			"status_after":      models.OrderStatusCancelled,
+			"auto_cancel_hours": autoCancelHours,
+			"admin_remark":      adminRemark,
+			"source":            "order_auto_cancel",
+		}
+		go func(execCtx *ExecutionContext, payload map[string]interface{}, orderNo string) {
+			_, hookErr := s.pluginManager.ExecuteHook(HookExecutionRequest{
+				Hook:    "order.auto_cancel.after",
+				Payload: payload,
+			}, execCtx)
+			if hookErr != nil {
+				log.Printf("order.auto_cancel.after hook execution failed: order=%s err=%v", orderNo, hookErr)
+			}
+		}(hookExecCtx, afterPayload, order.OrderNo)
+	}
+
+	return true, nil
 }

@@ -21,6 +21,17 @@ const (
 	OrderStatusRefunded       OrderStatus = "refunded"        // 已退款
 )
 
+type SerialGenerationStatus string
+
+const (
+	SerialGenerationStatusNotRequired SerialGenerationStatus = "not_required"
+	SerialGenerationStatusQueued      SerialGenerationStatus = "queued"
+	SerialGenerationStatusProcessing  SerialGenerationStatus = "processing"
+	SerialGenerationStatusCompleted   SerialGenerationStatus = "completed"
+	SerialGenerationStatusFailed      SerialGenerationStatus = "failed"
+	SerialGenerationStatusCancelled   SerialGenerationStatus = "cancelled"
+)
+
 // OrderItem OrderProduct项
 type OrderItem struct {
 	SKU         string                 `json:"sku"`
@@ -76,6 +87,11 @@ type Order struct {
 	CompletedAt  *time.Time `json:"completed_at,omitempty"`
 	CompletedBy  *uint      `json:"completed_by,omitempty"`
 	UserFeedback string     `gorm:"type:text" json:"user_feedback,omitempty"`
+
+	// 序列号异步生成状态
+	SerialGenerationStatus SerialGenerationStatus `gorm:"type:varchar(20);index" json:"serial_generation_status,omitempty"`
+	SerialGenerationError  string                 `gorm:"type:text" json:"serial_generation_error,omitempty"`
+	SerialGeneratedAt      *time.Time             `json:"serial_generated_at,omitempty"`
 
 	// 表单访问Token
 	FormToken       *string    `gorm:"type:varchar(255);uniqueIndex" json:"form_token,omitempty"`

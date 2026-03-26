@@ -12,6 +12,7 @@ import (
 
 	"auralogic/internal/config"
 	"auralogic/internal/models"
+	"auralogic/internal/pkg/bizerr"
 
 	"github.com/xuri/excelize/v2"
 	"gorm.io/gorm"
@@ -62,6 +63,45 @@ type inventoryStatusCountRow struct {
 	VirtualInventoryID uint
 	Status             string
 	Count              int64
+}
+
+type VirtualVariantBindingInput struct {
+	Attributes         map[string]string `json:"attributes"`
+	VirtualInventoryID *uint             `json:"virtual_inventory_id"`
+	IsRandom           bool              `json:"is_random"`
+	Priority           int               `json:"priority"`
+}
+
+type VirtualVariantBindingBatchError struct {
+	Index              int
+	VirtualInventoryID uint
+	Err                error
+}
+
+type VirtualVariantBindingSaveResult struct {
+	DeletedCount int
+	Created      []models.ProductVirtualInventoryBinding
+	Errors       []VirtualVariantBindingBatchError
+}
+
+func newVirtualBindingNoBoundInventoryError() error {
+	return bizerr.New("virtual_binding.noBoundInventory", "This product has no virtual inventory configured")
+}
+
+func newVirtualBindingNoMatchingInventoryError() error {
+	return bizerr.New("virtual_binding.noMatchingInventory", "No matching virtual inventory configuration found")
+}
+
+func newVirtualBindingInsufficientAvailableError(requested int, available int64) error {
+	return bizerr.Newf(
+		"virtual_binding.insufficientAvailable",
+		"Not enough virtual inventory available for allocation, requested %d, available %d",
+		requested,
+		available,
+	).WithParams(map[string]interface{}{
+		"requested": requested,
+		"available": available,
+	})
 }
 
 // getScriptPendingItems 获取订单中脚本类型虚拟库存的待发货条目
@@ -129,7 +169,7 @@ func (s *VirtualInventoryService) getScriptPendingItemsWithDB(db *gorm.DB, order
 
 // getRandomOrderClause 根据数据库类型返回正确的随机排序SQL
 func (s *VirtualInventoryService) getRandomOrderClause() string {
-	if s.cfg.Database.Driver == "mysql" {
+	if s.cfg != nil && s.cfg.Database.Driver == "mysql" {
 		return "RAND()"
 	}
 	return "RANDOM()"
@@ -242,7 +282,8 @@ func (s *VirtualInventoryService) DeleteVirtualInventory(id uint) error {
 	}
 
 	if count > 0 {
-		return errors.New("cannot delete virtual inventory with existing stock items")
+		return bizerr.New("virtual_inventory.hasStockItems", "Cannot delete virtual inventory with existing stock items").
+			WithParams(map[string]interface{}{"stock_count": count})
 	}
 
 	// 检查是否有绑定的商品
@@ -253,7 +294,8 @@ func (s *VirtualInventoryService) DeleteVirtualInventory(id uint) error {
 	}
 
 	if count > 0 {
-		return errors.New("cannot delete virtual inventory with product bindings")
+		return bizerr.New("virtual_inventory.hasProductBindings", "Cannot delete virtual inventory with product bindings").
+			WithParams(map[string]interface{}{"binding_count": count})
 	}
 
 	return s.db.Delete(&models.VirtualInventory{}, id).Error
@@ -355,7 +397,7 @@ func (s *VirtualInventoryService) ImportFromExcel(virtualInventoryID uint, fileP
 	}
 
 	if len(rows) == 0 {
-		return 0, errors.New("excel file is empty")
+		return 0, bizerr.New("virtual_inventory.importEmptyFile", "Excel file is empty")
 	}
 
 	// 生成批次号
@@ -393,7 +435,8 @@ func (s *VirtualInventoryService) ImportFromExcel(virtualInventoryID uint, fileP
 	}
 
 	if len(stocks) == 0 {
-		return 0, errors.New("no valid data found in excel file")
+		return 0, bizerr.New("virtual_inventory.importNoValidData", "No valid stock data found for import").
+			WithParams(map[string]interface{}{"source": "excel"})
 	}
 
 	// 批量插入
@@ -441,7 +484,8 @@ func (s *VirtualInventoryService) ImportFromText(virtualInventoryID uint, conten
 	}
 
 	if len(stocks) == 0 {
-		return 0, errors.New("no valid data found in text content")
+		return 0, bizerr.New("virtual_inventory.importNoValidData", "No valid stock data found for import").
+			WithParams(map[string]interface{}{"source": "text"})
 	}
 
 	// 批量插入
@@ -503,7 +547,8 @@ func (s *VirtualInventoryService) ImportFromCSV(virtualInventoryID uint, reader 
 	}
 
 	if len(stocks) == 0 {
-		return 0, errors.New("no valid data found in csv file")
+		return 0, bizerr.New("virtual_inventory.importNoValidData", "No valid stock data found for import").
+			WithParams(map[string]interface{}{"source": "csv"})
 	}
 
 	// 批量插入
@@ -563,11 +608,15 @@ func (s *VirtualInventoryService) ListStocks(virtualInventoryID uint, status str
 func (s *VirtualInventoryService) DeleteStock(id uint) error {
 	var stock models.VirtualProductStock
 	if err := s.db.First(&stock, id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return bizerr.New("virtual_inventory.stockItemNotFound", "Stock item not found")
+		}
 		return err
 	}
 
 	if stock.Status != models.VirtualStockStatusAvailable && stock.Status != models.VirtualStockStatusReserved {
-		return errors.New("only available or reserved stock can be deleted")
+		return bizerr.New("virtual_inventory.stockDeleteStatusInvalid", "Only available or reserved stock can be deleted").
+			WithParams(map[string]interface{}{"status": string(stock.Status)})
 	}
 
 	if err := s.db.Delete(&stock).Error; err != nil {
@@ -641,20 +690,36 @@ func (s *VirtualInventoryService) CreateBinding(productID, virtualInventoryID ui
 // CreateBindingWithAttributes 创建带规格属性的商品-虚拟库存绑定
 // 与实体库存采用相同的绑定制设计，使用 AttributesHash 确保唯一性
 func (s *VirtualInventoryService) CreateBindingWithAttributes(productID, virtualInventoryID uint, attributes map[string]string, isRandom bool, priority int, notes string) (*models.ProductVirtualInventoryBinding, error) {
+	return s.createBindingWithDB(s.db, productID, virtualInventoryID, attributes, isRandom, priority, notes)
+}
+
+func (s *VirtualInventoryService) createBindingWithDB(db *gorm.DB, productID, virtualInventoryID uint, attributes map[string]string, isRandom bool, priority int, notes string) (*models.ProductVirtualInventoryBinding, error) {
 	// 规范化属性并计算哈希
 	normalizedAttrs := models.NormalizeAttributes(attributes)
 	attributesHash := models.GenerateAttributesHash(normalizedAttrs)
 
+	if priority <= 0 {
+		priority = 1
+	}
+
+	var inventory models.VirtualInventory
+	if err := db.Select("id").First(&inventory, virtualInventoryID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, bizerr.New("virtual_binding.inventoryNotFound", "Virtual inventory does not exist")
+		}
+		return nil, err
+	}
+
 	// 检查该商品的该规格组合是否已绑定
 	var existingCount int64
-	if err := s.db.Model(&models.ProductVirtualInventoryBinding{}).
+	if err := db.Model(&models.ProductVirtualInventoryBinding{}).
 		Where("product_id = ? AND attributes_hash = ?", productID, attributesHash).
 		Count(&existingCount).Error; err != nil {
 		return nil, err
 	}
 
 	if existingCount > 0 {
-		return nil, errors.New("this specification combination is already bound to virtual inventory")
+		return nil, bizerr.New("virtual_binding.duplicateAttributes", "This specification combination is already bound to virtual inventory")
 	}
 
 	binding := &models.ProductVirtualInventoryBinding{
@@ -667,7 +732,7 @@ func (s *VirtualInventoryService) CreateBindingWithAttributes(productID, virtual
 		Notes:              notes,
 	}
 
-	if err := s.db.Create(binding).Error; err != nil {
+	if err := db.Create(binding).Error; err != nil {
 		return nil, err
 	}
 
@@ -765,49 +830,45 @@ func (s *VirtualInventoryService) GetProductBindings(productID uint) ([]models.B
 
 // SaveVariantBindings 批量保存商品的规格-虚拟库存绑定
 // 与实体库存采用相同的绑定制设计，使用 AttributesHash 确保唯一性
-func (s *VirtualInventoryService) SaveVariantBindings(productID uint, bindings []struct {
-	Attributes         map[string]string `json:"attributes"`
-	VirtualInventoryID *uint             `json:"virtual_inventory_id"`
-	IsRandom           bool              `json:"is_random"`
-	Priority           int               `json:"priority"`
-}) error {
-	return s.db.Transaction(func(tx *gorm.DB) error {
-		// 先删除该商品的所有现有绑定
-		if err := tx.Where("product_id = ?", productID).Delete(&models.ProductVirtualInventoryBinding{}).Error; err != nil {
-			return err
+func (s *VirtualInventoryService) SaveVariantBindings(productID uint, bindings []VirtualVariantBindingInput) (*VirtualVariantBindingSaveResult, error) {
+	result := &VirtualVariantBindingSaveResult{
+		Created: make([]models.ProductVirtualInventoryBinding, 0, len(bindings)),
+		Errors:  make([]VirtualVariantBindingBatchError, 0),
+	}
+
+	deleteResult := s.db.Where("product_id = ?", productID).Delete(&models.ProductVirtualInventoryBinding{})
+	if deleteResult.Error != nil {
+		return nil, deleteResult.Error
+	}
+	result.DeletedCount = int(deleteResult.RowsAffected)
+
+	for index, bindingInput := range bindings {
+		if bindingInput.VirtualInventoryID == nil || *bindingInput.VirtualInventoryID == 0 {
+			continue
 		}
 
-		// 创建新的绑定
-		for _, b := range bindings {
-			if b.VirtualInventoryID == nil || *b.VirtualInventoryID == 0 {
-				continue // 跳过未配置库存的规格
-			}
-
-			priority := b.Priority
-			if priority <= 0 {
-				priority = 1
-			}
-
-			// 规范化属性并计算哈希
-			normalizedAttrs := models.NormalizeAttributes(b.Attributes)
-			attributesHash := models.GenerateAttributesHash(normalizedAttrs)
-
-			binding := &models.ProductVirtualInventoryBinding{
-				ProductID:          productID,
-				VirtualInventoryID: *b.VirtualInventoryID,
-				Attributes:         models.JSONMap(normalizedAttrs),
-				AttributesHash:     attributesHash,
-				IsRandom:           b.IsRandom,
-				Priority:           priority,
-			}
-
-			if err := tx.Create(binding).Error; err != nil {
-				return err
-			}
+		binding, err := s.createBindingWithDB(
+			s.db,
+			productID,
+			*bindingInput.VirtualInventoryID,
+			bindingInput.Attributes,
+			bindingInput.IsRandom,
+			bindingInput.Priority,
+			"",
+		)
+		if err != nil {
+			result.Errors = append(result.Errors, VirtualVariantBindingBatchError{
+				Index:              index + 1,
+				VirtualInventoryID: *bindingInput.VirtualInventoryID,
+				Err:                err,
+			})
+			continue
 		}
 
-		return nil
-	})
+		result.Created = append(result.Created, *binding)
+	}
+
+	return result, nil
 }
 
 // GetBindingByAttributes 根据规格属性获取绑定
@@ -824,7 +885,7 @@ func (s *VirtualInventoryService) GetBindingByAttributes(productID uint, attribu
 
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errors.New("no binding found for the given attributes")
+			return nil, newVirtualBindingNoMatchingInventoryError()
 		}
 		return nil, err
 	}
@@ -897,7 +958,7 @@ func (s *VirtualInventoryService) AllocateStockForProductByAttributes(productID 
 	}
 
 	if len(bindings) == 0 {
-		return nil, nil, errors.New("no virtual inventory bound to this product")
+		return nil, nil, newVirtualBindingNoBoundInventoryError()
 	}
 
 	var allocatedStocks []models.VirtualProductStock
@@ -944,7 +1005,10 @@ func (s *VirtualInventoryService) AllocateStockForProductByAttributes(productID 
 				Where("virtual_inventory_id = ? AND status = ?", binding.VirtualInventoryID, models.VirtualStockStatusAvailable)
 
 			// 根据配置决定发货顺序
-			deliveryOrder := s.cfg.Order.VirtualDeliveryOrder
+			deliveryOrder := ""
+			if s.cfg != nil {
+				deliveryOrder = s.cfg.Order.VirtualDeliveryOrder
+			}
 			if deliveryOrder == "newest" {
 				query = query.Order("created_at DESC")
 			} else if deliveryOrder == "oldest" {
@@ -988,7 +1052,7 @@ func (s *VirtualInventoryService) AllocateStockForProductByAttributes(productID 
 
 		if remainingQuantity > 0 && scriptInventoryID == nil {
 			// 分配数量不足，事务回滚
-			return fmt.Errorf("insufficient stock, need %d but only %d available", quantity, len(allocatedStocks))
+			return newVirtualBindingInsufficientAvailableError(quantity, int64(len(allocatedStocks)))
 		}
 
 		return nil
@@ -1034,7 +1098,10 @@ func (s *VirtualInventoryService) AllocateStockFromInventory(virtualInventoryID 
 			Where("virtual_inventory_id = ? AND status = ?", virtualInventoryID, models.VirtualStockStatusAvailable)
 
 		// 根据配置决定发货顺序
-		deliveryOrder := s.cfg.Order.VirtualDeliveryOrder
+		deliveryOrder := ""
+		if s.cfg != nil {
+			deliveryOrder = s.cfg.Order.VirtualDeliveryOrder
+		}
 		if deliveryOrder == "newest" {
 			query = query.Order("created_at DESC")
 		} else if deliveryOrder == "oldest" {
@@ -1402,7 +1469,7 @@ func (s *VirtualInventoryService) MarkScriptStockDeliveredWithoutExecution(order
 		}
 
 		if processed == 0 {
-			return errors.New("no pending script virtual stock to mark shipped")
+			return bizerr.New("virtual_inventory.noPendingScriptStock", "No pending script virtual stock to mark shipped")
 		}
 
 		return nil
@@ -1766,11 +1833,15 @@ func (s *VirtualInventoryService) ReleaseStock(orderNo string) error {
 func (s *VirtualInventoryService) ManualReserveStock(stockID uint, remark string) error {
 	var stock models.VirtualProductStock
 	if err := s.db.First(&stock, stockID).Error; err != nil {
-		return errors.New("stock item not found")
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return bizerr.New("virtual_inventory.stockItemNotFound", "Stock item not found")
+		}
+		return err
 	}
 
 	if stock.Status != models.VirtualStockStatusAvailable {
-		return errors.New("stock item is not available")
+		return bizerr.New("virtual_inventory.stockItemUnavailable", "Stock item is not available").
+			WithParams(map[string]interface{}{"status": string(stock.Status)})
 	}
 
 	updates := map[string]interface{}{
@@ -1794,11 +1865,15 @@ func (s *VirtualInventoryService) ManualReserveStock(stockID uint, remark string
 func (s *VirtualInventoryService) ManualReleaseStock(stockID uint) error {
 	var stock models.VirtualProductStock
 	if err := s.db.First(&stock, stockID).Error; err != nil {
-		return errors.New("stock item not found")
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return bizerr.New("virtual_inventory.stockItemNotFound", "Stock item not found")
+		}
+		return err
 	}
 
 	if stock.Status != models.VirtualStockStatusReserved {
-		return errors.New("stock item is not reserved")
+		return bizerr.New("virtual_inventory.stockItemNotReserved", "Stock item is not reserved").
+			WithParams(map[string]interface{}{"status": string(stock.Status)})
 	}
 
 	if err := s.db.Model(&stock).Updates(map[string]interface{}{
@@ -1939,7 +2014,7 @@ func (s *VirtualInventoryService) ImportStockForProduct(productID uint, content 
 	}
 
 	if len(bindings) == 0 {
-		return 0, errors.New("no virtual inventory bound to this product")
+		return 0, newVirtualBindingNoBoundInventoryError()
 	}
 
 	// 使用第一个绑定的虚拟库存
@@ -1954,7 +2029,7 @@ func (s *VirtualInventoryService) ImportStockFromFileForProduct(productID uint, 
 	}
 
 	if len(bindings) == 0 {
-		return 0, errors.New("no virtual inventory bound to this product")
+		return 0, newVirtualBindingNoBoundInventoryError()
 	}
 
 	// 使用第一个绑定的虚拟库存
@@ -1965,6 +2040,9 @@ func (s *VirtualInventoryService) ImportStockFromFileForProduct(productID uint, 
 func (s *VirtualInventoryService) GetFirstBindingForProduct(productID uint) (*models.ProductVirtualInventoryBinding, error) {
 	var binding models.ProductVirtualInventoryBinding
 	if err := s.db.Where("product_id = ?", productID).First(&binding).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, newVirtualBindingNoBoundInventoryError()
+		}
 		return nil, err
 	}
 	return &binding, nil
@@ -1980,7 +2058,7 @@ func (s *VirtualInventoryService) SelectRandomVirtualInventory(productID uint, q
 	}
 
 	if len(bindings) == 0 {
-		return nil, nil, errors.New("no virtual inventory bound to this product")
+		return nil, nil, newVirtualBindingNoBoundInventoryError()
 	}
 
 	// 2. 筛选出有足够库存的绑定
@@ -2001,7 +2079,7 @@ func (s *VirtualInventoryService) SelectRandomVirtualInventory(productID uint, q
 	}
 
 	if len(availableBindings) == 0 {
-		return nil, nil, errors.New("not enough virtual inventory available for allocation")
+		return nil, nil, newVirtualBindingInsufficientAvailableError(quantity, 0)
 	}
 
 	// 辅助函数：从绑定中提取完整属性
@@ -2072,22 +2150,14 @@ func (s *VirtualInventoryService) FindVirtualInventoryWithPartialMatch(productID
 	}
 
 	if len(bindings) == 0 {
-		return nil, nil, errors.New("no virtual inventory bound to this product")
+		return nil, nil, newVirtualBindingNoBoundInventoryError()
 	}
 
 	// 2. 筛选出包含用户选择属性的绑定（部分匹配）
 	var matchedBindings []models.BindingWithVirtualInventoryInfo
+	hasAttributeMatch := false
 	for _, binding := range bindings {
 		if binding.VirtualInventory == nil {
-			continue
-		}
-		// 脚本类型：有限制时检查剩余量，无限制时直接可用；静态类型检查库存数量
-		isScriptType := binding.VirtualInventory.Type == models.VirtualInventoryTypeScript
-		if isScriptType {
-			if binding.VirtualInventory.TotalLimit > 0 && binding.VirtualInventory.Available < int64(quantity) {
-				continue
-			}
-		} else if binding.VirtualInventory.Available < int64(quantity) {
 			continue
 		}
 
@@ -2107,12 +2177,25 @@ func (s *VirtualInventoryService) FindVirtualInventoryWithPartialMatch(productID
 		}
 
 		if isMatch {
+			hasAttributeMatch = true
+			// 脚本类型：有限制时检查剩余量，无限制时直接可用；静态类型检查库存数量
+			isScriptType := binding.VirtualInventory.Type == models.VirtualInventoryTypeScript
+			if isScriptType {
+				if binding.VirtualInventory.TotalLimit > 0 && binding.VirtualInventory.Available < int64(quantity) {
+					continue
+				}
+			} else if binding.VirtualInventory.Available < int64(quantity) {
+				continue
+			}
 			matchedBindings = append(matchedBindings, binding)
 		}
 	}
 
 	if len(matchedBindings) == 0 {
-		return nil, nil, errors.New("no matching virtual inventory configuration found")
+		if hasAttributeMatch {
+			return nil, nil, newVirtualBindingInsufficientAvailableError(quantity, 0)
+		}
+		return nil, nil, newVirtualBindingNoMatchingInventoryError()
 	}
 
 	// 辅助函数：从绑定中提取完整属性
@@ -2191,7 +2274,7 @@ func (s *VirtualInventoryService) FindVirtualInventoryWithPartialMatch(productID
 // TestDeliveryScript 测试发货脚本（使用模拟订单数据）
 func (s *VirtualInventoryService) TestDeliveryScript(script string, config map[string]interface{}, quantity int) (*ScriptDeliveryResult, error) {
 	if strings.TrimSpace(script) == "" {
-		return nil, errors.New("script content is required")
+		return nil, bizerr.New("virtual_inventory.scriptRequired", "Script content is required")
 	}
 	if quantity <= 0 {
 		quantity = 1

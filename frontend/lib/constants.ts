@@ -62,10 +62,21 @@ export const PERMISSIONS = [
   { value: 'system.config', labelKey: 'permSystemConfig' as const, category: 'system' },
   { value: 'system.logs', labelKey: 'permSystemLogs' as const, category: 'system' },
   { value: 'api.manage', labelKey: 'permApiManage' as const, category: 'system' },
+
+  // 支付方式权限
+  { value: 'payment_method.view', labelKey: 'permPaymentMethodView' as const, category: 'payment' },
+
+  // 插件权限
+  { value: 'plugin.view', labelKey: 'permPluginView' as const, category: 'plugin' },
+  { value: 'plugin.edit', labelKey: 'permPluginEdit' as const, category: 'plugin' },
+  { value: 'plugin.execute', labelKey: 'permPluginExecute' as const, category: 'plugin' },
+  { value: 'plugin.lifecycle', labelKey: 'permPluginLifecycle' as const, category: 'plugin' },
+  { value: 'plugin.diagnostics', labelKey: 'permPluginDiagnostics' as const, category: 'plugin' },
+  { value: 'plugin.upload', labelKey: 'permPluginUpload' as const, category: 'plugin' },
 ]
 
 // 权限分类键名
-export const PERMISSION_CATEGORIES = ['order', 'product', 'serial', 'user', 'ticket', 'knowledge', 'announcement', 'marketing', 'admin', 'system'] as const
+export const PERMISSION_CATEGORIES = ['order', 'product', 'serial', 'user', 'ticket', 'knowledge', 'announcement', 'marketing', 'admin', 'system', 'payment', 'plugin'] as const
 
 // 分类键名到翻译键的映射
 export const CATEGORY_LABEL_KEYS: Record<string, string> = {
@@ -79,6 +90,8 @@ export const CATEGORY_LABEL_KEYS: Record<string, string> = {
   marketing: 'permCategoryMarketing',
   admin: 'permCategoryAdmin',
   system: 'permCategorySystem',
+  payment: 'permCategoryPayment',
+  plugin: 'permCategoryPlugin',
 }
 
 // 按分类组织的权限（使用分类键名）
@@ -93,6 +106,8 @@ export const PERMISSIONS_BY_CATEGORY: Record<string, typeof PERMISSIONS> = {
   marketing: PERMISSIONS.filter(p => p.category === 'marketing'),
   admin: PERMISSIONS.filter(p => p.category === 'admin'),
   system: PERMISSIONS.filter(p => p.category === 'system'),
+  payment: PERMISSIONS.filter(p => p.category === 'payment'),
+  plugin: PERMISSIONS.filter(p => p.category === 'plugin'),
 }
 
 // 工单状态配置

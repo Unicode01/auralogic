@@ -5,8 +5,8 @@ import (
 	"fmt"
 
 	"auralogic/internal/models"
+	"auralogic/internal/pkg/dbutil"
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 type InventoryRepository struct {
@@ -103,9 +103,12 @@ func (r *InventoryRepository) Delete(id uint) error {
 // Reserve 预留库存（下单但未支付）
 func (r *InventoryRepository) Reserve(inventoryID uint, quantity int, orderNo string) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := dbutil.LockForUpdate(tx, &models.Inventory{}, "id = ?", inventoryID); err != nil {
+			return err
+		}
+
 		var inventory models.Inventory
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			First(&inventory, inventoryID).Error; err != nil {
+		if err := tx.First(&inventory, inventoryID).Error; err != nil {
 			return err
 		}
 
@@ -142,9 +145,12 @@ func (r *InventoryRepository) Reserve(inventoryID uint, quantity int, orderNo st
 // ReleaseReserve 释放预留库存（取消订单）
 func (r *InventoryRepository) ReleaseReserve(inventoryID uint, quantity int, orderNo string) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := dbutil.LockForUpdate(tx, &models.Inventory{}, "id = ?", inventoryID); err != nil {
+			return err
+		}
+
 		var inventory models.Inventory
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			First(&inventory, inventoryID).Error; err != nil {
+		if err := tx.First(&inventory, inventoryID).Error; err != nil {
 			return err
 		}
 
@@ -183,9 +189,12 @@ func (r *InventoryRepository) ReleaseReserve(inventoryID uint, quantity int, ord
 // 4. 减少可购买数（AvailableQuantity）
 func (r *InventoryRepository) Deduct(inventoryID uint, quantity int, orderNo string) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := dbutil.LockForUpdate(tx, &models.Inventory{}, "id = ?", inventoryID); err != nil {
+			return err
+		}
+
 		var inventory models.Inventory
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			First(&inventory, inventoryID).Error; err != nil {
+		if err := tx.First(&inventory, inventoryID).Error; err != nil {
 			return err
 		}
 
@@ -241,8 +250,12 @@ func (r *InventoryRepository) Deduct(inventoryID uint, quantity int, orderNo str
 // Adjust 调整库存（入库、盘点等）- 旧方法保留用于兼容
 func (r *InventoryRepository) Adjust(inventoryID uint, newStock, newAvailable int, operator, reason string) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := dbutil.LockForUpdate(tx, &models.Inventory{}, "id = ?", inventoryID); err != nil {
+			return err
+		}
+
 		var inventory models.Inventory
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&inventory, inventoryID).Error; err != nil {
+		if err := tx.First(&inventory, inventoryID).Error; err != nil {
 			return err
 		}
 
@@ -273,9 +286,13 @@ func (r *InventoryRepository) Adjust(inventoryID uint, newStock, newAvailable in
 // AdjustByDelta 通过增量调整库存（推荐使用，避免并发问题）- 旧方法保留用于兼容
 func (r *InventoryRepository) AdjustByDelta(inventoryID uint, stockDelta, availableDelta int, operator, reason string) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := dbutil.LockForUpdate(tx, &models.Inventory{}, "id = ?", inventoryID); err != nil {
+			return err
+		}
+
 		var inventory models.Inventory
 		// 锁定行以避免并发问题
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&inventory, inventoryID).Error; err != nil {
+		if err := tx.First(&inventory, inventoryID).Error; err != nil {
 			return err
 		}
 

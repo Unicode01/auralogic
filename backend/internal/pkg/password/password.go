@@ -2,12 +2,83 @@ package password
 
 import (
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"math/big"
 	"regexp"
 
+	"auralogic/internal/pkg/bizerr"
 	"golang.org/x/crypto/bcrypt"
 )
+
+type PolicyErrorCode string
+
+const (
+	PolicyErrorTooShort      PolicyErrorCode = "password.too_short"
+	PolicyErrorNeedUppercase PolicyErrorCode = "password.need_uppercase"
+	PolicyErrorNeedLowercase PolicyErrorCode = "password.need_lowercase"
+	PolicyErrorNeedDigit     PolicyErrorCode = "password.need_digit"
+	PolicyErrorNeedSpecial   PolicyErrorCode = "password.need_special"
+)
+
+// PolicyError represents a password policy validation failure.
+type PolicyError struct {
+	Code      PolicyErrorCode
+	MinLength int
+}
+
+func (e *PolicyError) Error() string {
+	if e == nil {
+		return ""
+	}
+
+	switch e.Code {
+	case PolicyErrorTooShort:
+		return fmt.Sprintf("Password must be at least %d characters", e.MinLength)
+	case PolicyErrorNeedUppercase:
+		return "Password must contain at least one uppercase letter"
+	case PolicyErrorNeedLowercase:
+		return "Password must contain at least one lowercase letter"
+	case PolicyErrorNeedDigit:
+		return "Password must contain at least one digit"
+	case PolicyErrorNeedSpecial:
+		return "Password must contain at least one special character"
+	default:
+		return "Password does not meet policy requirements"
+	}
+}
+
+func AsPolicyError(err error) (*PolicyError, bool) {
+	var policyErr *PolicyError
+	if !errors.As(err, &policyErr) {
+		return nil, false
+	}
+	return policyErr, true
+}
+
+func ToBizError(err error) *bizerr.Error {
+	policyErr, ok := AsPolicyError(err)
+	if !ok || policyErr == nil {
+		return nil
+	}
+
+	switch policyErr.Code {
+	case PolicyErrorTooShort:
+		return bizerr.New("password.tooShort", policyErr.Error()).WithParams(map[string]interface{}{
+			"n": policyErr.MinLength,
+		})
+	case PolicyErrorNeedUppercase:
+		return bizerr.New("password.needUppercase", policyErr.Error())
+	case PolicyErrorNeedLowercase:
+		return bizerr.New("password.needLowercase", policyErr.Error())
+	case PolicyErrorNeedDigit:
+		return bizerr.New("password.needDigit", policyErr.Error())
+	case PolicyErrorNeedSpecial:
+		return bizerr.New("password.needSpecial", policyErr.Error())
+	default:
+		return nil
+	}
+}
 
 // HashPassword 哈希Password
 func HashPassword(password string) (string, error) {
@@ -77,25 +148,24 @@ func mustRandomInt(max int) int {
 // ValidatePasswordPolicy 验证Password策略
 func ValidatePasswordPolicy(password string, minLength int, requireUpper, requireLower, requireNumber, requireSpecial bool) error {
 	if len(password) < minLength {
-		return fmt.Errorf("Password must be at least %d characters", minLength)
+		return &PolicyError{Code: PolicyErrorTooShort, MinLength: minLength}
 	}
 
 	if requireUpper && !regexp.MustCompile(`[A-Z]`).MatchString(password) {
-		return fmt.Errorf("Password must contain at least one uppercase letter")
+		return &PolicyError{Code: PolicyErrorNeedUppercase}
 	}
 
 	if requireLower && !regexp.MustCompile(`[a-z]`).MatchString(password) {
-		return fmt.Errorf("Password must contain at least one lowercase letter")
+		return &PolicyError{Code: PolicyErrorNeedLowercase}
 	}
 
 	if requireNumber && !regexp.MustCompile(`[0-9]`).MatchString(password) {
-		return fmt.Errorf("Password must contain at least one digit")
+		return &PolicyError{Code: PolicyErrorNeedDigit}
 	}
 
 	if requireSpecial && !regexp.MustCompile(`[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]`).MatchString(password) {
-		return fmt.Errorf("Password must contain at least one special character")
+		return &PolicyError{Code: PolicyErrorNeedSpecial}
 	}
 
 	return nil
 }
-

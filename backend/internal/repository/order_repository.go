@@ -2,8 +2,10 @@ package repository
 
 import (
 	"auralogic/internal/models"
+	"auralogic/internal/pkg/dbutil"
 	"fmt"
 	"gorm.io/gorm"
+	"strings"
 )
 
 type OrderRepository struct {
@@ -12,6 +14,10 @@ type OrderRepository struct {
 
 func NewOrderRepository(db *gorm.DB) *OrderRepository {
 	return &OrderRepository{db: db}
+}
+
+func (r *OrderRepository) WithTransaction(fn func(tx *gorm.DB) error) error {
+	return r.db.Transaction(fn)
 }
 
 // Create 创建订单
@@ -26,6 +32,15 @@ func (r *OrderRepository) FindByID(id uint) (*models.Order, error) {
 	return &order, err
 }
 
+func (r *OrderRepository) FindByIDForUpdate(tx *gorm.DB, id uint) (*models.Order, error) {
+	if err := dbutil.LockForUpdate(tx, &models.Order{}, "id = ?", id); err != nil {
+		return nil, err
+	}
+	var order models.Order
+	err := tx.Preload("User").First(&order, id).Error
+	return &order, err
+}
+
 // FindByOrderNo 根据订单号查找订单
 func (r *OrderRepository) FindByOrderNo(orderNo string) (*models.Order, error) {
 	var order models.Order
@@ -37,6 +52,15 @@ func (r *OrderRepository) FindByOrderNo(orderNo string) (*models.Order, error) {
 func (r *OrderRepository) FindByFormToken(token string) (*models.Order, error) {
 	var order models.Order
 	err := r.db.Where("form_token = ?", token).First(&order).Error
+	return &order, err
+}
+
+func (r *OrderRepository) FindByFormTokenForUpdate(tx *gorm.DB, token string) (*models.Order, error) {
+	if err := dbutil.LockForUpdate(tx, &models.Order{}, "form_token = ?", token); err != nil {
+		return nil, err
+	}
+	var order models.Order
+	err := tx.Where("form_token = ?", token).First(&order).Error
 	return &order, err
 }
 
@@ -86,6 +110,14 @@ func (r *OrderRepository) FindByUserID(userID uint, page, limit int, status stri
 func (r *OrderRepository) CountByUserAndStatus(userID uint, status models.OrderStatus) (int64, error) {
 	var total int64
 	err := r.db.Model(&models.Order{}).
+		Where("user_id = ? AND status = ?", userID, status).
+		Count(&total).Error
+	return total, err
+}
+
+func (r *OrderRepository) CountByUserAndStatusTx(tx *gorm.DB, userID uint, status models.OrderStatus) (int64, error) {
+	var total int64
+	err := tx.Model(&models.Order{}).
 		Where("user_id = ? AND status = ?", userID, status).
 		Count(&total).Error
 	return total, err
@@ -197,26 +229,11 @@ func (r *OrderRepository) Delete(orderID uint) error {
 
 // GetUserPurchaseQuantityBySKU 获取用户购买某个商品的总数量（不包括已取消的订单）
 func (r *OrderRepository) GetUserPurchaseQuantityBySKU(userID uint, sku string) (int, error) {
-	var orders []models.Order
-	// QueryUser的所有非取消状态的订单
-	err := r.db.Where("user_id = ? AND status != ?", userID, models.OrderStatusCancelled).
-		Find(&orders).Error
-
+	quantities, err := r.GetUserPurchaseQuantityBySKUs(userID, []string{sku})
 	if err != nil {
 		return 0, err
 	}
-
-	// 统计商品数量
-	totalQuantity := 0
-	for _, order := range orders {
-		for _, item := range order.Items {
-			if item.SKU == sku {
-				totalQuantity += item.Quantity
-			}
-		}
-	}
-
-	return totalQuantity, nil
+	return quantities[strings.TrimSpace(sku)], nil
 }
 
 // GetOrderCountries 获取所有有订单的国家列表

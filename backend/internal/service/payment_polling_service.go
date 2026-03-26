@@ -3,6 +3,11 @@ package service
 import (
 	"container/heap"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"log"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -12,7 +17,11 @@ import (
 	"auralogic/internal/pkg/logger"
 	"auralogic/internal/repository"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
+
+const paymentPollingStartupBatchSize = 200
+const paymentPollingPersistBatchSize = 200
 
 // PollingTask 轮询任务
 type PollingTask struct {
@@ -57,22 +66,36 @@ func (h *TaskHeap) Pop() interface{} {
 // PaymentPollingService 付款状态轮询服务（时间轮实现）
 type PaymentPollingService struct {
 	db                  *gorm.DB
+	cfg                 *config.Config
 	orderRepo           *repository.OrderRepository
 	userRepo            *repository.UserRepository
 	jsRuntime           *JSRuntimeService
 	virtualInventorySvc *VirtualInventoryService
 	emailService        *EmailService
+	pluginManager       *PluginManagerService
 	taskHeap            TaskHeap              // 时间轮：按下次检查时间排序的最小堆
 	taskMap             map[uint]*PollingTask // orderID -> task 快速查找
 	userTaskCounts      map[uint]int          // userID -> queue task count
+	pendingBackfill     bool
+	lifecycleMu         sync.Mutex
+	running             bool
 	mutex               sync.Mutex
 	stopChan            chan struct{}
+	doneChan            chan struct{}
 	wakeupChan          chan struct{} // 用于唤醒主循环
 	defaultInterval     int           // 默认检查间隔(秒)
 	maxRetries          int           // 最大重试次数
 	maxDuration         time.Duration // 最大轮询时长
 	maxTasksPerUser     int           // 每用户轮询任务上限
 	maxTasksGlobal      int           // 全局轮询任务上限
+}
+
+type pendingPaymentPollingOrderRow struct {
+	CursorID        uint  `gorm:"column:cursor_id"`
+	OrderID         uint  `gorm:"column:order_id"`
+	UserID          *uint `gorm:"column:user_id"`
+	PaymentMethodID uint  `gorm:"column:payment_method_id"`
+	PollInterval    int   `gorm:"column:poll_interval"`
 }
 
 // NewPaymentPollingService 创建付款轮询服务
@@ -90,15 +113,15 @@ func NewPaymentPollingService(db *gorm.DB, virtualInventorySvc *VirtualInventory
 
 	return &PaymentPollingService{
 		db:                  db,
+		cfg:                 cfg,
 		orderRepo:           repository.NewOrderRepository(db),
 		userRepo:            repository.NewUserRepository(db),
-		jsRuntime:           NewJSRuntimeService(db),
+		jsRuntime:           NewJSRuntimeService(db, cfg),
 		virtualInventorySvc: virtualInventorySvc,
 		emailService:        emailService,
 		taskHeap:            make(TaskHeap, 0),
 		taskMap:             make(map[uint]*PollingTask),
 		userTaskCounts:      make(map[uint]int),
-		stopChan:            make(chan struct{}),
 		wakeupChan:          make(chan struct{}, 1),
 		defaultInterval:     30,            // 默认30秒
 		maxRetries:          480,           // 最多重试480次
@@ -108,8 +131,38 @@ func NewPaymentPollingService(db *gorm.DB, virtualInventorySvc *VirtualInventory
 	}
 }
 
+func (s *PaymentPollingService) SetPluginManager(pluginManager *PluginManagerService) {
+	s.pluginManager = pluginManager
+}
+
+func (s *PaymentPollingService) currentQueueLimits() (int, int) {
+	maxTasksPerUser := s.maxTasksPerUser
+	maxTasksGlobal := s.maxTasksGlobal
+	if s.cfg != nil {
+		if s.cfg.Order.MaxPaymentPollingTasksPerUser > 0 {
+			maxTasksPerUser = s.cfg.Order.MaxPaymentPollingTasksPerUser
+		}
+		if s.cfg.Order.MaxPaymentPollingTasksGlobal > 0 {
+			maxTasksGlobal = s.cfg.Order.MaxPaymentPollingTasksGlobal
+		}
+	}
+	return maxTasksPerUser, maxTasksGlobal
+}
+
 // Start 启动轮询服务
 func (s *PaymentPollingService) Start() {
+	s.lifecycleMu.Lock()
+	if s.running {
+		s.lifecycleMu.Unlock()
+		return
+	}
+	stopChan := make(chan struct{})
+	doneChan := make(chan struct{})
+	s.stopChan = stopChan
+	s.doneChan = doneChan
+	s.running = true
+	s.lifecycleMu.Unlock()
+
 	logger.LogSystemOperation(s.db, "payment_polling_start", "system", nil, map[string]interface{}{
 		"default_interval": s.defaultInterval,
 		"max_retries":      s.maxRetries,
@@ -118,15 +171,30 @@ func (s *PaymentPollingService) Start() {
 		"max_tasks_global": s.maxTasksGlobal,
 		"algorithm":        "time_wheel",
 	})
+
+	s.resetQueueState()
 	// 从数据库恢复未完成的轮询任务
 	s.recoverTasks()
-	go s.timeWheelLoop()
+	go s.timeWheelLoop(stopChan, doneChan)
 }
 
 // Stop 停止轮询服务
 func (s *PaymentPollingService) Stop() {
+	s.lifecycleMu.Lock()
+	if !s.running {
+		s.lifecycleMu.Unlock()
+		return
+	}
+	stopChan := s.stopChan
+	doneChan := s.doneChan
+	s.stopChan = nil
+	s.doneChan = nil
+	s.running = false
+
 	logger.LogSystemOperation(s.db, "payment_polling_stop", "system", nil, nil)
-	close(s.stopChan)
+	close(stopChan)
+	<-doneChan
+	s.lifecycleMu.Unlock()
 }
 
 // AddToQueue 添加订单到轮询队列
@@ -159,13 +227,13 @@ func (s *PaymentPollingService) AddToQueue(orderID, paymentMethodID uint) error 
 	}
 
 	s.mutex.Lock()
-	defer s.mutex.Unlock()
-
 	if _, exists := s.taskMap[orderID]; exists {
+		s.mutex.Unlock()
 		return nil
 	}
 
 	if err := s.checkQueueQuotaLocked(queueUserID); err != nil {
+		s.mutex.Unlock()
 		return err
 	}
 
@@ -183,15 +251,17 @@ func (s *PaymentPollingService) AddToQueue(orderID, paymentMethodID uint) error 
 	s.taskMap[orderID] = task
 	s.incrementUserTaskLocked(queueUserID)
 	heap.Push(&s.taskHeap, task)
+	queueSize := len(s.taskMap)
+	s.mutex.Unlock()
 
 	// 保存到数据库（用于服务重启后恢复）
-	s.saveTaskToDB(task)
+	s.saveTaskToDB(s.cloneTask(task))
 
 	logger.LogPaymentOperation(s.db, "payment_polling_add", orderID, map[string]interface{}{
 		"payment_method_id": paymentMethodID,
 		"check_interval":    interval,
 		"user_id":           queueUserID,
-		"queue_size":        len(s.taskMap),
+		"queue_size":        queueSize,
 	})
 
 	// 唤醒主循环
@@ -200,29 +270,30 @@ func (s *PaymentPollingService) AddToQueue(orderID, paymentMethodID uint) error 
 }
 
 func (s *PaymentPollingService) checkQueueQuotaLocked(userID uint) error {
-	if s.maxTasksGlobal > 0 && len(s.taskMap) >= s.maxTasksGlobal {
+	maxTasksPerUser, maxTasksGlobal := s.currentQueueLimits()
+	if maxTasksGlobal > 0 && len(s.taskMap) >= maxTasksGlobal {
 		return bizerr.Newf(
 			"payment.pollingGlobalQueueLimitExceeded",
 			"Payment polling queue has reached global limit (%d)",
-			s.maxTasksGlobal,
+			maxTasksGlobal,
 		).WithParams(map[string]interface{}{
 			"current": len(s.taskMap),
-			"max":     s.maxTasksGlobal,
+			"max":     maxTasksGlobal,
 		})
 	}
 
-	if userID > 0 && s.maxTasksPerUser > 0 {
+	if userID > 0 && maxTasksPerUser > 0 {
 		current := s.userTaskCounts[userID]
-		if current >= s.maxTasksPerUser {
+		if current >= maxTasksPerUser {
 			return bizerr.Newf(
 				"payment.pollingUserQueueLimitExceeded",
 				"You already have %d payment polling tasks, maximum is %d",
 				current,
-				s.maxTasksPerUser,
+				maxTasksPerUser,
 			).WithParams(map[string]interface{}{
 				"user_id": userID,
 				"current": current,
-				"max":     s.maxTasksPerUser,
+				"max":     maxTasksPerUser,
 			})
 		}
 	}
@@ -249,19 +320,282 @@ func (s *PaymentPollingService) decrementUserTaskLocked(userID uint) {
 	s.userTaskCounts[userID] = current - 1
 }
 
+func clonePaymentExecutionContext(execCtx *ExecutionContext) *ExecutionContext {
+	if execCtx == nil {
+		return nil
+	}
+	cloned := &ExecutionContext{
+		SessionID:      execCtx.SessionID,
+		RequestContext: execCtx.RequestContext,
+	}
+	if execCtx.UserID != nil {
+		userID := *execCtx.UserID
+		cloned.UserID = &userID
+	}
+	if execCtx.OrderID != nil {
+		orderID := *execCtx.OrderID
+		cloned.OrderID = &orderID
+	}
+	if len(execCtx.Metadata) > 0 {
+		cloned.Metadata = make(map[string]string, len(execCtx.Metadata))
+		for key, value := range execCtx.Metadata {
+			cloned.Metadata[key] = value
+		}
+	}
+	return cloned
+}
+
+func (s *PaymentPollingService) buildPaymentHookExecutionContext(order *models.Order, task *PollingTask, source string) *ExecutionContext {
+	var userID *uint
+	var orderID *uint
+	normalizedSource := strings.TrimSpace(source)
+	if normalizedSource == "" {
+		normalizedSource = "payment_polling"
+	}
+	metadata := map[string]string{
+		"source": normalizedSource,
+	}
+	if order != nil {
+		if order.UserID != nil {
+			uid := *order.UserID
+			userID = &uid
+			metadata["user_id"] = strconv.FormatUint(uint64(uid), 10)
+		}
+		oid := order.ID
+		orderID = &oid
+		metadata["order_no"] = order.OrderNo
+	}
+	if task != nil {
+		metadata["retry_count"] = strconv.Itoa(task.RetryCount)
+		metadata["check_interval"] = strconv.Itoa(task.CheckInterval)
+		metadata["payment_method_id"] = strconv.FormatUint(uint64(task.PaymentMethodID), 10)
+	}
+	return &ExecutionContext{
+		UserID:   userID,
+		OrderID:  orderID,
+		Metadata: metadata,
+	}
+}
+
+func (s *PaymentPollingService) emitPaymentHookAsync(hook string, payload map[string]interface{}, execCtx *ExecutionContext) {
+	if s.pluginManager == nil {
+		return
+	}
+	go func(hookName string, hookPayload map[string]interface{}, hookExecCtx *ExecutionContext) {
+		_, hookErr := s.pluginManager.ExecuteHook(HookExecutionRequest{
+			Hook:    hookName,
+			Payload: hookPayload,
+		}, hookExecCtx)
+		if hookErr != nil {
+			log.Printf("%s hook execution failed: err=%v", hookName, hookErr)
+		}
+	}(hook, payload, clonePaymentExecutionContext(execCtx))
+}
+
+func paymentHookValueToOptionalString(value interface{}) (string, error) {
+	if value == nil {
+		return "", nil
+	}
+	str, ok := value.(string)
+	if !ok {
+		return "", fmt.Errorf("value must be string")
+	}
+	return str, nil
+}
+
+func paymentHookValueToPayloadMap(value interface{}) (map[string]interface{}, error) {
+	if value == nil {
+		return nil, nil
+	}
+	body, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	var out map[string]interface{}
+	if err := json.Unmarshal(body, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func applyPaymentConfirmHookPayload(result *PaymentCheckResult, payload map[string]interface{}) error {
+	if result == nil || payload == nil {
+		return nil
+	}
+
+	if raw, exists := payload["transaction_id"]; exists {
+		transactionID, err := paymentHookValueToOptionalString(raw)
+		if err != nil {
+			return fmt.Errorf("decode transaction_id: %w", err)
+		}
+		result.TransactionID = strings.TrimSpace(transactionID)
+	}
+	if raw, exists := payload["payment_result"]; exists {
+		paymentResult, err := paymentHookValueToPayloadMap(raw)
+		if err != nil {
+			return fmt.Errorf("decode payment_result: %w", err)
+		}
+		result.Data = paymentResult
+	}
+
+	return nil
+}
+
+func buildPaymentTaskForOrder(order *models.Order, paymentMethodID uint, pollInterval int) *PollingTask {
+	if order == nil {
+		return &PollingTask{PaymentMethodID: paymentMethodID}
+	}
+	userID := uint(0)
+	if order.UserID != nil {
+		userID = *order.UserID
+	}
+	return &PollingTask{
+		OrderID:         order.ID,
+		UserID:          userID,
+		PaymentMethodID: paymentMethodID,
+		CheckInterval:   pollInterval,
+		RetryCount:      0,
+		AddedAt:         time.Now(),
+		NextCheckAt:     time.Now(),
+	}
+}
+
+func (s *PaymentPollingService) applyPaymentConfirmBeforeHook(
+	order *models.Order,
+	task *PollingTask,
+	pm *models.PaymentMethod,
+	result *PaymentCheckResult,
+	source string,
+) (bool, error) {
+	if order == nil || pm == nil || result == nil || s.pluginManager == nil {
+		return false, nil
+	}
+
+	execCtx := s.buildPaymentHookExecutionContext(order, task, source)
+	beforePayload := map[string]interface{}{
+		"order_id":          order.ID,
+		"order_no":          order.OrderNo,
+		"user_id":           task.UserID,
+		"payment_method_id": pm.ID,
+		"payment_method":    pm.Name,
+		"transaction_id":    result.TransactionID,
+		"status_before":     order.Status,
+		"retry_count":       task.RetryCount,
+		"source":            strings.TrimSpace(source),
+	}
+	if beforePayload["source"] == "" {
+		beforePayload["source"] = "payment_polling"
+	}
+	if result.Data != nil {
+		beforePayload["payment_result"] = result.Data
+	}
+	hookResult, hookErr := s.pluginManager.ExecuteHook(HookExecutionRequest{
+		Hook:    "payment.confirm.before",
+		Payload: beforePayload,
+	}, execCtx)
+	if hookErr != nil {
+		log.Printf("payment.confirm.before hook execution failed: order=%s err=%v", order.OrderNo, hookErr)
+		return false, nil
+	}
+	if hookResult == nil {
+		return false, nil
+	}
+	if hookResult.Blocked {
+		reason := strings.TrimSpace(hookResult.BlockReason)
+		if reason == "" {
+			reason = "payment confirmation blocked by plugin"
+		}
+		return true, fmt.Errorf("%s", reason)
+	}
+	if hookResult.Payload != nil {
+		originalResult := &PaymentCheckResult{
+			Paid:          result.Paid,
+			TransactionID: result.TransactionID,
+			Message:       result.Message,
+			Data:          clonePayloadMap(result.Data),
+		}
+		if applyErr := applyPaymentConfirmHookPayload(result, hookResult.Payload); applyErr != nil {
+			log.Printf("payment.confirm.before payload apply failed, fallback to original result: order=%s err=%v", order.OrderNo, applyErr)
+			result.TransactionID = originalResult.TransactionID
+			result.Message = originalResult.Message
+			result.Data = originalResult.Data
+		}
+	}
+	return false, nil
+}
+
+func (s *PaymentPollingService) ConfirmPaymentResult(
+	orderID uint,
+	paymentMethodID uint,
+	result *PaymentCheckResult,
+	source string,
+) (bool, error) {
+	normalizedSource := strings.TrimSpace(source)
+	if normalizedSource == "" {
+		normalizedSource = "payment_polling"
+	}
+	if result == nil || !result.Paid {
+		return false, fmt.Errorf("payment result is not confirmed")
+	}
+
+	var order models.Order
+	if err := s.db.First(&order, orderID).Error; err != nil {
+		return false, err
+	}
+
+	var pm models.PaymentMethod
+	if err := s.db.First(&pm, paymentMethodID).Error; err != nil {
+		return false, err
+	}
+	var opm models.OrderPaymentMethod
+	if err := s.db.Where("order_id = ?", orderID).First(&opm).Error; err != nil {
+		return false, err
+	}
+	if opm.PaymentMethodID != paymentMethodID {
+		return false, fmt.Errorf("order payment method mismatch")
+	}
+
+	task := buildPaymentTaskForOrder(&order, paymentMethodID, pm.PollInterval)
+	if blocked, err := s.applyPaymentConfirmBeforeHook(&order, task, &pm, result, normalizedSource); blocked {
+		s.emitPaymentHookAsync("payment.polling.failed", map[string]interface{}{
+			"order_id":          order.ID,
+			"order_no":          order.OrderNo,
+			"user_id":           task.UserID,
+			"payment_method_id": pm.ID,
+			"reason":            "confirm_blocked",
+			"block_reason":      err.Error(),
+			"retry_count":       task.RetryCount,
+			"source":            normalizedSource,
+		}, s.buildPaymentHookExecutionContext(&order, task, normalizedSource))
+		return false, err
+	}
+
+	if order.Status != models.OrderStatusPendingPayment {
+		s.mutex.Lock()
+		s.removeFromQueueLocked(order.ID)
+		s.mutex.Unlock()
+		return true, nil
+	}
+
+	if err := s.handlePaymentSuccess(task, &order, &pm, result, normalizedSource); err != nil {
+		if isOrderHighConcurrencyBusyError(err) {
+			return false, newOrderHighConcurrencyBusyError()
+		}
+		return false, err
+	}
+	return false, nil
+}
+
 // RemoveFromQueue 从队列中移除订单
 func (s *PaymentPollingService) RemoveFromQueue(orderID uint) {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
-
-	s.removeFromQueueLocked(orderID)
+	s.removeFromQueue(orderID)
 }
 
 // removeFromQueueLocked 从队列中移除订单（需要持有锁）
-func (s *PaymentPollingService) removeFromQueueLocked(orderID uint) {
+func (s *PaymentPollingService) removeFromQueueLocked(orderID uint) bool {
 	task, exists := s.taskMap[orderID]
 	if !exists {
-		return
+		return false
 	}
 
 	delete(s.taskMap, orderID)
@@ -269,7 +603,7 @@ func (s *PaymentPollingService) removeFromQueueLocked(orderID uint) {
 	if task.index >= 0 && task.index < len(s.taskHeap) {
 		heap.Remove(&s.taskHeap, task.index)
 	}
-	s.removeTaskFromDB(orderID)
+	return true
 }
 
 // GetQueueStatus 获取队列状态
@@ -293,8 +627,12 @@ func (s *PaymentPollingService) wakeup() {
 }
 
 // timeWheelLoop 时间轮主循环
-func (s *PaymentPollingService) timeWheelLoop() {
+func (s *PaymentPollingService) timeWheelLoop(stopChan <-chan struct{}, doneChan chan struct{}) {
+	defer close(doneChan)
+
 	for {
+		s.runPendingQueueBackfillIfNeeded()
+
 		s.mutex.Lock()
 
 		// 计算下次需要唤醒的时间
@@ -313,7 +651,7 @@ func (s *PaymentPollingService) timeWheelLoop() {
 		// 等待直到下次检查时间或被唤醒
 		timer := time.NewTimer(sleepDuration)
 		select {
-		case <-s.stopChan:
+		case <-stopChan:
 			timer.Stop()
 			return
 		case <-s.wakeupChan:
@@ -368,10 +706,11 @@ func (s *PaymentPollingService) processDueTasks() {
 				task.RetryCount++
 				// 重新加入堆
 				heap.Push(&s.taskHeap, task)
-				// 更新数据库
-				s.saveTaskToDB(task)
 			}
 			s.mutex.Unlock()
+			// Task persistence is only used for crash recovery.
+			// We intentionally skip persisting every retry to avoid continuous write amplification;
+			// startup recovery and pending-order scanning will rebuild active tasks.
 		}
 	}
 }
@@ -382,17 +721,30 @@ func (s *PaymentPollingService) checkPaymentStatus(task *PollingTask) (bool, int
 	// 获取订单
 	var order models.Order
 	if err := s.db.First(&order, task.OrderID).Error; err != nil {
-		s.mutex.Lock()
-		s.removeFromQueueLocked(task.OrderID)
-		s.mutex.Unlock()
+		s.emitPaymentHookAsync("payment.polling.failed", map[string]interface{}{
+			"order_id":    task.OrderID,
+			"user_id":     task.UserID,
+			"reason":      "order_not_found",
+			"error":       err.Error(),
+			"retry_count": task.RetryCount,
+			"source":      "payment_polling",
+		}, s.buildPaymentHookExecutionContext(nil, task, "payment_polling"))
+		s.removeFromQueue(task.OrderID)
 		return false, 0
 	}
 
 	// 检查订单状态，如果不是待付款则移除
 	if order.Status != models.OrderStatusPendingPayment {
-		s.mutex.Lock()
-		s.removeFromQueueLocked(task.OrderID)
-		s.mutex.Unlock()
+		s.emitPaymentHookAsync("payment.polling.failed", map[string]interface{}{
+			"order_id":    order.ID,
+			"order_no":    order.OrderNo,
+			"user_id":     task.UserID,
+			"reason":      "order_status_changed",
+			"status":      order.Status,
+			"retry_count": task.RetryCount,
+			"source":      "payment_polling",
+		}, s.buildPaymentHookExecutionContext(&order, task, "payment_polling"))
+		s.removeFromQueue(task.OrderID)
 		return false, 0
 	}
 
@@ -402,9 +754,16 @@ func (s *PaymentPollingService) checkPaymentStatus(task *PollingTask) (bool, int
 			"retry_count": task.RetryCount,
 			"duration":    time.Since(task.AddedAt).String(),
 		})
-		s.mutex.Lock()
-		s.removeFromQueueLocked(task.OrderID)
-		s.mutex.Unlock()
+		s.emitPaymentHookAsync("payment.polling.failed", map[string]interface{}{
+			"order_id":    order.ID,
+			"order_no":    order.OrderNo,
+			"user_id":     task.UserID,
+			"reason":      "timeout",
+			"retry_count": task.RetryCount,
+			"duration":    time.Since(task.AddedAt).String(),
+			"source":      "payment_polling",
+		}, s.buildPaymentHookExecutionContext(&order, task, "payment_polling"))
+		s.removeFromQueue(task.OrderID)
 		return false, 0
 	}
 
@@ -414,18 +773,33 @@ func (s *PaymentPollingService) checkPaymentStatus(task *PollingTask) (bool, int
 			"retry_count": task.RetryCount,
 			"max_retries": s.maxRetries,
 		})
-		s.mutex.Lock()
-		s.removeFromQueueLocked(task.OrderID)
-		s.mutex.Unlock()
+		s.emitPaymentHookAsync("payment.polling.failed", map[string]interface{}{
+			"order_id":    order.ID,
+			"order_no":    order.OrderNo,
+			"user_id":     task.UserID,
+			"reason":      "max_retries",
+			"retry_count": task.RetryCount,
+			"max_retries": s.maxRetries,
+			"source":      "payment_polling",
+		}, s.buildPaymentHookExecutionContext(&order, task, "payment_polling"))
+		s.removeFromQueue(task.OrderID)
 		return false, 0
 	}
 
 	// 获取付款方式
 	var pm models.PaymentMethod
 	if err := s.db.First(&pm, task.PaymentMethodID).Error; err != nil {
-		s.mutex.Lock()
-		s.removeFromQueueLocked(task.OrderID)
-		s.mutex.Unlock()
+		s.emitPaymentHookAsync("payment.polling.failed", map[string]interface{}{
+			"order_id":          order.ID,
+			"order_no":          order.OrderNo,
+			"user_id":           task.UserID,
+			"payment_method_id": task.PaymentMethodID,
+			"reason":            "payment_method_not_found",
+			"error":             err.Error(),
+			"retry_count":       task.RetryCount,
+			"source":            "payment_polling",
+		}, s.buildPaymentHookExecutionContext(&order, task, "payment_polling"))
+		s.removeFromQueue(task.OrderID)
 		return false, 0
 	}
 
@@ -437,63 +811,58 @@ func (s *PaymentPollingService) checkPaymentStatus(task *PollingTask) (bool, int
 
 	// 检查付款状态
 	result, err := s.jsRuntime.CheckPaymentStatus(&pm, &order)
+	if err != nil {
+		logger.LogPaymentOperation(s.db, "payment_polling_check_failed", task.OrderID, map[string]interface{}{
+			"error":             err.Error(),
+			"payment_method_id": pm.ID,
+			"retry_count":       task.RetryCount,
+		})
+	}
 	if err == nil && result.Paid {
+		if blocked, blockErr := s.applyPaymentConfirmBeforeHook(&order, task, &pm, result, "payment_polling"); blocked {
+			s.emitPaymentHookAsync("payment.polling.failed", map[string]interface{}{
+				"order_id":          order.ID,
+				"order_no":          order.OrderNo,
+				"user_id":           task.UserID,
+				"payment_method_id": pm.ID,
+				"reason":            "confirm_blocked",
+				"block_reason":      blockErr.Error(),
+				"retry_count":       task.RetryCount,
+				"source":            "payment_polling",
+			}, s.buildPaymentHookExecutionContext(&order, task, "payment_polling"))
+			s.removeFromQueue(task.OrderID)
+			return false, 0
+		}
+
 		// 付款成功，更新订单状态
-		s.handlePaymentSuccess(task, &order, &pm, result)
-		return false, 0
+		if finalizeErr := s.handlePaymentSuccess(task, &order, &pm, result, "payment_polling"); finalizeErr == nil {
+			return false, 0
+		}
+		return true, newInterval
 	}
 
 	return true, newInterval
 }
 
 // handlePaymentSuccess 处理付款成功
-func (s *PaymentPollingService) handlePaymentSuccess(task *PollingTask, order *models.Order, pm *models.PaymentMethod, result *PaymentCheckResult) {
-	// 判断是否为纯虚拟商品订单
-	isVirtualOnly := true
-	for _, item := range order.Items {
-		if item.ProductType != models.ProductTypeVirtual {
-			isVirtualOnly = false
-			break
+func (s *PaymentPollingService) handlePaymentSuccess(task *PollingTask, order *models.Order, pm *models.PaymentMethod, result *PaymentCheckResult, source string) error {
+	releaseHotPath, err := acquireOrderHighConcurrencyProtection(s.cfg, orderHotPathConfirmPaymentResult)
+	if err != nil {
+		logAction := "payment_hot_path_protection_failed"
+		if isOrderHighConcurrencyBusyError(err) {
+			logAction = "payment_hot_path_busy"
 		}
+		logger.LogPaymentOperation(s.db, logAction, task.OrderID, map[string]interface{}{
+			"error": err.Error(),
+		})
+		return err
 	}
+	defer releaseHotPath()
 
-	// 根据订单类型设置基础状态
-	baseStatus := models.OrderStatusPending
-	if !isVirtualOnly {
-		// 实物或混合订单：等待填写收货信息
-		baseStatus = models.OrderStatusDraft
+	normalizedSource := strings.TrimSpace(source)
+	if normalizedSource == "" {
+		normalizedSource = "payment_polling"
 	}
-	updates := map[string]interface{}{
-		"status": baseStatus,
-	}
-
-	shouldAttemptAutoDelivery := false
-	if isVirtualOnly {
-		// 纯虚拟商品订单
-		if s.virtualInventorySvc != nil {
-			// 检查是否所有虚拟库存都可以自动发货
-			canAuto, err := s.virtualInventorySvc.CanAutoDeliver(order.OrderNo)
-			if err != nil {
-				logger.LogPaymentOperation(s.db, "check_auto_delivery_failed", task.OrderID, map[string]interface{}{
-					"error": err.Error(),
-				})
-			}
-
-			if canAuto {
-				shouldAttemptAutoDelivery = true
-			}
-		}
-	} else {
-		// 混合订单：仅当所有虚拟库存都可自动发货时才自动发货，否则全部留给管理员
-		if s.virtualInventorySvc != nil {
-			canAuto, _ := s.virtualInventorySvc.CanAutoDeliver(order.OrderNo)
-			if canAuto {
-				shouldAttemptAutoDelivery = true
-			}
-		}
-	}
-
-	// 在事务中原子更新订单状态和付款记录，防止部分失败导致状态不一致
 	paymentData := map[string]interface{}{
 		"paid_at": time.Now().Format(time.RFC3339),
 	}
@@ -506,49 +875,24 @@ func (s *PaymentPollingService) handlePaymentSuccess(task *PollingTask, order *m
 		}
 	}
 	paymentDataJSON, _ := json.Marshal(paymentData)
-	finalStatus := baseStatus
-	var finalShippedAt *time.Time
-	var virtualDeliveryErr error
+	var (
+		lockedOrder    *models.Order
+		finalizeResult *paidOrderFinalizeResult
+	)
 
-	if err := s.db.Transaction(func(tx *gorm.DB) error {
-		txUpdates := make(map[string]interface{}, len(updates)+1)
-		for k, v := range updates {
-			txUpdates[k] = v
-		}
-
-		if shouldAttemptAutoDelivery && s.virtualInventorySvc != nil {
-			// 使用嵌套事务隔离自动发货写入，失败时仅回滚发货数据，不影响订单状态更新
-			err := tx.Transaction(func(deliveryTx *gorm.DB) error {
-				return s.virtualInventorySvc.DeliverAutoDeliveryStockWithTx(deliveryTx, order.ID, order.OrderNo, nil)
-			})
-			if err != nil {
-				virtualDeliveryErr = err
-				if isVirtualOnly {
-					// 自动发货失败，回退到手动发货
-					txUpdates["status"] = models.OrderStatusPending
-					delete(txUpdates, "shipped_at")
-				}
-			} else if isVirtualOnly {
-				now := time.Now()
-				txUpdates["status"] = models.OrderStatusShipped
-				txUpdates["shipped_at"] = now
-			}
-		}
-
-		if status, ok := txUpdates["status"].(models.OrderStatus); ok {
-			finalStatus = status
-		} else if statusStr, ok := txUpdates["status"].(string); ok {
-			finalStatus = models.OrderStatus(statusStr)
-		}
-		if shippedAt, ok := txUpdates["shipped_at"].(time.Time); ok {
-			tmp := shippedAt
-			finalShippedAt = &tmp
-		} else {
-			finalShippedAt = nil
-		}
-
-		if err := tx.Model(order).Updates(txUpdates).Error; err != nil {
+	if err := s.orderRepo.WithTransaction(func(tx *gorm.DB) error {
+		txOrderRepo := repository.NewOrderRepository(tx)
+		currentOrder, err := txOrderRepo.FindByIDForUpdate(tx, task.OrderID)
+		if err != nil {
 			return err
+		}
+		lockedOrder = currentOrder
+		finalizeResult, err = finalizePendingPaymentOrderTx(tx, currentOrder, s.virtualInventorySvc, paidOrderFinalizeOptions{})
+		if err != nil {
+			return err
+		}
+		if !finalizeResult.Updated {
+			return nil
 		}
 		return tx.Model(&models.OrderPaymentMethod{}).
 			Where("order_id = ?", task.OrderID).
@@ -557,22 +901,49 @@ func (s *PaymentPollingService) handlePaymentSuccess(task *PollingTask, order *m
 		logger.LogPaymentOperation(s.db, "payment_update_failed", task.OrderID, map[string]interface{}{
 			"error": err.Error(),
 		})
-		return
+		s.emitPaymentHookAsync("payment.polling.failed", map[string]interface{}{
+			"order_id":          order.ID,
+			"order_no":          order.OrderNo,
+			"user_id":           task.UserID,
+			"payment_method_id": pm.ID,
+			"reason":            "confirm_update_failed",
+			"error":             err.Error(),
+			"retry_count":       task.RetryCount,
+			"source":            normalizedSource,
+		}, s.buildPaymentHookExecutionContext(order, task, normalizedSource))
+		return err
 	}
 
-	if virtualDeliveryErr != nil {
+	if finalizeResult == nil || !finalizeResult.Updated {
+		s.removeFromQueue(task.OrderID)
+		return nil
+	}
+
+	if finalizeResult.AutoDeliveryCheckErr != nil {
+		logger.LogPaymentOperation(s.db, "check_auto_delivery_failed", task.OrderID, map[string]interface{}{
+			"error": finalizeResult.AutoDeliveryCheckErr.Error(),
+		})
+	}
+
+	if finalizeResult.VirtualDeliveryErr != nil {
 		logData := map[string]interface{}{
-			"error": virtualDeliveryErr.Error(),
+			"error": finalizeResult.VirtualDeliveryErr.Error(),
 		}
-		if !isVirtualOnly {
+		if !finalizeResult.IsVirtualOnly {
 			logData["order_type"] = "mixed"
 		}
 		logger.LogPaymentOperation(s.db, "virtual_delivery_failed", task.OrderID, logData)
 	}
 
-	order.Status = finalStatus
-	order.ShippedAt = finalShippedAt
-	s.syncUserConsumptionStatsBestEffort(task.OrderID, order.UserID, "payment_polling_success")
+	order = lockedOrder
+	s.syncUserConsumptionStatsBestEffort(
+		task.OrderID,
+		order.UserID,
+		models.OrderStatusPendingPayment,
+		finalizeResult.FinalStatus,
+		order.TotalAmount,
+		"payment_polling_success",
+	)
 
 	// 记录付款成功日志
 	logger.LogPaymentOperation(s.db, "payment_success", task.OrderID, map[string]interface{}{
@@ -583,102 +954,346 @@ func (s *PaymentPollingService) handlePaymentSuccess(task *PollingTask, order *m
 		"currency":           order.Currency,
 		"polling_attempts":   task.RetryCount,
 		"check_interval":     task.CheckInterval,
-		"new_status":         finalStatus,
-		"is_virtual_only":    isVirtualOnly,
+		"new_status":         finalizeResult.FinalStatus,
+		"is_virtual_only":    finalizeResult.IsVirtualOnly,
 	})
 
 	// 发送付款成功邮件
 	if s.emailService != nil {
-		go s.emailService.SendOrderPaidEmail(order, isVirtualOnly)
+		go s.emailService.SendOrderPaidEmail(order, finalizeResult.IsVirtualOnly)
 	}
+
+	hookExecCtx := s.buildPaymentHookExecutionContext(order, task, normalizedSource)
+	s.emitPaymentHookAsync("payment.confirm.after", map[string]interface{}{
+		"order_id":          order.ID,
+		"order_no":          order.OrderNo,
+		"user_id":           task.UserID,
+		"payment_method_id": pm.ID,
+		"payment_method":    pm.Name,
+		"transaction_id":    result.TransactionID,
+		"status_before":     models.OrderStatusPendingPayment,
+		"status_after":      finalizeResult.FinalStatus,
+		"retry_count":       task.RetryCount,
+		"source":            normalizedSource,
+	}, hookExecCtx)
+	s.emitPaymentHookAsync("payment.polling.succeeded", map[string]interface{}{
+		"order_id":          order.ID,
+		"order_no":          order.OrderNo,
+		"user_id":           task.UserID,
+		"payment_method_id": pm.ID,
+		"payment_method":    pm.Name,
+		"transaction_id":    result.TransactionID,
+		"status_after":      finalizeResult.FinalStatus,
+		"retry_count":       task.RetryCount,
+		"source":            normalizedSource,
+	}, hookExecCtx)
 
 	// 从队列移除
-	s.mutex.Lock()
-	s.removeFromQueueLocked(task.OrderID)
-	s.mutex.Unlock()
+	s.removeFromQueue(task.OrderID)
+	return nil
 }
 
-func (s *PaymentPollingService) syncUserConsumptionStatsBestEffort(orderID uint, userID *uint, scene string) {
-	if userID == nil || *userID == 0 || s.orderRepo == nil || s.userRepo == nil {
+func (s *PaymentPollingService) syncUserConsumptionStatsBestEffort(
+	orderID uint,
+	userID *uint,
+	before models.OrderStatus,
+	after models.OrderStatus,
+	totalAmountMinor int64,
+	scene string,
+) {
+	totalSpentMinorDelta, totalOrderCountDelta := buildUserConsumptionStatsDelta(before, after, totalAmountMinor)
+	if totalSpentMinorDelta == 0 && totalOrderCountDelta == 0 {
+		return
+	}
+	if err := applyUserConsumptionStatsDelta(s.userRepo, userID, totalSpentMinorDelta, totalOrderCountDelta); err != nil {
+		logger.LogPaymentOperation(s.db, "sync_user_consumption_stats_failed", orderID, map[string]interface{}{
+			"scene":             scene,
+			"user_id":           userIDValue(userID),
+			"total_spent_delta": totalSpentMinorDelta,
+			"order_count_delta": totalOrderCountDelta,
+			"error":             err.Error(),
+		})
+	}
+}
+
+func (s *PaymentPollingService) resetQueueState() {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	s.taskHeap = make(TaskHeap, 0)
+	s.taskMap = make(map[uint]*PollingTask)
+	s.userTaskCounts = make(map[uint]int)
+	s.pendingBackfill = false
+}
+
+func (s *PaymentPollingService) cloneTask(task *PollingTask) *PollingTask {
+	if task == nil {
+		return nil
+	}
+	cloned := *task
+	cloned.index = -1
+	return &cloned
+}
+
+func (s *PaymentPollingService) addRecoveredTask(task *PollingTask) (bool, error) {
+	if task == nil {
+		return false, fmt.Errorf("polling task is nil")
+	}
+
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	if _, exists := s.taskMap[task.OrderID]; exists {
+		return false, nil
+	}
+	if err := s.checkQueueQuotaLocked(task.UserID); err != nil {
+		return false, err
+	}
+
+	task.index = -1
+	s.taskMap[task.OrderID] = task
+	s.incrementUserTaskLocked(task.UserID)
+	heap.Push(&s.taskHeap, task)
+	return true, nil
+}
+
+func (s *PaymentPollingService) removeFromQueue(orderID uint) {
+	s.mutex.Lock()
+	removed := s.removeFromQueueLocked(orderID)
+	s.mutex.Unlock()
+
+	if removed {
+		s.removeTaskFromDB(orderID)
+		s.requestPendingQueueBackfill()
+	}
+}
+
+func (s *PaymentPollingService) requestPendingQueueBackfill() {
+	if s.db == nil {
 		return
 	}
 
-	orderCount, totalSpentMinor, err := s.orderRepo.GetUserConsumptionSummary(*userID, userConsumptionStatuses)
-	if err != nil {
-		logger.LogPaymentOperation(s.db, "sync_user_consumption_stats_failed", orderID, map[string]interface{}{
-			"scene":   scene,
-			"user_id": *userID,
-			"stage":   "query_summary",
-			"error":   err.Error(),
-		})
+	s.lifecycleMu.Lock()
+	running := s.running
+	s.lifecycleMu.Unlock()
+
+	if !running {
+		s.scanPendingPaymentOrders()
 		return
 	}
 
-	if err := s.userRepo.UpdateConsumptionStats(*userID, totalSpentMinor, orderCount); err != nil {
-		logger.LogPaymentOperation(s.db, "sync_user_consumption_stats_failed", orderID, map[string]interface{}{
-			"scene":   scene,
-			"user_id": *userID,
-			"stage":   "update_user",
-			"error":   err.Error(),
+	s.mutex.Lock()
+	if s.pendingBackfill {
+		s.mutex.Unlock()
+		return
+	}
+	_, maxTasksGlobal := s.currentQueueLimits()
+	if maxTasksGlobal > 0 && len(s.taskMap) >= maxTasksGlobal {
+		s.mutex.Unlock()
+		return
+	}
+	s.pendingBackfill = true
+	s.mutex.Unlock()
+	s.wakeup()
+}
+
+func (s *PaymentPollingService) consumePendingQueueBackfillRequest() bool {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	if !s.pendingBackfill {
+		return false
+	}
+	s.pendingBackfill = false
+	return true
+}
+
+func (s *PaymentPollingService) runPendingQueueBackfillIfNeeded() {
+	if !s.consumePendingQueueBackfillRequest() {
+		return
+	}
+	addedCount := s.scanPendingPaymentOrders()
+	if addedCount > 0 {
+		logger.LogSystemOperation(s.db, "payment_polling_backfill", "system", nil, map[string]interface{}{
+			"added": addedCount,
 		})
 	}
+}
+
+func (s *PaymentPollingService) remainingQueueCapacity() int {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	_, maxTasksGlobal := s.currentQueueLimits()
+	if maxTasksGlobal <= 0 {
+		return paymentPollingStartupBatchSize
+	}
+
+	remaining := maxTasksGlobal - len(s.taskMap)
+	if remaining < 0 {
+		return 0
+	}
+	return remaining
 }
 
 // saveTaskToDB 保存任务到数据库
 func (s *PaymentPollingService) saveTaskToDB(task *PollingTask) {
-	data, _ := json.Marshal(task)
+	if task == nil {
+		return
+	}
+	s.saveTasksToDB([]*PollingTask{task})
+}
 
-	record := models.PaymentPollingTask{
-		OrderID: task.OrderID,
-		Data:    string(data),
+func (s *PaymentPollingService) saveTasksToDB(tasks []*PollingTask) {
+	if s.db == nil || len(tasks) == 0 {
+		return
 	}
 
-	s.db.Where("order_id = ?", task.OrderID).
-		Assign(models.PaymentPollingTask{Data: string(data)}).
-		FirstOrCreate(&record)
+	records := make([]models.PaymentPollingTask, 0, len(tasks))
+	for _, task := range tasks {
+		if task == nil || task.OrderID == 0 {
+			continue
+		}
+		data, err := json.Marshal(task)
+		if err != nil {
+			log.Printf("payment polling task marshal failed: order=%d err=%v", task.OrderID, err)
+			continue
+		}
+		records = append(records, models.PaymentPollingTask{
+			OrderID: task.OrderID,
+			Data:    string(data),
+		})
+	}
+	if len(records) == 0 {
+		return
+	}
+
+	if err := s.db.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "order_id"}},
+		DoUpdates: clause.AssignmentColumns([]string{"data", "updated_at"}),
+	}).CreateInBatches(records, paymentPollingPersistBatchSize).Error; err != nil {
+		log.Printf("payment polling task batch save failed: count=%d err=%v", len(records), err)
+	}
 }
 
 // removeTaskFromDB 从数据库移除任务
 func (s *PaymentPollingService) removeTaskFromDB(orderID uint) {
-	s.db.Where("order_id = ?", orderID).Delete(&models.PaymentPollingTask{})
+	if orderID == 0 {
+		return
+	}
+	s.removeTasksFromDB([]uint{orderID})
+}
+
+func (s *PaymentPollingService) removeTasksFromDB(orderIDs []uint) {
+	if s.db == nil || len(orderIDs) == 0 {
+		return
+	}
+
+	uniqueOrderIDs := make([]uint, 0, len(orderIDs))
+	seen := make(map[uint]struct{}, len(orderIDs))
+	for _, orderID := range orderIDs {
+		if orderID == 0 {
+			continue
+		}
+		if _, exists := seen[orderID]; exists {
+			continue
+		}
+		seen[orderID] = struct{}{}
+		uniqueOrderIDs = append(uniqueOrderIDs, orderID)
+	}
+	if len(uniqueOrderIDs) == 0 {
+		return
+	}
+
+	if err := s.db.Where("order_id IN ?", uniqueOrderIDs).Delete(&models.PaymentPollingTask{}).Error; err != nil {
+		log.Printf("payment polling task batch delete failed: count=%d err=%v", len(uniqueOrderIDs), err)
+	}
+}
+
+func isPaymentPollingQueueQuotaError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var bizErr *bizerr.Error
+	if !errors.As(err, &bizErr) {
+		return false
+	}
+	return bizErr.Key == "payment.pollingUserQueueLimitExceeded" ||
+		bizErr.Key == "payment.pollingGlobalQueueLimitExceeded"
 }
 
 // recoverTasks 从数据库恢复任务
 func (s *PaymentPollingService) recoverTasks() {
 	var records []models.PaymentPollingTask
 	if err := s.db.Find(&records).Error; err != nil {
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			log.Printf("payment polling recover query failed: %v", err)
+		}
 		return
 	}
 
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
-
 	recoveredCount := 0
 	removedCount := 0
+	parsedTasks := make([]PollingTask, 0, len(records))
+	orderIDs := make([]uint, 0, len(records))
+	paymentMethodIDs := make([]uint, 0, len(records))
+	invalidOrderIDs := make([]uint, 0)
 
 	for _, record := range records {
 		var task PollingTask
 		if err := json.Unmarshal([]byte(record.Data), &task); err != nil {
+			invalidOrderIDs = append(invalidOrderIDs, record.OrderID)
+			removedCount++
 			continue
 		}
+		parsedTasks = append(parsedTasks, task)
+		orderIDs = append(orderIDs, task.OrderID)
+		paymentMethodIDs = append(paymentMethodIDs, task.PaymentMethodID)
+	}
 
-		// 检查订单是否仍在待付款状态
-		var order models.Order
-		if err := s.db.First(&order, task.OrderID).Error; err != nil {
-			s.removeTaskFromDB(task.OrderID)
+	orderByID := make(map[uint]models.Order, len(orderIDs))
+	if len(orderIDs) > 0 {
+		var orders []models.Order
+		if err := s.db.Select("id", "user_id", "status").Where("id IN ?", orderIDs).Find(&orders).Error; err != nil {
+			log.Printf("payment polling recover order query failed: %v", err)
+			return
+		}
+		for _, order := range orders {
+			orderByID[order.ID] = order
+		}
+	}
+
+	paymentMethodByID := make(map[uint]models.PaymentMethod, len(paymentMethodIDs))
+	if len(paymentMethodIDs) > 0 {
+		var paymentMethods []models.PaymentMethod
+		if err := s.db.Select("id", "poll_interval").Where("id IN ?", paymentMethodIDs).Find(&paymentMethods).Error; err != nil {
+			log.Printf("payment polling recover payment method query failed: %v", err)
+			return
+		}
+		for _, paymentMethod := range paymentMethods {
+			paymentMethodByID[paymentMethod.ID] = paymentMethod
+		}
+	}
+
+	now := time.Now()
+	for _, task := range parsedTasks {
+		order, exists := orderByID[task.OrderID]
+		if !exists {
+			invalidOrderIDs = append(invalidOrderIDs, task.OrderID)
 			removedCount++
 			continue
 		}
 
+		// 检查订单是否仍在待付款状态
 		if order.Status != models.OrderStatusPendingPayment {
-			s.removeTaskFromDB(task.OrderID)
+			invalidOrderIDs = append(invalidOrderIDs, task.OrderID)
 			removedCount++
 			continue
 		}
 
 		// 检查是否超时
 		if time.Since(task.AddedAt) > s.maxDuration {
-			s.removeTaskFromDB(task.OrderID)
+			invalidOrderIDs = append(invalidOrderIDs, task.OrderID)
 			removedCount++
 			continue
 		}
@@ -690,24 +1305,27 @@ func (s *PaymentPollingService) recoverTasks() {
 		}
 
 		// 获取最新的轮询间隔
-		var pm models.PaymentMethod
-		if err := s.db.First(&pm, task.PaymentMethodID).Error; err == nil && pm.PollInterval > 0 {
+		if pm, exists := paymentMethodByID[task.PaymentMethodID]; exists && pm.PollInterval > 0 {
 			task.CheckInterval = pm.PollInterval
 		}
 
 		// 设置下次检查时间为立即
-		task.NextCheckAt = time.Now()
+		task.NextCheckAt = now
 
-		if err := s.checkQueueQuotaLocked(task.UserID); err != nil {
-			s.removeTaskFromDB(task.OrderID)
+		if added, err := s.addRecoveredTask(s.cloneTask(&task)); err != nil {
+			if isPaymentPollingQueueQuotaError(err) {
+				continue
+			}
+			invalidOrderIDs = append(invalidOrderIDs, task.OrderID)
 			removedCount++
 			continue
+		} else if !added {
+			continue
 		}
-
-		s.taskMap[task.OrderID] = &task
-		s.incrementUserTaskLocked(task.UserID)
-		heap.Push(&s.taskHeap, &task)
 		recoveredCount++
+	}
+	if len(invalidOrderIDs) > 0 {
+		s.removeTasksFromDB(invalidOrderIDs)
 	}
 
 	// 扫描所有待付款订单，确保都在队列中
@@ -724,64 +1342,81 @@ func (s *PaymentPollingService) recoverTasks() {
 
 // scanPendingPaymentOrders 扫描待付款订单，确保都在轮询队列中
 func (s *PaymentPollingService) scanPendingPaymentOrders() int {
-	// 查询所有待付款且已选择付款方式的订单
-	var orderPayments []models.OrderPaymentMethod
-	if err := s.db.Find(&orderPayments).Error; err != nil {
-		return 0
-	}
-
 	addedCount := 0
 	now := time.Now()
-
-	for _, op := range orderPayments {
-		// 检查是否已在队列中
-		if _, exists := s.taskMap[op.OrderID]; exists {
-			continue
+	lastCursor := uint(0)
+	tasksToPersist := make([]*PollingTask, 0, paymentPollingPersistBatchSize)
+	for {
+		remaining := s.remainingQueueCapacity()
+		if remaining == 0 {
+			break
 		}
 
-		// 检查订单是否仍在待付款状态
-		var order models.Order
-		if err := s.db.First(&order, op.OrderID).Error; err != nil {
-			continue
+		batchSize := paymentPollingStartupBatchSize
+		if remaining > 0 && remaining < batchSize {
+			batchSize = remaining
 		}
 
-		if order.Status != models.OrderStatusPendingPayment {
-			continue
+		var rows []pendingPaymentPollingOrderRow
+		err := s.db.Table("order_payment_methods AS opm").
+			Select("opm.id AS cursor_id, opm.order_id, orders.user_id, opm.payment_method_id, COALESCE(payment_methods.poll_interval, 0) AS poll_interval").
+			Joins("JOIN orders ON orders.id = opm.order_id").
+			Joins("LEFT JOIN payment_methods ON payment_methods.id = opm.payment_method_id").
+			Joins("LEFT JOIN payment_polling_tasks AS ppt ON ppt.order_id = opm.order_id").
+			Where("opm.id > ? AND orders.status = ? AND ppt.order_id IS NULL", lastCursor, models.OrderStatusPendingPayment).
+			Order("opm.id ASC").
+			Limit(batchSize).
+			Scan(&rows).Error
+		if err != nil {
+			log.Printf("payment polling pending-order scan failed: %v", err)
+			break
+		}
+		if len(rows) == 0 {
+			break
 		}
 
-		queueUserID := uint(0)
-		if order.UserID != nil {
-			queueUserID = *order.UserID
-		}
-		if err := s.checkQueueQuotaLocked(queueUserID); err != nil {
-			if s.maxTasksGlobal > 0 && len(s.taskMap) >= s.maxTasksGlobal {
-				break
+		for _, row := range rows {
+			lastCursor = row.CursorID
+
+			queueUserID := uint(0)
+			if row.UserID != nil {
+				queueUserID = *row.UserID
 			}
-			continue
+			interval := s.defaultInterval
+			if row.PollInterval > 0 {
+				interval = row.PollInterval
+			}
+
+			task := &PollingTask{
+				OrderID:         row.OrderID,
+				UserID:          queueUserID,
+				PaymentMethodID: row.PaymentMethodID,
+				AddedAt:         now,
+				NextCheckAt:     now,
+				CheckInterval:   interval,
+				RetryCount:      0,
+			}
+			added, err := s.addRecoveredTask(task)
+			if err != nil {
+				continue
+			}
+			if !added {
+				continue
+			}
+			tasksToPersist = append(tasksToPersist, s.cloneTask(task))
+			addedCount++
+		}
+		if len(tasksToPersist) > 0 {
+			s.saveTasksToDB(tasksToPersist)
+			tasksToPersist = tasksToPersist[:0]
 		}
 
-		// 获取付款方式的轮询间隔
-		interval := s.defaultInterval
-		var pm models.PaymentMethod
-		if err := s.db.First(&pm, op.PaymentMethodID).Error; err == nil && pm.PollInterval > 0 {
-			interval = pm.PollInterval
+		if len(rows) < batchSize {
+			break
 		}
-
-		// 添加到队列
-		task := &PollingTask{
-			OrderID:         op.OrderID,
-			UserID:          queueUserID,
-			PaymentMethodID: op.PaymentMethodID,
-			AddedAt:         now,
-			NextCheckAt:     now, // 立即检查
-			CheckInterval:   interval,
-			RetryCount:      0,
-		}
-		s.taskMap[op.OrderID] = task
-		s.incrementUserTaskLocked(task.UserID)
-		heap.Push(&s.taskHeap, task)
-		s.saveTaskToDB(task)
-		addedCount++
+	}
+	if len(tasksToPersist) > 0 {
+		s.saveTasksToDB(tasksToPersist)
 	}
 
 	return addedCount

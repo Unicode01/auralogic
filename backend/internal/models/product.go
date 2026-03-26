@@ -106,8 +106,9 @@ type Product struct {
 	IsRecommended bool `gorm:"default:false" json:"is_recommended"`    // 是否推荐
 
 	// 统计数据
-	ViewCount int `gorm:"default:0" json:"view_count"` // 浏览次数
-	SaleCount int `gorm:"default:0" json:"sale_count"` // 销售数量
+	ViewCount          int `gorm:"default:0" json:"view_count"` // 浏览次数
+	SaleCount          int `gorm:"default:0" json:"sale_count"` // 销售数量
+	LastSerialSequence int `gorm:"not null;default:0" json:"-"` // 最近一次分配的出厂序号，避免热路径反复扫描 serials
 
 	// 备注
 	Remark string `gorm:"type:text" json:"remark,omitempty"`

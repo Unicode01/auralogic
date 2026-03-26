@@ -1,13 +1,35 @@
 'use client'
 
-import { useState } from 'react'
+import { useDeferredValue, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { getUsers, createUser, updateUser, deleteUser, getAdmins, createAdmin, updateAdmin, deleteAdmin, createAdminOrder, getVirtualInventories, getPublicConfig } from '@/lib/api'
+import {
+  getUsers,
+  createUser,
+  updateUser,
+  deleteUser,
+  getAdmins,
+  createAdmin,
+  updateAdmin,
+  deleteAdmin,
+  createAdminOrder,
+  getVirtualInventories,
+  getPublicConfig,
+} from '@/lib/api'
 import { DataTable } from '@/components/admin/data-table'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card, CardContent } from '@/components/ui/card'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import {
   Dialog,
   DialogContent,
@@ -42,13 +64,46 @@ import { PERMISSIONS, PERMISSIONS_BY_CATEGORY, CATEGORY_LABEL_KEYS } from '@/lib
 import Link from 'next/link'
 import * as z from 'zod'
 import { useLocale } from '@/hooks/use-locale'
-import { getTranslations, translateBizError } from '@/lib/i18n'
+import { getTranslations } from '@/lib/i18n'
 import { usePageTitle } from '@/hooks/use-page-title'
 import { formatPrice, parseMajorToMinor } from '@/lib/utils'
 import { usePermission } from '@/hooks/use-permission'
+import { resolveApiErrorMessage } from '@/lib/api-error'
+import { PluginExtensionList } from '@/components/plugins/plugin-extension-list'
+import { PluginSlot } from '@/components/plugins/plugin-slot'
+import { usePluginExtensionBatch } from '@/lib/plugin-extension-batch'
 
 type ViewMode = 'all' | 'users' | 'admins'
 type TriState = 'all' | 'true' | 'false'
+type DeleteTarget = {
+  id: number
+  role: string
+  email: string
+  name?: string
+  total_order_count?: number
+  total_spent_minor?: number
+} | null
+
+function buildAdminUserRowSummary(user: any) {
+  const permissions = Array.isArray(user?.permissions) ? user.permissions : []
+  return {
+    id: user?.id,
+    role: user?.role,
+    email: user?.email,
+    phone: user?.phone,
+    name: user?.name,
+    country: user?.country,
+    uuid: user?.uuid,
+    locale: user?.locale,
+    is_active: Boolean(user?.isActive || user?.is_active),
+    email_verified: Boolean(user?.email_verified),
+    email_notify_marketing: Boolean(user?.email_notify_marketing),
+    sms_notify_marketing: Boolean(user?.sms_notify_marketing),
+    total_order_count: Number(user?.total_order_count || 0),
+    total_spent_minor: Number(user?.total_spent_minor || 0),
+    permissions_count: permissions.length,
+  }
+}
 
 export default function AdminUsersPage() {
   const [page, setPage] = useState(1)
@@ -69,38 +124,66 @@ export default function AdminUsersPage() {
   const [editingPermissions, setEditingPermissions] = useState<string[]>([])
   const [openCreateOrder, setOpenCreateOrder] = useState(false)
   const [createOrderUser, setCreateOrderUser] = useState<any>(null)
-  const [orderItems, setOrderItems] = useState<{ sku: string; name: string; quantity: number; unit_price_major: string; product_type: string; virtual_inventory_id?: number }[]>([{ sku: '', name: '', quantity: 1, unit_price_major: '', product_type: 'physical' }])
+  const [orderItems, setOrderItems] = useState<
+    {
+      sku: string
+      name: string
+      quantity: number
+      unit_price_major: string
+      product_type: string
+      virtual_inventory_id?: number
+    }[]
+  >([{ sku: '', name: '', quantity: 1, unit_price_major: '', product_type: 'physical' }])
+  const [deleteTarget, setDeleteTarget] = useState<DeleteTarget>(null)
   const queryClient = useQueryClient()
   const toast = useToast()
   const { locale } = useLocale()
   const { hasPermission } = usePermission()
   const t = getTranslations(locale)
   usePageTitle(t.pageTitle.adminUsers)
+  const getAdminLabel = (key: string, fallback: string) => {
+    const value = t.admin[key as keyof typeof t.admin]
+    return typeof value === 'string' ? value : fallback
+  }
+  const resolveAdminError = (error: unknown, fallback: string) =>
+    resolveApiErrorMessage(error, t, fallback)
   const canViewUsers = hasPermission('user.view')
+  const deferredSearch = useDeferredValue(search)
 
   const parseTriState = (value: TriState): boolean | undefined => {
     if (value === 'all') return undefined
     return value === 'true'
   }
-  const cleanFilterLabel = (label: string) => label
-    .replace(/^筛选[:：]\s*/u, '')
-    .replace(/^Filter:\s*/u, '')
+  const cleanFilterLabel = (label: string) =>
+    label.replace(/^筛选[:：]\s*/u, '').replace(/^Filter:\s*/u, '')
   const roleFilter = viewMode === 'users' ? 'users' : viewMode === 'admins' ? 'admins' : undefined
 
   const { data: usersData, isLoading: usersLoading } = useQuery({
-    queryKey: ['adminUsers', page, search, viewMode, statusFilter, verifiedFilter, emailMarketingFilter, smsMarketingFilter, hasPhoneFilter, localeFilter],
-    queryFn: () => getUsers({
+    queryKey: [
+      'adminUsers',
       page,
-      limit: 20,
-      search: search || undefined,
-      role: roleFilter,
-      is_active: parseTriState(statusFilter),
-      email_verified: parseTriState(verifiedFilter),
-      email_notify_marketing: parseTriState(emailMarketingFilter),
-      sms_notify_marketing: parseTriState(smsMarketingFilter),
-      has_phone: parseTriState(hasPhoneFilter),
-      locale: localeFilter || undefined,
-    }),
+      deferredSearch,
+      viewMode,
+      statusFilter,
+      verifiedFilter,
+      emailMarketingFilter,
+      smsMarketingFilter,
+      hasPhoneFilter,
+      localeFilter,
+    ],
+    queryFn: () =>
+      getUsers({
+        page,
+        limit: 20,
+        search: deferredSearch || undefined,
+        role: roleFilter,
+        is_active: parseTriState(statusFilter),
+        email_verified: parseTriState(verifiedFilter),
+        email_notify_marketing: parseTriState(emailMarketingFilter),
+        sms_notify_marketing: parseTriState(smsMarketingFilter),
+        has_phone: parseTriState(hasPhoneFilter),
+        locale: localeFilter || undefined,
+      }),
     enabled: canViewUsers,
   })
 
@@ -149,11 +232,7 @@ export default function AdminUsersPage() {
       userForm.reset()
     },
     onError: (error: any) => {
-      if (error.code === 40010 && error.data?.error_key) {
-        toast.error(translateBizError(t, error.data.error_key, error.data.params, error.message))
-      } else {
-        toast.error(error.message || t.admin.createFailed)
-      }
+      toast.error(resolveAdminError(error, t.admin.createFailed))
     },
   })
 
@@ -162,13 +241,10 @@ export default function AdminUsersPage() {
     onSuccess: () => {
       toast.success(t.admin.userDeleted)
       queryClient.invalidateQueries({ queryKey: ['adminUsers'] })
+      setDeleteTarget(null)
     },
     onError: (error: any) => {
-      if (error.code === 40010 && error.data?.error_key) {
-        toast.error(translateBizError(t, error.data.error_key, error.data.params, error.message))
-      } else {
-        toast.error(error.message || t.admin.deleteFailed)
-      }
+      toast.error(resolveAdminError(error, t.admin.deleteFailed))
     },
   })
 
@@ -182,11 +258,7 @@ export default function AdminUsersPage() {
       adminForm.reset()
     },
     onError: (error: any) => {
-      if (error.code === 40010 && error.data?.error_key) {
-        toast.error(translateBizError(t, error.data.error_key, error.data.params, error.message))
-      } else {
-        toast.error(error.message || t.admin.createFailed)
-      }
+      toast.error(resolveAdminError(error, t.admin.createFailed))
     },
   })
 
@@ -201,11 +273,7 @@ export default function AdminUsersPage() {
       setEditingUser(null)
     },
     onError: (error: any) => {
-      if (error.code === 40010 && error.data?.error_key) {
-        toast.error(translateBizError(t, error.data.error_key, error.data.params, error.message))
-      } else {
-        toast.error(error.message || t.admin.updateFailed)
-      }
+      toast.error(resolveAdminError(error, t.admin.updateFailed))
     },
   })
 
@@ -215,13 +283,10 @@ export default function AdminUsersPage() {
       toast.success(t.admin.adminDeleted)
       queryClient.invalidateQueries({ queryKey: ['admins'] })
       queryClient.invalidateQueries({ queryKey: ['adminUsers'] })
+      setDeleteTarget(null)
     },
     onError: (error: any) => {
-      if (error.code === 40010 && error.data?.error_key) {
-        toast.error(translateBizError(t, error.data.error_key, error.data.params, error.message))
-      } else {
-        toast.error(error.message || t.admin.deleteFailed)
-      }
+      toast.error(resolveAdminError(error, t.admin.deleteFailed))
     },
   })
 
@@ -231,14 +296,12 @@ export default function AdminUsersPage() {
       toast.success(t.admin.orderCreated)
       setOpenCreateOrder(false)
       setCreateOrderUser(null)
-      setOrderItems([{ sku: '', name: '', quantity: 1, unit_price_major: '', product_type: 'physical' }])
+      setOrderItems([
+        { sku: '', name: '', quantity: 1, unit_price_major: '', product_type: 'physical' },
+      ])
     },
     onError: (error: any) => {
-      if (error.code === 40010 && error.data?.error_key) {
-        toast.error(translateBizError(t, error.data.error_key, error.data.params, error.message))
-      } else {
-        toast.error(error.message || t.admin.orderCreateFailed)
-      }
+      toast.error(resolveAdminError(error, t.admin.orderCreateFailed))
     },
   })
 
@@ -253,7 +316,7 @@ export default function AdminUsersPage() {
   function handleEdit(user: any) {
     setEditingUser(user)
     setEditingRole(user.role)
-    setEditingIsActive((user.is_active || user.isActive) ? 'true' : 'false')
+    setEditingIsActive(user.is_active || user.isActive ? 'true' : 'false')
     setEditingPermissions(user.permissions || [])
     setOpenEdit(true)
   }
@@ -264,17 +327,138 @@ export default function AdminUsersPage() {
     }
   }
 
-  const displayData = canViewUsers ? (usersData?.data?.items || []) : []
+  const displayData = canViewUsers ? usersData?.data?.items || [] : []
 
   const isLoading = usersLoading
+  const totalUsers = Number(usersData?.data?.pagination?.total || 0)
+  const visibleStart = totalUsers === 0 ? 0 : (page - 1) * 20 + 1
+  const visibleEnd = totalUsers === 0 ? 0 : visibleStart + displayData.length - 1
+  const currentPageAdminCount = displayData.filter(
+    (item: any) => item.role === 'admin' || item.role === 'super_admin'
+  ).length
+  const currentPageVerifiedCount = displayData.filter((item: any) => item.email_verified).length
+  const currentPagePhoneCount = displayData.filter((item: any) => item.phone).length
+  const usersRangeSummary = t.admin.usersRangeSummary
+    .replace('{start}', String(visibleStart))
+    .replace('{end}', String(Math.max(visibleEnd, 0)))
+    .replace('{total}', String(totalUsers))
+  const activeFilterBadges: string[] = []
+  if (viewMode !== 'all') {
+    activeFilterBadges.push(
+      `${t.admin.role}: ${viewMode === 'users' ? t.admin.users : t.admin.admins}`
+    )
+  }
+  if (deferredSearch.trim()) {
+    activeFilterBadges.push(`${t.common.search}: ${deferredSearch.trim()}`)
+  }
+  if (statusFilter !== 'all') {
+    activeFilterBadges.push(
+      `${cleanFilterLabel(t.admin.userFilterStatus)}: ${
+        statusFilter === 'true' ? t.admin.active : t.admin.inactive
+      }`
+    )
+  }
+  if (verifiedFilter !== 'all') {
+    activeFilterBadges.push(
+      `${cleanFilterLabel(t.admin.userFilterEmailVerified)}: ${
+        verifiedFilter === 'true' ? t.admin.verified : t.admin.unverified
+      }`
+    )
+  }
+  if (hasPhoneFilter !== 'all') {
+    activeFilterBadges.push(
+      `${cleanFilterLabel(t.admin.userFilterHasPhone)}: ${
+        hasPhoneFilter === 'true' ? t.admin.withPhone : t.admin.withoutPhone
+      }`
+    )
+  }
+  if (emailMarketingFilter !== 'all') {
+    activeFilterBadges.push(
+      `${cleanFilterLabel(t.admin.userFilterEmailMarketing)}: ${
+        emailMarketingFilter === 'true' ? t.admin.enabled : t.admin.disabled
+      }`
+    )
+  }
+  if (smsMarketingFilter !== 'all') {
+    activeFilterBadges.push(
+      `${cleanFilterLabel(t.admin.userFilterSmsMarketing)}: ${
+        smsMarketingFilter === 'true' ? t.admin.enabled : t.admin.disabled
+      }`
+    )
+  }
+  if (localeFilter) {
+    activeFilterBadges.push(
+      `${cleanFilterLabel(t.admin.userFilterLocale)}: ${
+        localeFilter === 'zh' ? t.language.zh : localeFilter === 'en' ? t.language.en : localeFilter
+      }`
+    )
+  }
+  const adminUsersFilters = {
+    page,
+    mode: viewMode,
+    role: roleFilter,
+    search: deferredSearch || undefined,
+    is_active: parseTriState(statusFilter),
+    email_verified: parseTriState(verifiedFilter),
+    email_notify_marketing: parseTriState(emailMarketingFilter),
+    sms_notify_marketing: parseTriState(smsMarketingFilter),
+    has_phone: parseTriState(hasPhoneFilter),
+    locale: localeFilter || undefined,
+  }
+  const adminUsersPagination = {
+    page,
+    total_pages: usersData?.data?.pagination?.total_pages,
+    total: totalUsers,
+    limit: usersData?.data?.pagination?.limit,
+  }
+  const adminUsersPluginContext = {
+    view: 'admin_users',
+    filters: adminUsersFilters,
+    pagination: adminUsersPagination,
+    summary: {
+      visible_start: visibleStart,
+      visible_end: Math.max(visibleEnd, 0),
+      total: totalUsers,
+      current_page_admin_count: currentPageAdminCount,
+      current_page_verified_count: currentPageVerifiedCount,
+      current_page_phone_count: currentPagePhoneCount,
+      active_filter_count: activeFilterBadges.length,
+    },
+    active_filter_badges: activeFilterBadges,
+  }
+  const adminUserRowActionItems = displayData.map((item: any, index: number) => ({
+    key: String(item.id),
+    slot: 'admin.users.row_actions',
+    path: '/admin/users',
+    hostContext: {
+      view: 'admin_users_row',
+      user: buildAdminUserRowSummary(item),
+      row: {
+        index: index + 1,
+        absolute_index: (page - 1) * 20 + index + 1,
+      },
+      filters: adminUsersFilters,
+      pagination: adminUsersPagination,
+      summary: {
+        current_page_count: displayData.length,
+        total: totalUsers,
+      },
+    },
+  }))
+  const adminUserRowActionExtensions = usePluginExtensionBatch({
+    scope: 'admin',
+    path: '/admin/users',
+    items: adminUserRowActionItems,
+    enabled: displayData.length > 0,
+  })
 
   if (!canViewUsers) {
     return (
       <div className="space-y-6">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl md:text-3xl font-bold">{t.admin.userManagement}</h1>
-            <p className="text-sm text-muted-foreground mt-1">{t.message.noPermission}</p>
+            <h1 className="text-2xl font-bold md:text-3xl">{t.admin.userManagement}</h1>
+            <p className="mt-1 text-sm text-muted-foreground">{t.message.noPermission}</p>
           </div>
         </div>
       </div>
@@ -288,18 +472,50 @@ export default function AdminUsersPage() {
     },
     {
       header: t.admin.emailOrPhone,
-      cell: ({ row }: { row: { original: any } }) => row.original.email || row.original.phone || '-',
+      cell: ({ row }: { row: { original: any } }) => (
+        <div className="min-w-0">
+          <div className="truncate font-medium">
+            {row.original.email || row.original.phone || '-'}
+          </div>
+          <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            {row.original.phone ? <span>{row.original.phone}</span> : null}
+            {row.original.email_verified ? (
+              <Badge variant="outline" className="text-[11px]">
+                {t.admin.verified}
+              </Badge>
+            ) : (
+              <Badge variant="secondary" className="text-[11px]">
+                {t.admin.unverified}
+              </Badge>
+            )}
+            {row.original.locale ? (
+              <Badge variant="outline" className="text-[11px]">
+                {row.original.locale}
+              </Badge>
+            ) : null}
+          </div>
+        </div>
+      ),
     },
     {
       header: t.admin.name,
       accessorKey: 'name',
-      cell: ({ row }: { row: { original: any } }) => row.original.name || '-',
+      cell: ({ row }: { row: { original: any } }) => (
+        <div className="min-w-0">
+          <div className="truncate">{row.original.name || '-'}</div>
+          <div className="mt-1 text-xs text-muted-foreground">
+            {row.original.country || row.original.uuid || '-'}
+          </div>
+        </div>
+      ),
     },
     {
       header: t.admin.role,
       cell: ({ row }: { row: { original: any } }) => (
         <Badge variant={getRoleColor(row.original.role)}>
-          {{ user: t.admin.normalUser, admin: t.admin.admin, super_admin: t.admin.superAdminRole }[row.original.role as string] || row.original.role}
+          {{ user: t.admin.normalUser, admin: t.admin.admin, super_admin: t.admin.superAdminRole }[
+            row.original.role as string
+          ] || row.original.role}
         </Badge>
       ),
     },
@@ -308,7 +524,13 @@ export default function AdminUsersPage() {
       cell: ({ row }: { row: { original: any } }) => {
         const isAdmin = row.original.role === 'admin' || row.original.role === 'super_admin'
         const permCount = row.original.permissions?.length || 0
-        return isAdmin ? <span className="text-sm text-muted-foreground">{t.admin.permissionCount.replace('{count}', String(permCount))}</span> : '-'
+        return isAdmin ? (
+          <span className="text-sm text-muted-foreground">
+            {t.admin.permissionCount.replace('{count}', String(permCount))}
+          </span>
+        ) : (
+          '-'
+        )
       },
     },
     {
@@ -335,72 +557,67 @@ export default function AdminUsersPage() {
     },
     {
       header: t.admin.actions,
-      cell: ({ row }: { row: { original: any } }) => (
-        <div className="flex gap-2">
-          <Button
-            asChild
-            size="sm"
-            variant="secondary"
-          >
-            <Link href={`/admin/orders?user_id=${row.original.id}`}>
-              {t.admin.viewOrders}
-            </Link>
-          </Button>
-          <Button
-            size="sm"
-            variant="secondary"
-            onClick={() => {
-              setCreateOrderUser(row.original)
-          setOrderItems([{ sku: '', name: '', quantity: 1, unit_price_major: '', product_type: 'physical' }])
-              setOpenCreateOrder(true)
-            }}
-          >
-            <ShoppingBag className="h-4 w-4 mr-1" />
-            {t.admin.createOrderForUser}
-          </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => handleEdit(row.original)}
-          >
-            <Edit className="h-4 w-4 mr-1" />
-            {t.common.edit}
-          </Button>
-          {row.original.role === 'user' && (
+      cell: ({ row }: { row: { original: any } }) => {
+        const rowExtensions = adminUserRowActionExtensions[String(row.original.id)] || []
+        return (
+          <div className="flex flex-wrap items-center gap-2">
+            <Button asChild size="sm" variant="secondary">
+              <Link href={`/admin/orders?user_id=${row.original.id}`}>{t.admin.viewOrders}</Link>
+            </Button>
             <Button
               size="sm"
-              variant="destructive"
+              variant="secondary"
               onClick={() => {
-                if (confirm(t.admin.confirmDeleteUser.replace('{email}', row.original.email))) {
-                  deleteUserMutation.mutate(row.original.id)
-                }
+                setCreateOrderUser(row.original)
+                setOrderItems([
+                  {
+                    sku: '',
+                    name: '',
+                    quantity: 1,
+                    unit_price_major: '',
+                    product_type: 'physical',
+                  },
+                ])
+                setOpenCreateOrder(true)
               }}
-              disabled={deleteUserMutation.isPending}
             >
-              <Trash2 className="h-4 w-4" />
+              <ShoppingBag className="mr-1 h-4 w-4" />
+              {t.admin.createOrderForUser}
             </Button>
-          )}
-          {(row.original.role === 'admin' || row.original.role === 'super_admin') && (
-            <Button
-              size="sm"
-              variant="destructive"
-              onClick={() => {
-                if (confirm(t.admin.confirmDeleteAdmin.replace('{email}', row.original.email))) {
-                  deleteAdminMutation.mutate(row.original.id)
-                }
-              }}
-              disabled={deleteAdminMutation.isPending}
-            >
-              <Trash2 className="h-4 w-4" />
+            <Button size="sm" variant="outline" onClick={() => handleEdit(row.original)}>
+              <Edit className="mr-1 h-4 w-4" />
+              {t.common.edit}
             </Button>
-          )}
-        </div>
-      ),
+            {row.original.role === 'user' && (
+              <Button
+                size="sm"
+                variant="destructive"
+                onClick={() => setDeleteTarget(row.original)}
+                disabled={deleteUserMutation.isPending}
+              >
+                <Trash2 className="h-4 w-4" />
+              </Button>
+            )}
+            {(row.original.role === 'admin' || row.original.role === 'super_admin') && (
+              <Button
+                size="sm"
+                variant="destructive"
+                onClick={() => setDeleteTarget(row.original)}
+                disabled={deleteAdminMutation.isPending}
+              >
+                <Trash2 className="h-4 w-4" />
+              </Button>
+            )}
+            <PluginExtensionList extensions={rowExtensions} display="inline" />
+          </div>
+        )
+      },
     },
   ]
 
   return (
     <div className="space-y-6">
+      <PluginSlot slot="admin.users.top" context={adminUsersPluginContext} />
       <div className="flex items-center justify-between">
         <h1 className="text-3xl font-bold">{t.admin.userManagement}</h1>
         <div className="flex gap-2">
@@ -502,7 +719,7 @@ export default function AdminUsersPage() {
                 {t.admin.addAdmin}
               </Button>
             </DialogTrigger>
-            <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+            <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>{t.admin.createNewAdmin}</DialogTitle>
               </DialogHeader>
@@ -555,13 +772,23 @@ export default function AdminUsersPage() {
                     name="permissions"
                     render={() => (
                       <FormItem className="flex flex-col">
-                        <FormLabel className="shrink-0">{t.admin.permissionsRequired} <span className="text-sm text-muted-foreground font-normal">{t.admin.permissionsHint}</span></FormLabel>
-                        <div className="flex gap-2 mb-2">
+                        <FormLabel className="shrink-0">
+                          {t.admin.permissionsRequired}{' '}
+                          <span className="text-sm font-normal text-muted-foreground">
+                            {t.admin.permissionsHint}
+                          </span>
+                        </FormLabel>
+                        <div className="mb-2 flex gap-2">
                           <Button
                             type="button"
                             variant="outline"
                             size="sm"
-                            onClick={() => adminForm.setValue('permissions', PERMISSIONS.map(p => p.value))}
+                            onClick={() =>
+                              adminForm.setValue(
+                                'permissions',
+                                PERMISSIONS.map((p) => p.value)
+                              )
+                            }
                           >
                             {t.admin.permSelectAll}
                           </Button>
@@ -579,19 +806,24 @@ export default function AdminUsersPage() {
                             size="sm"
                             onClick={() => {
                               const current = adminForm.getValues('permissions') || []
-                              const allValues = PERMISSIONS.map(p => p.value)
-                              adminForm.setValue('permissions', allValues.filter(v => !current.includes(v)))
+                              const allValues = PERMISSIONS.map((p) => p.value)
+                              adminForm.setValue(
+                                'permissions',
+                                allValues.filter((v) => !current.includes(v))
+                              )
                             }}
                           >
                             {t.admin.permInvertSelection}
                           </Button>
                         </div>
-                        <div className="border rounded-md p-4">
+                        <div className="rounded-md border p-4">
                           <div className="space-y-4">
                             {Object.entries(PERMISSIONS_BY_CATEGORY).map(([category, perms]) => (
                               <div key={category} className="space-y-2">
-                                <div className="font-medium text-sm text-primary border-b pb-1 flex items-center justify-between">
-                                  <span>{t.admin[CATEGORY_LABEL_KEYS[category] as keyof typeof t.admin] || category}</span>
+                                <div className="flex items-center justify-between border-b pb-1 text-sm font-medium text-primary">
+                                  <span>
+                                    {getAdminLabel(CATEGORY_LABEL_KEYS[category], category)}
+                                  </span>
                                   <Button
                                     type="button"
                                     variant="ghost"
@@ -599,16 +831,30 @@ export default function AdminUsersPage() {
                                     className="h-5 px-1.5 text-xs"
                                     onClick={() => {
                                       const current = adminForm.getValues('permissions') || []
-                                      const categoryValues = perms.map(p => p.value)
-                                      const allSelected = categoryValues.every(v => current.includes(v))
+                                      const categoryValues = perms.map((p) => p.value)
+                                      const allSelected = categoryValues.every((v) =>
+                                        current.includes(v)
+                                      )
                                       if (allSelected) {
-                                        adminForm.setValue('permissions', current.filter(v => !categoryValues.includes(v)))
+                                        adminForm.setValue(
+                                          'permissions',
+                                          current.filter((v) => !categoryValues.includes(v))
+                                        )
                                       } else {
-                                        adminForm.setValue('permissions', [...new Set([...current, ...categoryValues])])
+                                        adminForm.setValue('permissions', [
+                                          ...new Set([...current, ...categoryValues]),
+                                        ])
                                       }
                                     }}
                                   >
-                                    {(adminForm.watch('permissions') || []).length > 0 && perms.map(p => p.value).every(v => (adminForm.watch('permissions') || []).includes(v)) ? t.admin.permDeselectAll : t.admin.permSelectAll}
+                                    {(adminForm.watch('permissions') || []).length > 0 &&
+                                    perms
+                                      .map((p) => p.value)
+                                      .every((v) =>
+                                        (adminForm.watch('permissions') || []).includes(v)
+                                      )
+                                      ? t.admin.permDeselectAll
+                                      : t.admin.permSelectAll}
                                   </Button>
                                 </div>
                                 <div className="grid grid-cols-2 gap-2 pl-2">
@@ -628,13 +874,15 @@ export default function AdminUsersPage() {
                                                 if (checked) {
                                                   field.onChange([...currentValue, permValue])
                                                 } else {
-                                                  field.onChange(currentValue.filter((v) => v !== permValue))
+                                                  field.onChange(
+                                                    currentValue.filter((v) => v !== permValue)
+                                                  )
                                                 }
                                               }}
                                             />
                                           </FormControl>
-                                          <FormLabel className="text-sm font-normal cursor-pointer leading-tight">
-                                            {t.admin[permission.labelKey as keyof typeof t.admin] || permission.value}
+                                          <FormLabel className="cursor-pointer text-sm font-normal leading-tight">
+                                            {getAdminLabel(permission.labelKey, permission.value)}
                                           </FormLabel>
                                         </FormItem>
                                       )}
@@ -645,8 +893,11 @@ export default function AdminUsersPage() {
                             ))}
                           </div>
                         </div>
-                        <p className="text-xs text-muted-foreground mt-2">
-                          {t.admin.selectedPermissions.replace('{count}', String(adminForm.watch('permissions')?.length || 0))}
+                        <p className="mt-2 text-xs text-muted-foreground">
+                          {t.admin.selectedPermissions.replace(
+                            '{count}',
+                            String(adminForm.watch('permissions')?.length || 0)
+                          )}
                         </p>
                         <FormMessage />
                       </FormItem>
@@ -668,38 +919,51 @@ export default function AdminUsersPage() {
         </div>
       </div>
 
-      <div className="flex items-center gap-2">
-        <Button
-          variant={viewMode === 'all' ? 'active' : 'outline'}
-          size="sm"
-          onClick={() => {
-            setViewMode('all')
-            setPage(1)
-          }}
-        >
-          {t.admin.all}
-        </Button>
-        <Button
-          variant={viewMode === 'users' ? 'active' : 'outline'}
-          size="sm"
-          onClick={() => {
-            setViewMode('users')
-            setPage(1)
-          }}
-        >
-          {t.admin.users}
-        </Button>
-        <Button
-          variant={viewMode === 'admins' ? 'active' : 'outline'}
-          size="sm"
-          onClick={() => {
-            setViewMode('admins')
-            setPage(1)
-          }}
-        >
-          {t.admin.admins}
-        </Button>
+      <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+        <div className="space-y-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              variant={viewMode === 'all' ? 'active' : 'outline'}
+              size="sm"
+              onClick={() => {
+                setViewMode('all')
+                setPage(1)
+              }}
+            >
+              {t.admin.all}
+            </Button>
+            <Button
+              variant={viewMode === 'users' ? 'active' : 'outline'}
+              size="sm"
+              onClick={() => {
+                setViewMode('users')
+                setPage(1)
+              }}
+            >
+              {t.admin.users}
+            </Button>
+            <Button
+              variant={viewMode === 'admins' ? 'active' : 'outline'}
+              size="sm"
+              onClick={() => {
+                setViewMode('admins')
+                setPage(1)
+              }}
+            >
+              {t.admin.admins}
+            </Button>
+          </div>
+          <p className="text-sm text-muted-foreground">
+            {usersRangeSummary} · {t.admin.admins}: {currentPageAdminCount} · {t.admin.verified}:{' '}
+            {currentPageVerifiedCount} · {t.admin.withPhone}: {currentPagePhoneCount}
+          </p>
+        </div>
       </div>
+
+      <PluginSlot
+        slot="admin.users.filters"
+        context={{ ...adminUsersPluginContext, section: 'filters' }}
+      />
 
       <Card>
         <CardContent className="pt-6">
@@ -707,7 +971,7 @@ export default function AdminUsersPage() {
             <div className="space-y-2">
               <label className="text-sm font-medium">{t.admin.userFilterSearch}</label>
               <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                 <Input
                   placeholder={t.admin.userFilterSearchPlaceholder}
                   value={search}
@@ -721,8 +985,16 @@ export default function AdminUsersPage() {
             </div>
 
             <div className="space-y-2">
-              <label className="text-sm font-medium">{cleanFilterLabel(t.admin.userFilterStatus)}</label>
-              <Select value={statusFilter} onValueChange={(v) => { setStatusFilter(v as TriState); setPage(1) }}>
+              <label className="text-sm font-medium">
+                {cleanFilterLabel(t.admin.userFilterStatus)}
+              </label>
+              <Select
+                value={statusFilter}
+                onValueChange={(v) => {
+                  setStatusFilter(v as TriState)
+                  setPage(1)
+                }}
+              >
                 <SelectTrigger>
                   <SelectValue placeholder={cleanFilterLabel(t.admin.userFilterStatus)} />
                 </SelectTrigger>
@@ -735,8 +1007,16 @@ export default function AdminUsersPage() {
             </div>
 
             <div className="space-y-2">
-              <label className="text-sm font-medium">{cleanFilterLabel(t.admin.userFilterEmailVerified)}</label>
-              <Select value={verifiedFilter} onValueChange={(v) => { setVerifiedFilter(v as TriState); setPage(1) }}>
+              <label className="text-sm font-medium">
+                {cleanFilterLabel(t.admin.userFilterEmailVerified)}
+              </label>
+              <Select
+                value={verifiedFilter}
+                onValueChange={(v) => {
+                  setVerifiedFilter(v as TriState)
+                  setPage(1)
+                }}
+              >
                 <SelectTrigger>
                   <SelectValue placeholder={cleanFilterLabel(t.admin.userFilterEmailVerified)} />
                 </SelectTrigger>
@@ -749,8 +1029,16 @@ export default function AdminUsersPage() {
             </div>
 
             <div className="space-y-2">
-              <label className="text-sm font-medium">{cleanFilterLabel(t.admin.userFilterHasPhone)}</label>
-              <Select value={hasPhoneFilter} onValueChange={(v) => { setHasPhoneFilter(v as TriState); setPage(1) }}>
+              <label className="text-sm font-medium">
+                {cleanFilterLabel(t.admin.userFilterHasPhone)}
+              </label>
+              <Select
+                value={hasPhoneFilter}
+                onValueChange={(v) => {
+                  setHasPhoneFilter(v as TriState)
+                  setPage(1)
+                }}
+              >
                 <SelectTrigger>
                   <SelectValue placeholder={cleanFilterLabel(t.admin.userFilterHasPhone)} />
                 </SelectTrigger>
@@ -763,8 +1051,16 @@ export default function AdminUsersPage() {
             </div>
 
             <div className="space-y-2">
-              <label className="text-sm font-medium">{cleanFilterLabel(t.admin.userFilterEmailMarketing)}</label>
-              <Select value={emailMarketingFilter} onValueChange={(v) => { setEmailMarketingFilter(v as TriState); setPage(1) }}>
+              <label className="text-sm font-medium">
+                {cleanFilterLabel(t.admin.userFilterEmailMarketing)}
+              </label>
+              <Select
+                value={emailMarketingFilter}
+                onValueChange={(v) => {
+                  setEmailMarketingFilter(v as TriState)
+                  setPage(1)
+                }}
+              >
                 <SelectTrigger>
                   <SelectValue placeholder={cleanFilterLabel(t.admin.userFilterEmailMarketing)} />
                 </SelectTrigger>
@@ -777,8 +1073,16 @@ export default function AdminUsersPage() {
             </div>
 
             <div className="space-y-2">
-              <label className="text-sm font-medium">{cleanFilterLabel(t.admin.userFilterSmsMarketing)}</label>
-              <Select value={smsMarketingFilter} onValueChange={(v) => { setSmsMarketingFilter(v as TriState); setPage(1) }}>
+              <label className="text-sm font-medium">
+                {cleanFilterLabel(t.admin.userFilterSmsMarketing)}
+              </label>
+              <Select
+                value={smsMarketingFilter}
+                onValueChange={(v) => {
+                  setSmsMarketingFilter(v as TriState)
+                  setPage(1)
+                }}
+              >
                 <SelectTrigger>
                   <SelectValue placeholder={cleanFilterLabel(t.admin.userFilterSmsMarketing)} />
                 </SelectTrigger>
@@ -791,7 +1095,9 @@ export default function AdminUsersPage() {
             </div>
 
             <div className="space-y-2">
-              <label className="text-sm font-medium">{cleanFilterLabel(t.admin.userFilterLocale)}</label>
+              <label className="text-sm font-medium">
+                {cleanFilterLabel(t.admin.userFilterLocale)}
+              </label>
               <Select
                 value={localeFilter || 'all'}
                 onValueChange={(value) => {
@@ -810,6 +1116,23 @@ export default function AdminUsersPage() {
               </Select>
             </div>
           </div>
+          <div className="mt-4 flex flex-col gap-3 border-t pt-4">
+            <p className="text-xs text-muted-foreground">
+              {usersRangeSummary}
+              {activeFilterBadges.length > 0
+                ? ` · ${t.admin.usersFilterSummary.replace('{count}', String(activeFilterBadges.length))}`
+                : ` · ${t.admin.usersFilterHint}`}
+            </p>
+            {activeFilterBadges.length > 0 ? (
+              <div className="flex flex-wrap items-center gap-2">
+                {activeFilterBadges.map((badge) => (
+                  <Badge key={badge} variant="secondary" className="max-w-full">
+                    <span className="truncate">{badge}</span>
+                  </Badge>
+                ))}
+              </div>
+            ) : null}
+          </div>
         </CardContent>
       </Card>
 
@@ -824,6 +1147,71 @@ export default function AdminUsersPage() {
         }}
       />
 
+      <AlertDialog
+        open={!!deleteTarget}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDeleteTarget(null)
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t.admin.confirmDelete}</AlertDialogTitle>
+            <AlertDialogDescription>
+              <div className="space-y-3">
+                <p>
+                  {deleteTarget?.role === 'user'
+                    ? t.admin.confirmDeleteUser.replace('{email}', deleteTarget?.email || '')
+                    : t.admin.confirmDeleteAdmin.replace('{email}', deleteTarget?.email || '')}
+                </p>
+                {deleteTarget ? (
+                  <div className="rounded-md border border-dashed bg-muted/20 p-3 text-xs text-foreground">
+                    <div className="font-medium">{deleteTarget.name || deleteTarget.email}</div>
+                    <div className="mt-1 flex flex-wrap items-center gap-2 text-muted-foreground">
+                      <span>{deleteTarget.email}</span>
+                      <span>
+                        {t.admin.role}:{' '}
+                        {{
+                          user: t.admin.normalUser,
+                          admin: t.admin.admin,
+                          super_admin: t.admin.superAdminRole,
+                        }[deleteTarget.role] || deleteTarget.role}
+                      </span>
+                      <span>
+                        {t.admin.orderCount}: {Number(deleteTarget.total_order_count || 0)}
+                      </span>
+                      <span>
+                        {t.admin.totalSpent}:{' '}
+                        {formatPrice(Number(deleteTarget.total_spent_minor || 0), currency)}
+                      </span>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t.common.cancel}</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (!deleteTarget) {
+                  return
+                }
+                if (deleteTarget.role === 'user') {
+                  deleteUserMutation.mutate(deleteTarget.id)
+                  return
+                }
+                deleteAdminMutation.mutate(deleteTarget.id)
+              }}
+              className="bg-red-600 hover:bg-red-700"
+            >
+              {t.common.delete}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       <Dialog
         open={openEdit}
         onOpenChange={(v) => {
@@ -836,9 +1224,13 @@ export default function AdminUsersPage() {
           }
         }}
       >
-        <DialogContent className={`${editingUser?.role !== 'user' ? 'max-w-2xl' : 'max-w-md'} max-h-[90vh] overflow-y-auto`}>
+        <DialogContent
+          className={`${editingUser?.role !== 'user' ? 'max-w-2xl' : 'max-w-md'} max-h-[90vh] overflow-y-auto`}
+        >
           <DialogHeader>
-            <DialogTitle>{editingUser?.role === 'user' ? t.admin.editUser : t.admin.editAdmin}</DialogTitle>
+            <DialogTitle>
+              {editingUser?.role === 'user' ? t.admin.editUser : t.admin.editAdmin}
+            </DialogTitle>
           </DialogHeader>
           {editingUser && (
             <form
@@ -872,12 +1264,7 @@ export default function AdminUsersPage() {
 
               <div>
                 <label className="text-sm font-medium">{t.admin.name}</label>
-                <Input
-                  name="name"
-                  defaultValue={editingUser.name}
-                  className="mt-1.5"
-                  required
-                />
+                <Input name="name" defaultValue={editingUser.name} className="mt-1.5" required />
               </div>
 
               <div>
@@ -898,7 +1285,10 @@ export default function AdminUsersPage() {
               <div>
                 <label className="text-sm font-medium">{t.admin.status}</label>
                 <input type="hidden" name="is_active" value={editingIsActive} />
-                <Select value={editingIsActive} onValueChange={(v) => setEditingIsActive(v as 'true' | 'false')}>
+                <Select
+                  value={editingIsActive}
+                  onValueChange={(v) => setEditingIsActive(v as 'true' | 'false')}
+                >
                   <SelectTrigger className="mt-1.5">
                     <SelectValue />
                   </SelectTrigger>
@@ -917,20 +1307,28 @@ export default function AdminUsersPage() {
                   placeholder={t.admin.passwordPlaceholder}
                   className="mt-1.5"
                 />
-                <p className="text-xs text-muted-foreground mt-1">{t.profile.passwordRequirement}</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {t.profile.passwordRequirement}
+                </p>
               </div>
 
               {editingUser.role !== 'user' && (
                 <div className="flex flex-col">
-                  <label className="text-sm font-medium shrink-0">
-                    {t.admin.permissions} <span className="text-sm text-muted-foreground font-normal">{t.admin.selectedPermissions.replace('{count}', String(editingPermissions.length))}</span>
+                  <label className="shrink-0 text-sm font-medium">
+                    {t.admin.permissions}{' '}
+                    <span className="text-sm font-normal text-muted-foreground">
+                      {t.admin.selectedPermissions.replace(
+                        '{count}',
+                        String(editingPermissions.length)
+                      )}
+                    </span>
                   </label>
-                  <div className="flex gap-2 mt-1.5 mb-2">
+                  <div className="mb-2 mt-1.5 flex gap-2">
                     <Button
                       type="button"
                       variant="outline"
                       size="sm"
-                      onClick={() => setEditingPermissions(PERMISSIONS.map(p => p.value))}
+                      onClick={() => setEditingPermissions(PERMISSIONS.map((p) => p.value))}
                     >
                       {t.admin.permSelectAll}
                     </Button>
@@ -947,35 +1345,47 @@ export default function AdminUsersPage() {
                       variant="outline"
                       size="sm"
                       onClick={() => {
-                        const allValues = PERMISSIONS.map(p => p.value)
-                        setEditingPermissions(allValues.filter(v => !editingPermissions.includes(v)))
+                        const allValues = PERMISSIONS.map((p) => p.value)
+                        setEditingPermissions(
+                          allValues.filter((v) => !editingPermissions.includes(v))
+                        )
                       }}
                     >
                       {t.admin.permInvertSelection}
                     </Button>
                   </div>
-                  <div className="border rounded-md p-4">
+                  <div className="rounded-md border p-4">
                     <div className="space-y-4">
                       {Object.entries(PERMISSIONS_BY_CATEGORY).map(([category, perms]) => (
                         <div key={category} className="space-y-2">
-                          <div className="font-medium text-sm text-primary border-b pb-1 flex items-center justify-between">
-                            <span>{t.admin[CATEGORY_LABEL_KEYS[category] as keyof typeof t.admin] || category}</span>
+                          <div className="flex items-center justify-between border-b pb-1 text-sm font-medium text-primary">
+                            <span>{getAdminLabel(CATEGORY_LABEL_KEYS[category], category)}</span>
                             <Button
                               type="button"
                               variant="ghost"
                               size="sm"
                               className="h-5 px-1.5 text-xs"
                               onClick={() => {
-                                const categoryValues = perms.map(p => p.value)
-                                const allSelected = categoryValues.every(v => editingPermissions.includes(v))
+                                const categoryValues = perms.map((p) => p.value)
+                                const allSelected = categoryValues.every((v) =>
+                                  editingPermissions.includes(v)
+                                )
                                 if (allSelected) {
-                                  setEditingPermissions(editingPermissions.filter(v => !categoryValues.includes(v)))
+                                  setEditingPermissions(
+                                    editingPermissions.filter((v) => !categoryValues.includes(v))
+                                  )
                                 } else {
-                                  setEditingPermissions([...new Set([...editingPermissions, ...categoryValues])])
+                                  setEditingPermissions([
+                                    ...new Set([...editingPermissions, ...categoryValues]),
+                                  ])
                                 }
                               }}
                             >
-                              {perms.map(p => p.value).every(v => editingPermissions.includes(v)) ? t.admin.permDeselectAll : t.admin.permSelectAll}
+                              {perms
+                                .map((p) => p.value)
+                                .every((v) => editingPermissions.includes(v))
+                                ? t.admin.permDeselectAll
+                                : t.admin.permSelectAll}
                             </Button>
                           </div>
                           <div className="grid grid-cols-2 gap-2 pl-2">
@@ -986,17 +1396,22 @@ export default function AdminUsersPage() {
                                   checked={editingPermissions.includes(permission.value)}
                                   onCheckedChange={(checked) => {
                                     if (checked) {
-                                      setEditingPermissions([...editingPermissions, permission.value])
+                                      setEditingPermissions([
+                                        ...editingPermissions,
+                                        permission.value,
+                                      ])
                                     } else {
-                                      setEditingPermissions(editingPermissions.filter((v) => v !== permission.value))
+                                      setEditingPermissions(
+                                        editingPermissions.filter((v) => v !== permission.value)
+                                      )
                                     }
                                   }}
                                 />
                                 <label
                                   htmlFor={`edit-${permission.value}`}
-                                  className="text-sm font-normal cursor-pointer leading-tight"
+                                  className="cursor-pointer text-sm font-normal leading-tight"
                                 >
-                                  {t.admin[permission.labelKey as keyof typeof t.admin] || permission.value}
+                                  {getAdminLabel(permission.labelKey, permission.value)}
                                 </label>
                               </div>
                             ))}
@@ -1036,25 +1451,33 @@ export default function AdminUsersPage() {
           setOpenCreateOrder(v)
           if (!v) {
             setCreateOrderUser(null)
-            setOrderItems([{ sku: '', name: '', quantity: 1, unit_price_major: '', product_type: 'physical' }])
+            setOrderItems([
+              { sku: '', name: '', quantity: 1, unit_price_major: '', product_type: 'physical' },
+            ])
           }
         }}
       >
-        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>{t.admin.createOrderTitle} - {createOrderUser?.email}</DialogTitle>
+            <DialogTitle>
+              {t.admin.createOrderTitle} - {createOrderUser?.email}
+            </DialogTitle>
           </DialogHeader>
           {createOrderUser && (
             <form
               onSubmit={(e) => {
                 e.preventDefault()
                 const formData = new FormData(e.currentTarget)
-                const validItems = orderItems.filter(item => item.sku && item.name && item.quantity > 0)
+                const validItems = orderItems.filter(
+                  (item) => item.sku && item.name && item.quantity > 0
+                )
                 if (validItems.length === 0) {
                   toast.error(t.admin.addItem)
                   return
                 }
-                const missingInventory = validItems.find(item => item.product_type === 'virtual' && !item.virtual_inventory_id)
+                const missingInventory = validItems.find(
+                  (item) => item.product_type === 'virtual' && !item.virtual_inventory_id
+                )
                 if (missingInventory) {
                   toast.error(t.admin.pleaseSelectVirtualInventory)
                   return
@@ -1095,22 +1518,36 @@ export default function AdminUsersPage() {
               className="space-y-6"
             >
               <div>
-                <div className="flex items-center justify-between mb-2">
+                <div className="mb-2 flex items-center justify-between">
                   <label className="text-sm font-medium">{t.admin.orderItems} *</label>
                   <Button
                     type="button"
                     variant="outline"
                     size="sm"
-                    onClick={() => setOrderItems([...orderItems, { sku: '', name: '', quantity: 1, unit_price_major: '', product_type: 'physical' }])}
+                    onClick={() =>
+                      setOrderItems([
+                        ...orderItems,
+                        {
+                          sku: '',
+                          name: '',
+                          quantity: 1,
+                          unit_price_major: '',
+                          product_type: 'physical',
+                        },
+                      ])
+                    }
                   >
-                    <Plus className="h-4 w-4 mr-1" />
+                    <Plus className="mr-1 h-4 w-4" />
                     {t.admin.addItem}
                   </Button>
                 </div>
                 <div className="space-y-3">
                   {orderItems.map((item, index) => (
-                    <div key={index} className={`rounded-md border p-3 space-y-2 ${item.product_type === 'virtual' ? 'border-blue-200 bg-blue-50/30 dark:border-blue-800 dark:bg-blue-950/20' : ''}`}>
-                      <div className="flex gap-2 items-start">
+                    <div
+                      key={index}
+                      className={`space-y-2 rounded-md border p-3 ${item.product_type === 'virtual' ? 'border-blue-200 bg-blue-50/30 dark:border-blue-800 dark:bg-blue-950/20' : ''}`}
+                    >
+                      <div className="flex items-start gap-2">
                         <div className="flex-1">
                           <Input
                             placeholder={t.admin.sku}
@@ -1194,16 +1631,22 @@ export default function AdminUsersPage() {
                       </div>
                       {item.product_type === 'virtual' && (
                         <div>
-                          <label className="text-xs text-muted-foreground mb-1 block">{t.admin.selectVirtualLabel} *</label>
+                          <label className="mb-1 block text-xs text-muted-foreground">
+                            {t.admin.selectVirtualLabel} *
+                          </label>
                           <Select
-                            value={item.virtual_inventory_id ? String(item.virtual_inventory_id) : ''}
+                            value={
+                              item.virtual_inventory_id ? String(item.virtual_inventory_id) : ''
+                            }
                             onValueChange={(v) => {
                               const newItems = [...orderItems]
                               newItems[index].virtual_inventory_id = v ? Number(v) : undefined
                               setOrderItems(newItems)
                             }}
                           >
-                            <SelectTrigger className={`w-full ${!item.virtual_inventory_id ? 'border-destructive' : ''}`}>
+                            <SelectTrigger
+                              className={`w-full ${!item.virtual_inventory_id ? 'border-destructive' : ''}`}
+                            >
                               <SelectValue placeholder={t.admin.selectVirtualPlaceholder} />
                             </SelectTrigger>
                             <SelectContent>
@@ -1226,17 +1669,34 @@ export default function AdminUsersPage() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-sm font-medium">{t.admin.orderRemark}</label>
-                  <Textarea name="remark" placeholder={t.admin.orderRemark} className="mt-1.5" rows={2} />
+                  <Textarea
+                    name="remark"
+                    placeholder={t.admin.orderRemark}
+                    className="mt-1.5"
+                    rows={2}
+                  />
                 </div>
                 <div>
                   <label className="text-sm font-medium">{t.admin.adminRemarkLabel}</label>
-                  <Textarea name="admin_remark" placeholder={t.admin.adminRemarkLabel} className="mt-1.5" rows={2} />
+                  <Textarea
+                    name="admin_remark"
+                    placeholder={t.admin.adminRemarkLabel}
+                    className="mt-1.5"
+                    rows={2}
+                  />
                 </div>
               </div>
 
               <div>
                 <label className="text-sm font-medium">{t.admin.totalAmountOverride}</label>
-                <Input name="total_amount_major" type="number" step="0.01" min={0} placeholder="0.00" className="mt-1.5" />
+                <Input
+                  name="total_amount_major"
+                  type="number"
+                  step="0.01"
+                  min={0}
+                  placeholder="0.00"
+                  className="mt-1.5"
+                />
               </div>
 
               <div className="flex gap-2">

@@ -19,6 +19,9 @@ import {
   Square,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { useLocale } from '@/hooks/use-locale'
+import { getTranslations } from '@/lib/i18n'
+import { PluginSlot } from '@/components/plugins/plugin-slot'
 
 interface ToolbarTranslations {
   messagePlaceholder: string
@@ -51,24 +54,9 @@ interface MessageToolbarProps {
   acceptImageTypes?: string[]
   maxLength?: number
   translations?: ToolbarTranslations
-}
-
-const defaultTranslations: ToolbarTranslations = {
-  messagePlaceholder: '输入消息... (Enter 发送, Shift+Enter 换行)',
-  uploadImage: '上传图片',
-  recordVoice: '录制语音',
-  recording: '录制中',
-  recordingTip: '点击停止',
-  voiceMessage: '语音消息',
-  bold: '粗体',
-  italic: '斜体',
-  code: '代码',
-  list: '列表',
-  link: '链接',
-  preview: '预览',
-  editMode: '编辑',
-  send: '发送',
-  noPreviewContent: '无内容可预览',
+  pluginSlotNamespace?: string
+  pluginSlotContext?: Record<string, any>
+  pluginSlotPath?: string
 }
 
 export function MessageToolbar({
@@ -83,9 +71,30 @@ export function MessageToolbar({
   enableVoice = true,
   acceptImageTypes,
   maxLength,
-  translations = defaultTranslations,
+  translations,
+  pluginSlotNamespace,
+  pluginSlotContext,
+  pluginSlotPath,
 }: MessageToolbarProps) {
-  const tt = translations
+  const { locale } = useLocale()
+  const t = getTranslations(locale)
+  const tt: ToolbarTranslations = translations || {
+    messagePlaceholder: t.ticket.messagePlaceholder,
+    uploadImage: t.ticket.uploadImage,
+    recordVoice: t.ticket.recordVoice,
+    recording: t.ticket.recording,
+    recordingTip: t.ticket.recordingTip,
+    voiceMessage: t.ticket.voiceMessage,
+    bold: t.ticket.bold,
+    italic: t.ticket.italic,
+    code: t.ticket.code,
+    list: t.ticket.list,
+    link: t.ticket.link,
+    preview: t.ticket.preview,
+    editMode: t.ticket.editMode,
+    send: t.ticket.send,
+    noPreviewContent: t.ticket.noPreviewContent,
+  }
   const [isPreview, setIsPreview] = useState(false)
   const [isUploading, setIsUploading] = useState(false)
   const [isRecording, setIsRecording] = useState(false)
@@ -103,6 +112,38 @@ export function MessageToolbar({
     }
     return 'image/*'
   })()
+  const isOverLimit = Boolean(maxLength && value.length > maxLength)
+  const buildPluginComposerContext = (section: string, extra?: Record<string, any>) => ({
+    ...(pluginSlotContext || {}),
+    section,
+    composer: {
+      draft_length: value.length,
+      has_content: value.trim().length > 0,
+      is_preview: isPreview,
+      is_uploading: isUploading,
+      is_recording: isRecording,
+      recording_duration: recordingDuration,
+      is_over_limit: isOverLimit,
+      max_length: maxLength || undefined,
+      enable_image: enableImage,
+      enable_voice: enableVoice,
+    },
+    ...(extra || {}),
+  })
+  const renderPluginSlot = (
+    slotSuffix: string,
+    section: string,
+    extra?: Record<string, any>,
+    display: 'stack' | 'inline' = 'stack'
+  ) =>
+    pluginSlotNamespace ? (
+      <PluginSlot
+        slot={`${pluginSlotNamespace}.${slotSuffix}`}
+        path={pluginSlotPath}
+        context={buildPluginComposerContext(section, extra)}
+        display={display}
+      />
+    ) : null
 
   const adjustTextareaHeight = useCallback(() => {
     const textarea = textareaRef.current
@@ -184,7 +225,7 @@ export function MessageToolbar({
       }
 
       mediaRecorder.onstop = async () => {
-        stream.getTracks().forEach(track => track.stop())
+        stream.getTracks().forEach((track) => track.stop())
         const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' })
         const file = new File([audioBlob], `voice_${Date.now()}.webm`, { type: 'audio/webm' })
 
@@ -204,7 +245,7 @@ export function MessageToolbar({
       setIsRecording(true)
       setRecordingDuration(0)
       recordingTimerRef.current = setInterval(() => {
-        setRecordingDuration(d => d + 1)
+        setRecordingDuration((d) => d + 1)
       }, 1000)
     } catch {
       // 麦克风权限被拒绝等
@@ -239,7 +280,14 @@ export function MessageToolbar({
     { icon: Link2, label: tt.link, action: () => insertAtCursor('[', '](url)') },
   ]
 
-  const ToolbarButton = ({ icon: Icon, label, onClick, active, btnDisabled, className: extraClassName }: {
+  const ToolbarButton = ({
+    icon: Icon,
+    label,
+    onClick,
+    active,
+    btnDisabled,
+    className: extraClassName,
+  }: {
     icon: typeof Bold
     label: string
     onClick: () => void
@@ -255,59 +303,75 @@ export function MessageToolbar({
       onClick={onClick}
       disabled={disabled || btnDisabled}
       title={label}
+      aria-label={label}
+      aria-pressed={active}
     >
       <Icon className="h-3.5 w-3.5" />
+      <span className="sr-only">{label}</span>
     </Button>
   )
 
   return (
-    <div className="border rounded-md bg-background overflow-hidden">
+    <div className="overflow-hidden rounded-md border bg-background">
       {/* 工具栏 */}
-      <div className="flex items-center gap-0.5 px-1.5 py-1 border-b bg-muted/30">
+      <div className="flex items-center gap-0.5 border-b bg-muted/30 px-1.5 py-1">
         {/* 图片上传 */}
         {enableImage && (
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="h-7 w-7"
-          onClick={handleImageClick}
-          disabled={disabled || isUploading}
-          title={tt.uploadImage}
-        >
-          {isUploading
-            ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            : <ImageIcon className="h-3.5 w-3.5" />
-          }
-        </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7"
+            onClick={handleImageClick}
+            disabled={disabled || isUploading}
+            title={tt.uploadImage}
+            aria-label={tt.uploadImage}
+          >
+            {isUploading ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <ImageIcon className="h-3.5 w-3.5" />
+            )}
+            <span className="sr-only">{tt.uploadImage}</span>
+          </Button>
         )}
 
         {/* 语音录制 */}
         {enableVoice && (
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className={cn('h-7 w-7', isRecording && 'text-red-500 hover:text-red-600')}
-          onClick={isRecording ? stopRecording : startRecording}
-          disabled={disabled || isUploading}
-          title={isRecording ? `${tt.recording} ${recordingDuration}s，${tt.recordingTip}` : tt.recordVoice}
-        >
-          {isRecording
-            ? <Square className="h-3 w-3 fill-current" />
-            : <Mic className="h-3.5 w-3.5" />
-          }
-        </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className={cn('h-7 w-7', isRecording && 'text-red-500 hover:text-red-600')}
+            onClick={isRecording ? stopRecording : startRecording}
+            disabled={disabled || isUploading}
+            title={
+              isRecording
+                ? `${tt.recording} ${recordingDuration}s, ${tt.recordingTip}`
+                : tt.recordVoice
+            }
+            aria-label={isRecording ? `${tt.recording} ${recordingDuration}s` : tt.recordVoice}
+            aria-pressed={isRecording}
+          >
+            {isRecording ? (
+              <Square className="h-3 w-3 fill-current" />
+            ) : (
+              <Mic className="h-3.5 w-3.5" />
+            )}
+            <span className="sr-only">
+              {isRecording ? `${tt.recording} ${recordingDuration}s` : tt.recordVoice}
+            </span>
+          </Button>
         )}
 
         {isRecording && (
-          <span className="text-xs text-red-500 animate-pulse ml-0.5 tabular-nums">
+          <span className="ml-0.5 animate-pulse text-xs tabular-nums text-red-500">
             {recordingDuration}s
           </span>
         )}
 
         {(enableImage || enableVoice) && (
-          <div className="w-px h-4 bg-border mx-0.5 hidden md:block" />
+          <div className="mx-0.5 hidden h-4 w-px bg-border md:block" />
         )}
 
         {/* Markdown 快捷操作 - 移动端隐藏 */}
@@ -322,7 +386,7 @@ export function MessageToolbar({
           />
         ))}
 
-        <div className="w-px h-4 bg-border mx-0.5 hidden md:block" />
+        <div className="mx-0.5 hidden h-4 w-px bg-border md:block" />
 
         {/* 预览切换 - 移动端隐藏 */}
         <ToolbarButton
@@ -332,6 +396,7 @@ export function MessageToolbar({
           active={isPreview}
           className="hidden md:inline-flex"
         />
+        {renderPluginSlot('toolbar.after', 'toolbar', undefined, 'inline')}
 
         {/* 发送按钮 */}
         <div className="ml-auto">
@@ -340,45 +405,60 @@ export function MessageToolbar({
             size="icon"
             className="h-7 w-7"
             onClick={onSend}
-            disabled={disabled || !value.trim() || isSending || isPreview}
+            disabled={disabled || !value.trim() || isSending || isPreview || isOverLimit}
             title={tt.send}
+            aria-label={tt.send}
           >
             <Send className="h-3.5 w-3.5" />
+            <span className="sr-only">{tt.send}</span>
           </Button>
         </div>
       </div>
 
       {/* 内容区 */}
       {isPreview ? (
-        <div className="min-h-[100px] max-h-[150px] overflow-y-auto px-3 py-2 scrollbar-hide">
+        <div className="scrollbar-hide max-h-[150px] min-h-[100px] overflow-y-auto px-3 py-2">
           {value.trim() ? (
             <MarkdownMessage content={value} />
           ) : (
             <p className="text-sm text-muted-foreground">{tt.noPreviewContent}</p>
           )}
+          {renderPluginSlot('preview.after', 'preview', {
+            has_content: value.trim().length > 0,
+          })}
         </div>
       ) : (
-        <div className="relative">
-          <Textarea
-            ref={textareaRef}
-            value={value}
-            onChange={handleChange}
-            onKeyDown={handleKeyDown}
-            placeholder={placeholder || tt.messagePlaceholder}
-            className="min-h-[100px] max-h-[150px] resize-none border-0 rounded-none focus-visible:ring-0 focus-visible:ring-offset-0 scrollbar-hide text-sm"
-            rows={3}
-            disabled={disabled}
-          />
-          {maxLength && maxLength > 0 && (
-            <span className={cn(
-              "absolute bottom-1.5 right-2 text-xs tabular-nums",
-              value.length > maxLength ? "text-destructive" : "text-muted-foreground"
-            )}>
-              {value.length}/{maxLength}
-            </span>
-          )}
+        <div>
+          <div className="relative">
+            <Textarea
+              ref={textareaRef}
+              value={value}
+              onChange={handleChange}
+              onKeyDown={handleKeyDown}
+              placeholder={placeholder || tt.messagePlaceholder}
+              className="scrollbar-hide max-h-[150px] min-h-[100px] resize-none rounded-none border-0 text-sm focus-visible:ring-0 focus-visible:ring-offset-0"
+              rows={3}
+              disabled={disabled}
+              aria-label={placeholder || tt.messagePlaceholder}
+            />
+            {maxLength && maxLength > 0 && (
+              <span
+                className={cn(
+                  'absolute bottom-1.5 right-2 text-xs tabular-nums',
+                  value.length > maxLength ? 'text-destructive' : 'text-muted-foreground'
+                )}
+              >
+                {value.length}/{maxLength}
+              </span>
+            )}
+          </div>
+          {renderPluginSlot('editor.after', 'editor', {
+            has_content: value.trim().length > 0,
+          })}
         </div>
       )}
+
+      {renderPluginSlot('bottom', 'bottom')}
 
       {/* 隐藏的文件输入 */}
       <input
@@ -387,6 +467,7 @@ export function MessageToolbar({
         accept={fileAccept}
         className="hidden"
         onChange={handleFileChange}
+        aria-label={tt.uploadImage}
       />
     </div>
   )

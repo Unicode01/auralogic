@@ -24,6 +24,8 @@ import { useLocale } from '@/hooks/use-locale'
 import { getTranslations } from '@/lib/i18n'
 import { usePageTitle } from '@/hooks/use-page-title'
 import { parseMajorToMinor } from '@/lib/utils'
+import { resolveApiErrorMessage } from '@/lib/api-error'
+import { PluginSlot } from '@/components/plugins/plugin-slot'
 
 interface PromoCodeForm {
   code: string
@@ -69,6 +71,24 @@ export default function CreatePromoCodePage() {
   })
 
   const products = productsData?.data?.items || []
+  const adminPromoCodeNewPluginContext = {
+    view: 'admin_promo_code_new',
+    form: {
+      code: form.code || undefined,
+      name: form.name || undefined,
+      discount_type: form.discount_type,
+      status: form.status,
+      total_quantity: form.total_quantity,
+      expires_at: form.expires_at || undefined,
+      product_scope: form.product_scope,
+      selected_product_ids: form.product_ids.slice(0, 20),
+      selected_product_count: form.product_ids.length,
+    },
+    summary: {
+      products_loaded: products.length,
+      product_selector_open: form.product_scope === 'specific' || form.product_scope === 'exclude',
+    },
+  }
 
   const saveMutation = useMutation({
     mutationFn: async (data: PromoCodeForm) => {
@@ -114,8 +134,8 @@ export default function CreatePromoCodePage() {
       toast.success(t.promoCode.promoCodeCreated)
       router.push('/admin/promo-codes')
     },
-    onError: (error: Error) => {
-      toast.error(`${t.promoCode.createFailed}: ${error.message}`)
+    onError: (error: unknown) => {
+      toast.error(resolveApiErrorMessage(error, t, t.promoCode.createFailed))
     },
   })
 
@@ -162,6 +182,7 @@ export default function CreatePromoCodePage() {
 
   return (
     <div className="space-y-6">
+      <PluginSlot slot="admin.promo_code_new.top" context={adminPromoCodeNewPluginContext} />
       <div className="flex items-center gap-4">
         <Button variant="outline" size="sm" asChild>
           <Link href="/admin/promo-codes">

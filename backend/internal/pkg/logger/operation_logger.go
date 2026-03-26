@@ -1,11 +1,38 @@
 package logger
 
 import (
-	"github.com/gin-gonic/gin"
 	"auralogic/internal/models"
 	"auralogic/internal/pkg/utils"
+	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
+
+func logOperationRecord(
+	db *gorm.DB,
+	userID *uint,
+	operatorName string,
+	action string,
+	resourceType string,
+	resourceID *uint,
+	details map[string]interface{},
+	ipAddress string,
+	userAgent string,
+) {
+	if db == nil {
+		return
+	}
+	log := &models.OperationLog{
+		UserID:       userID,
+		OperatorName: operatorName,
+		Action:       action,
+		ResourceType: resourceType,
+		ResourceID:   resourceID,
+		Details:      details,
+		IPAddress:    ipAddress,
+		UserAgent:    userAgent,
+	}
+	db.Create(log)
+}
 
 // LogOperation 记录操作日志
 func LogOperation(db *gorm.DB, c *gin.Context, action, resourceType string, resourceID *uint, details map[string]interface{}) {
@@ -25,31 +52,37 @@ func LogOperation(db *gorm.DB, c *gin.Context, action, resourceType string, reso
 		}
 	}
 
-	log := &models.OperationLog{
-		UserID:       userID,
-		OperatorName: operatorName,
-		Action:       action,
-		ResourceType: resourceType,
-		ResourceID:   resourceID,
-		Details:      details,
-		IPAddress:    utils.GetRealIP(c),
-		UserAgent:    c.Request.UserAgent(),
-	}
+	LogOperationWithActor(
+		db,
+		userID,
+		operatorName,
+		action,
+		resourceType,
+		resourceID,
+		details,
+		utils.GetRealIP(c),
+		c.Request.UserAgent(),
+	)
+}
 
-	// 同步记录日志，确保立即可见
-	db.Create(log)
+// LogOperationWithActor 记录带显式操作者上下文的操作日志
+func LogOperationWithActor(
+	db *gorm.DB,
+	userID *uint,
+	operatorName string,
+	action string,
+	resourceType string,
+	resourceID *uint,
+	details map[string]interface{},
+	ipAddress string,
+	userAgent string,
+) {
+	logOperationRecord(db, userID, operatorName, action, resourceType, resourceID, details, ipAddress, userAgent)
 }
 
 // LogSystemOperation 记录系统操作日志（无需gin.Context，用于后台服务）
 func LogSystemOperation(db *gorm.DB, action, resourceType string, resourceID *uint, details map[string]interface{}) {
-	log := &models.OperationLog{
-		OperatorName: "system",
-		Action:       action,
-		ResourceType: resourceType,
-		ResourceID:   resourceID,
-		Details:      details,
-	}
-	db.Create(log)
+	logOperationRecord(db, nil, "system", action, resourceType, resourceID, details, "", "")
 }
 
 // LogPaymentOperation 记录付款相关操作日志
@@ -96,4 +129,3 @@ func LogLoginAttempt(db *gorm.DB, c *gin.Context, email string, success bool, us
 	// 同步记录登录日志
 	db.Create(log)
 }
-
