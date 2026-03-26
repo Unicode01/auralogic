@@ -95,6 +95,8 @@ func buildMarketingBatchServiceHookPayload(batch *models.MarketingBatch) map[str
 		"send_email":           batch.SendEmail,
 		"send_sms":             batch.SendSMS,
 		"target_all":           batch.TargetAll,
+		"audience_mode":        batch.AudienceMode,
+		"audience_query":       batch.AudienceQuery,
 		"status":               batch.Status,
 		"total_tasks":          batch.TotalTasks,
 		"processed_tasks":      batch.ProcessedTasks,

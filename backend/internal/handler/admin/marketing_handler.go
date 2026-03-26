@@ -42,6 +42,8 @@ func buildMarketingBatchHookPayload(batch *models.MarketingBatch) map[string]int
 		"send_email":           batch.SendEmail,
 		"send_sms":             batch.SendSMS,
 		"target_all":           batch.TargetAll,
+		"audience_mode":        batch.AudienceMode,
+		"audience_query":       batch.AudienceQuery,
 		"status":               batch.Status,
 		"total_tasks":          batch.TotalTasks,
 		"processed_tasks":      batch.ProcessedTasks,
@@ -309,6 +311,8 @@ func (h *MarketingHandler) GetBatch(c *gin.Context) {
 		"send_email":           batch.SendEmail,
 		"send_sms":             batch.SendSMS,
 		"target_all":           batch.TargetAll,
+		"audience_mode":        batch.AudienceMode,
+		"audience_query":       batch.AudienceQuery,
 		"total_tasks":          batch.TotalTasks,
 		"processed_tasks":      batch.ProcessedTasks,
 		"requested_user_count": batch.RequestedUserCount,
@@ -330,9 +334,13 @@ func (h *MarketingHandler) GetBatch(c *gin.Context) {
 
 func (h *MarketingHandler) PreviewMarketing(c *gin.Context) {
 	var req struct {
-		Title   string `json:"title"`
-		Content string `json:"content"`
-		UserID  *uint  `json:"user_id"`
+		Title         string                         `json:"title"`
+		Content       string                         `json:"content"`
+		UserID        *uint                          `json:"user_id"`
+		UserIDs       []uint                         `json:"user_ids"`
+		AudienceMode  string                         `json:"audience_mode"`
+		AudienceQuery *service.MarketingAudienceNode `json:"audience_query"`
+		SampleLimit   *int                           `json:"sample_limit"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -383,8 +391,28 @@ func (h *MarketingHandler) PreviewMarketing(c *gin.Context) {
 
 	req.Title = strings.TrimSpace(req.Title)
 	req.Content = strings.TrimSpace(req.Content)
-	if req.Title == "" && req.Content == "" {
-		response.BadRequest(c, "Title or content is required")
+	req.UserIDs = uniqueUserIDs(req.UserIDs)
+
+	audienceMode, err := resolveMarketingAudienceMode(req.AudienceMode, false, req.UserIDs, req.AudienceQuery)
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+
+	audienceQuery, err := h.resolveMarketingAudienceUserQuery(audienceMode, req.UserIDs, req.AudienceQuery, false)
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+
+	audiencePreview, err := h.buildMarketingAudiencePreview(
+		audienceQuery,
+		audienceMode,
+		normalizeMarketingAudienceSampleLimit(req.SampleLimit),
+		h.canViewMarketingRecipientSamples(c),
+	)
+	if err != nil {
+		response.InternalError(c, "Query failed")
 		return
 	}
 
@@ -419,6 +447,8 @@ func (h *MarketingHandler) PreviewMarketing(c *gin.Context) {
 			afterPayload["resolved_user_id"] = user.ID
 			afterPayload["resolved_user_email"] = user.Email
 		}
+		afterPayload["audience_mode"] = audienceMode
+		afterPayload["audience"] = audiencePreview
 		go func(execCtx *service.ExecutionContext, payload map[string]interface{}) {
 			_, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
 				Hook:    "marketing.preview.after",
@@ -442,6 +472,7 @@ func (h *MarketingHandler) PreviewMarketing(c *gin.Context) {
 		"resolved_variables":           rendered.Variables,
 		"supported_placeholders":       rendered.Placeholders,
 		"supported_template_variables": rendered.TemplateVars,
+		"audience":                     audiencePreview,
 	})
 }
 
@@ -517,12 +548,14 @@ func (h *MarketingHandler) ListBatchTasks(c *gin.Context) {
 
 func (h *MarketingHandler) SendMarketing(c *gin.Context) {
 	var req struct {
-		Title     string `json:"title" binding:"required"`
-		Content   string `json:"content" binding:"required"`
-		SendEmail bool   `json:"send_email"`
-		SendSMS   bool   `json:"send_sms"`
-		TargetAll bool   `json:"target_all"`
-		UserIDs   []uint `json:"user_ids"`
+		Title         string                         `json:"title" binding:"required"`
+		Content       string                         `json:"content" binding:"required"`
+		SendEmail     bool                           `json:"send_email"`
+		SendSMS       bool                           `json:"send_sms"`
+		TargetAll     bool                           `json:"target_all"`
+		UserIDs       []uint                         `json:"user_ids"`
+		AudienceMode  string                         `json:"audience_mode"`
+		AudienceQuery *service.MarketingAudienceNode `json:"audience_query"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, "Invalid request parameters")
@@ -574,6 +607,13 @@ func (h *MarketingHandler) SendMarketing(c *gin.Context) {
 	req.Content = strings.TrimSpace(req.Content)
 	req.UserIDs = uniqueUserIDs(req.UserIDs)
 
+	audienceMode, err := resolveMarketingAudienceMode(req.AudienceMode, req.TargetAll, req.UserIDs, req.AudienceQuery)
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	req.TargetAll = audienceMode == service.MarketingAudienceModeAll
+
 	if req.Title == "" {
 		response.BadRequest(c, "Title is required")
 		return
@@ -586,20 +626,39 @@ func (h *MarketingHandler) SendMarketing(c *gin.Context) {
 		response.BadRequest(c, "At least one channel must be selected")
 		return
 	}
-	if !req.TargetAll && len(req.UserIDs) == 0 {
-		response.BadRequest(c, "User IDs are required when target_all is false")
+	if req.TargetAll == false && audienceMode == service.MarketingAudienceModeSelected && len(req.UserIDs) == 0 {
+		response.BadRequest(c, "User IDs are required when audience_mode is selected")
 		return
 	}
 
-	query := h.db.Model(&models.User{}).Where("is_active = ? AND role = ?", true, "user")
-	if !req.TargetAll {
-		query = query.Where("id IN ?", req.UserIDs)
+	query, err := h.resolveMarketingAudienceUserQuery(audienceMode, req.UserIDs, req.AudienceQuery, true)
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
 	}
 
 	var users []models.User
-	if err := query.Select("id", "email_verified").Find(&users).Error; err != nil {
+	if err := query.Select(
+		"id",
+		"email",
+		"phone",
+		"email_verified",
+		"email_notify_marketing",
+		"sms_notify_marketing",
+	).Find(&users).Error; err != nil {
 		response.InternalError(c, "Query failed")
 		return
+	}
+
+	audienceSnapshot, err := buildMarketingAudienceSnapshot(audienceMode, req.AudienceQuery)
+	if err != nil {
+		response.InternalError(c, "Serialize audience query failed")
+		return
+	}
+
+	requestedUserCount := 0
+	if audienceMode == service.MarketingAudienceModeSelected {
+		requestedUserCount = len(req.UserIDs)
 	}
 
 	operatorID, operatorName := h.resolveOperator(c)
@@ -610,8 +669,10 @@ func (h *MarketingHandler) SendMarketing(c *gin.Context) {
 		SendEmail:          req.SendEmail,
 		SendSMS:            req.SendSMS,
 		TargetAll:          req.TargetAll,
+		AudienceMode:       string(audienceMode),
+		AudienceQuery:      audienceSnapshot,
 		Status:             models.MarketingBatchStatusQueued,
-		RequestedUserCount: len(req.UserIDs),
+		RequestedUserCount: requestedUserCount,
 		TargetedUsers:      0,
 		OperatorID:         operatorID,
 		OperatorName:       operatorName,
@@ -622,7 +683,7 @@ func (h *MarketingHandler) SendMarketing(c *gin.Context) {
 	for i := range users {
 		user := users[i]
 		userID := user.ID
-		if req.SendEmail && user.EmailVerified {
+		if req.SendEmail && strings.TrimSpace(user.Email) != "" && user.EmailVerified && user.EmailNotifyMarketing {
 			tasks = append(tasks, models.MarketingBatchTask{
 				UserID:  userID,
 				Channel: models.MarketingTaskChannelEmail,
@@ -630,7 +691,11 @@ func (h *MarketingHandler) SendMarketing(c *gin.Context) {
 			})
 			targetedUserIDs[userID] = struct{}{}
 		}
-		if req.SendSMS {
+		phone := ""
+		if user.Phone != nil {
+			phone = strings.TrimSpace(*user.Phone)
+		}
+		if req.SendSMS && phone != "" && user.SMSNotifyMarketing {
 			tasks = append(tasks, models.MarketingBatchTask{
 				UserID:  userID,
 				Channel: models.MarketingTaskChannelSMS,
@@ -719,9 +784,11 @@ func (h *MarketingHandler) SendMarketing(c *gin.Context) {
 
 	logger.LogOperation(h.db, c, "queue_marketing", "marketing_batch", &batch.ID, map[string]interface{}{
 		"batch_no":             batch.BatchNo,
-		"target_all":           req.TargetAll,
-		"requested_user_count": len(req.UserIDs),
-		"targeted_users":       len(users),
+		"target_all":           batch.TargetAll,
+		"audience_mode":        audienceMode,
+		"requested_user_count": batch.RequestedUserCount,
+		"matched_users":        len(users),
+		"targeted_users":       batch.TargetedUsers,
 		"total_tasks":          batch.TotalTasks,
 		"send_email":           req.SendEmail,
 		"send_sms":             req.SendSMS,
@@ -731,6 +798,8 @@ func (h *MarketingHandler) SendMarketing(c *gin.Context) {
 		afterPayload := buildMarketingBatchHookPayload(&batch)
 		afterPayload["requested_user_ids"] = req.UserIDs
 		afterPayload["resolved_user_count"] = len(users)
+		afterPayload["matched_user_count"] = len(users)
+		afterPayload["targeted_user_count"] = batch.TargetedUsers
 		afterPayload["admin_id"] = adminIDValue
 		afterPayload["source"] = "admin_api"
 		go func(execCtx *service.ExecutionContext, payload map[string]interface{}) {
@@ -759,6 +828,8 @@ func (h *MarketingHandler) SendMarketing(c *gin.Context) {
 		"send_email":           batch.SendEmail,
 		"send_sms":             batch.SendSMS,
 		"target_all":           batch.TargetAll,
+		"audience_mode":        batch.AudienceMode,
+		"audience_query":       batch.AudienceQuery,
 		"total_tasks":          batch.TotalTasks,
 		"processed_tasks":      batch.ProcessedTasks,
 		"requested_user_count": batch.RequestedUserCount,

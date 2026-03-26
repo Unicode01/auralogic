@@ -3,31 +3,57 @@ name: plugin-regression-baseline
 on:
   pull_request:
     paths:
+      - ".github/workflows/plugin-regression.yml"
       - "backend/**"
       - "docs/PLUGIN_UPGRADE_REFACTOR_PLAN.md"
       - "docs/PLUGIN_TEST_BASELINE.md"
+      - "plugins/js_market/**"
+      - "plugins/sdk/**"
   push:
     branches:
       - main
       - master
     paths:
+      - ".github/workflows/plugin-regression.yml"
       - "backend/**"
       - "docs/PLUGIN_UPGRADE_REFACTOR_PLAN.md"
       - "docs/PLUGIN_TEST_BASELINE.md"
+      - "plugins/js_market/**"
+      - "plugins/sdk/**"
 
 jobs:
   plugin-regression:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            plugins/sdk/package-lock.json
+            plugins/js_market/package-lock.json
+
+      - name: Install plugin SDK dependencies
+        working-directory: plugins/sdk
+        run: npm ci
+
+      - name: Build js_market bundle
+        working-directory: plugins/js_market
+        run: |
+          npm ci
+          npm run build
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: backend/go.mod
           cache: true
+          cache-dependency-path: backend/go.sum
 
       - name: Run plugin regression baseline
         working-directory: backend
-        run: sh scripts/test_plugin_regression.sh
+        run: bash scripts/test_plugin_regression.sh
