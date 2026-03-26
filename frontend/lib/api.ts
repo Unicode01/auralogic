@@ -1589,13 +1589,7 @@ export interface AdminPluginWorkspaceStreamEvent {
 }
 
 export interface AdminPluginWorkspaceWebSocketClientFrame {
-  type:
-    | 'terminal_line'
-    | 'runtime_eval'
-    | 'runtime_inspect'
-    | 'input'
-    | 'signal'
-    | string
+  type: 'terminal_line' | 'runtime_eval' | 'runtime_inspect' | 'input' | 'signal' | string
   request_id?: string
   task_id?: string
   input?: string
@@ -3545,19 +3539,94 @@ export async function deleteKnowledgeArticle(id: number) {
 // Marketing API
 // ==========================================
 
+export type MarketingAudienceMode = 'all' | 'selected' | 'rules'
+export type MarketingAudienceCombinator = 'and' | 'or'
+export type MarketingAudienceOperator =
+  | 'eq'
+  | 'neq'
+  | 'contains'
+  | 'not_contains'
+  | 'in'
+  | 'not_in'
+  | 'gte'
+  | 'lte'
+  | 'is_empty'
+  | 'is_not_empty'
+export type MarketingAudienceField =
+  | 'id'
+  | 'email'
+  | 'name'
+  | 'phone'
+  | 'is_active'
+  | 'email_verified'
+  | 'email_notify_marketing'
+  | 'sms_notify_marketing'
+  | 'locale'
+  | 'country'
+  | 'total_order_count'
+  | 'total_spent_minor'
+  | 'last_login_at'
+  | 'created_at'
+
+export interface MarketingAudienceGroup {
+  type: 'group'
+  combinator: MarketingAudienceCombinator
+  rules: MarketingAudienceNode[]
+}
+
+export interface MarketingAudienceCondition {
+  type: 'condition'
+  field: MarketingAudienceField
+  operator: MarketingAudienceOperator
+  value?: string | number | boolean | string[]
+}
+
+export type MarketingAudienceNode = MarketingAudienceGroup | MarketingAudienceCondition
+
+export interface MarketingAudiencePreviewUser {
+  id: number
+  name?: string
+  email?: string
+  phone?: string
+  is_active?: boolean
+  email_verified?: boolean
+  locale?: string
+  country?: string
+  email_notify_marketing?: boolean
+  sms_notify_marketing?: boolean
+  total_order_count?: number
+  total_spent_minor?: number
+  last_login_at?: string
+  created_at?: string
+}
+
+export interface MarketingAudiencePreviewSummary {
+  mode: MarketingAudienceMode
+  matched_users: number
+  emailable_users: number
+  sms_reachable_users: number
+  sample_users: MarketingAudiencePreviewUser[]
+}
+
 export interface SendAdminMarketingData {
   title: string
   content: string
   send_email: boolean
   send_sms: boolean
   target_all: boolean
+  audience_mode?: MarketingAudienceMode
+  audience_query?: MarketingAudienceNode
   user_ids?: number[]
 }
 
 export interface PreviewAdminMarketingData {
   title: string
   content: string
+  audience_mode?: MarketingAudienceMode
+  audience_query?: MarketingAudienceNode
   user_id?: number
+  user_ids?: number[]
+  sample_limit?: number
 }
 
 export interface PreviewAdminMarketingResult {
@@ -3569,6 +3638,7 @@ export interface PreviewAdminMarketingResult {
   resolved_variables?: Record<string, string>
   supported_placeholders?: string[]
   supported_template_variables?: string[]
+  audience?: MarketingAudiencePreviewSummary
 }
 
 export interface SendAdminMarketingResult {
@@ -3585,6 +3655,8 @@ export interface SendAdminMarketingResult {
   processed_tasks?: number
   failed_reason?: string
   target_all: boolean
+  audience_mode?: MarketingAudienceMode
+  audience_query?: MarketingAudienceNode
   requested_user_count: number
   targeted_users: number
   send_email: boolean
@@ -3607,6 +3679,8 @@ export interface MarketingBatchItem {
   send_email: boolean
   send_sms: boolean
   target_all: boolean
+  audience_mode?: MarketingAudienceMode
+  audience_query?: MarketingAudienceNode
   requested_user_count: number
   targeted_users: number
   email_sent: number
