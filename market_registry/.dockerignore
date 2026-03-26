@@ -1,0 +1,6 @@
+admin/node_modules
+admin/build
+.tmp
+data
+docker-build/*.env
+docker-build/*.env.*

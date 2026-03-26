@@ -1,0 +1,8 @@
+.gocache/
+**/.gocache*/
+*.exe
+data/
+admin/node_modules/
+admin/build/
+internal/adminui/dist/*
+!internal/adminui/dist/index.html
