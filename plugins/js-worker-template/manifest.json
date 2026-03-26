@@ -1,0 +1,157 @@
+{
+  "name": "js-worker-template",
+  "display_name": "JS Worker Template",
+  "description": "Starter plugin template for AuraLogic js_worker runtime.",
+  "type": "custom",
+  "runtime": "js_worker",
+  "entry": "index.js",
+  "version": "0.2.2",
+  "config": {
+    "greeting": "hello from template",
+    "enable_storage_demo": true
+  },
+  "config_schema": {
+    "title": "Template Config",
+    "description": "Preset visual fields for the JS Worker template plugin.",
+    "fields": [
+      {
+        "key": "greeting",
+        "label": "Greeting",
+        "description": "Shown by the template plugin in execute responses.",
+        "type": "textarea",
+        "placeholder": "hello from template",
+        "default": "hello from template",
+        "required": true
+      },
+      {
+        "key": "enable_storage_demo",
+        "label": "Enable Storage Demo",
+        "description": "Controls whether template.config.save is allowed to write demo data.",
+        "type": "boolean",
+        "default": true
+      }
+    ]
+  },
+  "runtime_params": {
+    "tenant": "demo-tenant",
+    "log_level": "info"
+  },
+  "runtime_params_schema": {
+    "title": "Template Runtime Params",
+    "description": "Default execute params merged into each plugin invocation.",
+    "fields": [
+      {
+        "key": "tenant",
+        "label": "Tenant",
+        "description": "Default tenant identifier merged into execute params.",
+        "type": "string",
+        "placeholder": "demo-tenant",
+        "default": "demo-tenant"
+      },
+      {
+        "key": "log_level",
+        "label": "Log Level",
+        "description": "Default log level merged into execute params.",
+        "type": "select",
+        "default": "info",
+        "options": [
+          {
+            "label": "debug",
+            "value": "debug"
+          },
+          {
+            "label": "info",
+            "value": "info"
+          },
+          {
+            "label": "warn",
+            "value": "warn"
+          },
+          {
+            "label": "error",
+            "value": "error"
+          }
+        ]
+      }
+    ]
+  },
+  "permissions": [
+    {
+      "key": "hook.execute",
+      "reason": "Run inside the hook pipeline and handle manual execute actions."
+    },
+    {
+      "key": "frontend.extensions",
+      "reason": "Register the template plugin's dedicated frontend pages through frontend.bootstrap."
+    },
+    {
+      "key": "api.execute",
+      "reason": "Allow the plugin page's visual form and HTML bridge to call execute actions."
+    },
+    {
+      "key": "host.order.read",
+      "reason": "Demonstrate Plugin.order.get through the template plugin's native host lookup form."
+    },
+    {
+      "key": "host.user.read",
+      "reason": "Demonstrate Plugin.user.get through the template plugin's native host lookup form."
+    }
+  ],
+  "frontend": {
+    "admin_page": {
+      "path": "/admin/plugin-pages/js-worker-template",
+      "title": "JS Worker Template"
+    },
+    "user_page": {
+      "path": "/plugin-pages/js-worker-template",
+      "title": "JS Worker Template"
+    }
+  },
+  "capabilities": {
+    "hooks": [
+      "frontend.bootstrap"
+    ],
+    "disabled_hooks": [],
+    "requested_permissions": [
+      "hook.execute",
+      "frontend.extensions",
+      "api.execute",
+      "host.order.read",
+      "host.user.read"
+    ],
+    "granted_permissions": [
+      "hook.execute",
+      "frontend.extensions",
+      "api.execute",
+      "host.order.read",
+      "host.user.read"
+    ],
+    "execute_action_storage": {
+      "hook.execute": "read",
+      "template.page.get": "read",
+      "template.config.get": "read",
+      "template.page.save": "write",
+      "template.config.save": "write",
+      "template.echo": "none",
+      "template.host.lookup": "read"
+    },
+    "allow_frontend_extensions": true,
+    "frontend_min_scope": "authenticated",
+    "frontend_allowed_areas": [
+      "user",
+      "admin"
+    ],
+    "frontend_required_permissions": [],
+    "allowed_frontend_slots": [
+      "user.plugin_page.top",
+      "user.plugin_page.bottom",
+      "admin.plugin_page.top",
+      "admin.plugin_page.bottom"
+    ],
+    "allow_execute_api": true
+  },
+  "manifest_version": "1.0.0",
+  "protocol_version": "1.0.0",
+  "min_host_protocol_version": "1.0.0",
+  "max_host_protocol_version": "1.0.0"
+}

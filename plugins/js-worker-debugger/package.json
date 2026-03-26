@@ -1,0 +1,35 @@
+{
+  "name": "@auralogic/js-worker-debugger",
+  "version": "2.5.0",
+  "private": true,
+  "description": "TypeScript development toolchain for the unified Plugin Debugger js_worker sample.",
+  "scripts": {
+    "sdk:ensure": "node ../sdk/scripts/ensure-dist.mjs",
+    "sync:manifest": "node ../sdk/scripts/sync-plugin-manifest.mjs . --profile=debugger",
+    "clean": "node ./scripts/clean.mjs",
+    "build": "npm run sdk:ensure && npm run clean && node ./scripts/build.mjs --minify",
+    "test": "npm run sdk:ensure && npm run clean && tsc -p tsconfig.json && node --test dist/lib/debugger.test.js",
+    "typecheck": "npm run sdk:ensure && tsc --noEmit -p tsconfig.json",
+    "validate:manifest": "node ../sdk/scripts/validate-plugin-manifest.mjs .",
+    "dev": "npm run sdk:ensure && node ./scripts/build.mjs --watch",
+    "package": "npm run validate:manifest && npm run build && node ./scripts/package.mjs"
+  },
+  "dependencies": {
+    "@auralogic/plugin-sdk": "file:../sdk",
+    "@react-email/button": "^0.2.1",
+    "@react-email/hr": "^0.0.12",
+    "@react-email/link": "^0.0.13",
+    "@react-email/section": "^0.0.17",
+    "@react-email/text": "^0.1.6",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.19",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "esbuild": "^0.25.10",
+    "typescript": "^5.8.2",
+    "yazl": "^3.3.1"
+  }
+}

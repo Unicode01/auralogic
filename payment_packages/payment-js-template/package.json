@@ -1,0 +1,16 @@
+{
+  "name": "@auralogic/payment-js-template",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Starter payment_js package template for AuraLogic.",
+  "scripts": {
+    "clean": "node ./scripts/clean.mjs",
+    "validate:manifest": "node ../shared/validate-payment-package-manifest.mjs .",
+    "build": "npm run validate:manifest && npm run clean && node ./scripts/build.mjs",
+    "test": "npm run build && node --test ./scripts/test.mjs",
+    "package": "npm run test && node ./scripts/package.mjs"
+  },
+  "devDependencies": {
+    "yazl": "^3.3.1"
+  }
+}

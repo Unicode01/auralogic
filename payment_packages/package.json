@@ -1,0 +1,11 @@
+{
+  "name": "@auralogic/payment-package-samples",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Workspace runner for AuraLogic payment_js official sample packages.",
+  "scripts": {
+    "validate": "node ./scripts/run-samples.mjs validate:manifest",
+    "test": "node ./scripts/run-samples.mjs test",
+    "package": "node ./scripts/run-samples.mjs package"
+  }
+}

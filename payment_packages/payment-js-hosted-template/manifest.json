@@ -1,0 +1,121 @@
+{
+  "kind": "payment_package",
+  "name": "payment-js-hosted-template",
+  "display_name": {
+    "en": "Payment JS Hosted Template",
+    "zh-CN": "Payment JS 托管收银台模板"
+  },
+  "description": {
+    "en": "Hosted checkout payment_js package with remote session creation, status polling, refund callback, and HMAC webhook declaration.",
+    "zh-CN": "包含远程会话创建、状态轮询、退款回调和 HMAC webhook 声明的托管收银台 payment_js 模板。"
+  },
+  "icon": "Link",
+  "runtime": "payment_js",
+  "entry": "index.js",
+  "version": "1.0.0",
+  "poll_interval": 20,
+  "manifest_version": "1.0.0",
+  "protocol_version": "1.0.0",
+  "min_host_protocol_version": "1.0.0",
+  "max_host_protocol_version": "1.0.0",
+  "config": {
+    "checkout_title": "Hosted Checkout",
+    "provider_label": "Demo Hosted Gateway",
+    "provider_api_base": "https://gateway.example.test/api",
+    "provider_checkout_base": "https://checkout.example.test/pay",
+    "merchant_id": "demo-merchant",
+    "api_key": "demo-api-key",
+    "success_status": "paid",
+    "session_ttl_seconds": 900,
+    "simulate_paid": false,
+    "webhook_secret": "change-me-demo-secret"
+  },
+  "config_schema": {
+    "title": "Hosted Payment JS Config",
+    "description": "Package-governed defaults for a hosted checkout / redirect payment flow.",
+    "fields": [
+      {
+        "key": "checkout_title",
+        "label": "Checkout Title",
+        "type": "string",
+        "default": "Hosted Checkout",
+        "required": true
+      },
+      {
+        "key": "provider_label",
+        "label": "Provider Label",
+        "type": "string",
+        "default": "Demo Hosted Gateway",
+        "required": true
+      },
+      {
+        "key": "provider_api_base",
+        "label": "Provider API Base",
+        "type": "string",
+        "default": "https://gateway.example.test/api",
+        "required": true
+      },
+      {
+        "key": "provider_checkout_base",
+        "label": "Hosted Checkout Base",
+        "type": "string",
+        "default": "https://checkout.example.test/pay",
+        "required": true
+      },
+      {
+        "key": "merchant_id",
+        "label": "Merchant ID",
+        "type": "string",
+        "default": "demo-merchant",
+        "required": true
+      },
+      {
+        "key": "api_key",
+        "label": "API Key",
+        "type": "secret",
+        "default": "demo-api-key",
+        "required": true
+      },
+      {
+        "key": "success_status",
+        "label": "Success Status",
+        "type": "string",
+        "default": "paid",
+        "required": true
+      },
+      {
+        "key": "session_ttl_seconds",
+        "label": "Session TTL Seconds",
+        "type": "number",
+        "default": 900,
+        "required": true
+      },
+      {
+        "key": "simulate_paid",
+        "label": "Simulate Paid",
+        "type": "boolean",
+        "default": false
+      },
+      {
+        "key": "webhook_secret",
+        "label": "Webhook Secret",
+        "type": "secret",
+        "default": "change-me-demo-secret",
+        "required": true
+      }
+    ]
+  },
+  "webhooks": [
+    {
+      "key": "payment.notify",
+      "description": {
+        "en": "Hosted gateway callback used to finalize or queue a redirect payment session.",
+        "zh-CN": "用于完成或排队确认托管收银台支付会话的异步回调。"
+      },
+      "method": "POST",
+      "auth_mode": "hmac_sha256",
+      "secret_key": "webhook_secret",
+      "signature_header": "X-Payment-Signature"
+    }
+  ]
+}

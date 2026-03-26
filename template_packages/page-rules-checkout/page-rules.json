@@ -1,0 +1,10 @@
+[
+  {
+    "name": "Checkout focus shell",
+    "pattern": "^/checkout",
+    "match_type": "regex",
+    "css": "body{background:#f8fafc;} .checkout-shell{box-shadow:0 18px 40px -28px rgba(15,23,42,.28);border-radius:20px;}",
+    "js": "console.log('checkout page rule pack active');",
+    "enabled": true
+  }
+]

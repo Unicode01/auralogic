@@ -1,0 +1,19 @@
+{
+  "kind": "email_template",
+  "name": "email-order-paid",
+  "title": "Order Paid Email",
+  "summary": "Transactional email template for the paid-order notification flow.",
+  "description": "Official AuraLogic email template sample for the order_paid event, suitable for market seeding and host-managed imports.",
+  "version": "1.0.0",
+  "event": "order_paid",
+  "engine": "go_template",
+  "content_file": "template.html",
+  "labels": [
+    "official",
+    "sample",
+    "email"
+  ],
+  "docs": {
+    "docs_url": "https://docs.auralogic.org/market/templates/email-order-paid"
+  }
+}
