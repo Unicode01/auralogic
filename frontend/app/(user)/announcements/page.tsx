@@ -29,8 +29,8 @@ export default function AnnouncementsPage() {
   })
 
   const announcements: AnnouncementWithRead[] = data?.data?.items || []
-  const total = data?.data?.total || 0
-  const totalPages = Math.ceil(total / limit)
+  const total = Number(data?.data?.pagination?.total || 0)
+  const totalPages = Number(data?.data?.pagination?.total_pages || 0)
   const unreadCount = announcements.filter((item) => !item.is_read).length
   const mandatoryCount = announcements.filter((item) => item.is_mandatory).length
   const userAnnouncementsPluginContext = {
