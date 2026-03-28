@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"encoding/json"
 	"errors"
 	"log"
 	"strconv"
@@ -73,6 +74,17 @@ func parseAdminOrderID(c *gin.Context) (uint, bool) {
 		return 0, false
 	}
 	return uint(orderID), true
+}
+
+func (h *OrderHandler) buildShippingFormURL(formToken *string) string {
+	if formToken == nil {
+		return ""
+	}
+	baseURL := strings.TrimRight(strings.TrimSpace(h.cfg.App.URL), "/")
+	if baseURL == "" {
+		return ""
+	}
+	return baseURL + "/form/shipping?token=" + *formToken
 }
 
 func (h *OrderHandler) buildOrderHookExecutionContext(c *gin.Context, adminID uint, orderID uint) *service.ExecutionContext {
@@ -214,6 +226,27 @@ func applyAdminRefundOrderHookPayload(req *RefundOrderRequest, payload map[strin
 			return err
 		}
 		req.Reason = reason
+	}
+	return nil
+}
+
+func applyAdminConfirmRefundHookPayload(req *ConfirmRefundRequest, payload map[string]interface{}) error {
+	if req == nil || payload == nil {
+		return nil
+	}
+	if raw, exists := payload["remark"]; exists {
+		remark, err := orderValueToOptionalString(raw)
+		if err != nil {
+			return err
+		}
+		req.Remark = remark
+	}
+	if raw, exists := payload["transaction_id"]; exists {
+		transactionID, err := orderValueToOptionalString(raw)
+		if err != nil {
+			return err
+		}
+		req.TransactionID = transactionID
 	}
 	return nil
 }
@@ -467,8 +500,11 @@ func (h *OrderHandler) GetOrder(c *gin.Context) {
 					"icon": pm.Icon,
 					"type": pm.Type,
 				},
-				"selected_at":  opm.CreatedAt,
-				"payment_data": opm.PaymentData,
+				"selected_at":                   opm.CreatedAt,
+				"updated_at":                    opm.UpdatedAt,
+				"payment_data":                  opm.PaymentData,
+				"payment_card_cached":           strings.TrimSpace(opm.PaymentCardCache) != "",
+				"payment_card_cache_expires_at": opm.CacheExpiresAt,
 			}
 		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 			log.Printf("admin.get_order failed to load payment method: order_id=%d payment_method_id=%d err=%v", orderID, opm.PaymentMethodID, err)
@@ -485,6 +521,7 @@ func (h *OrderHandler) GetOrder(c *gin.Context) {
 		"serials":        serials,
 		"virtual_stocks": virtualStocks,
 		"payment_info":   paymentInfo,
+		"form_url":       h.buildShippingFormURL(order.FormToken),
 	}
 	if len(warnings) > 0 {
 		payload["warnings"] = warnings
@@ -761,6 +798,11 @@ type RefundOrderRequest struct {
 	Reason string `json:"reason"`
 }
 
+type ConfirmRefundRequest struct {
+	TransactionID string `json:"transaction_id"`
+	Remark        string `json:"remark"`
+}
+
 // RefundOrder 退款Order
 func (h *OrderHandler) RefundOrder(c *gin.Context) {
 	adminID := middleware.MustGetUserID(c)
@@ -869,9 +911,14 @@ func (h *OrderHandler) RefundOrder(c *gin.Context) {
 		h.orderService.ReleaseOrderReserves(order)
 	}
 
-	// 更新订单状态为已退款
+	nextStatus := models.OrderStatusRefunded
+	if refundResult.Pending {
+		nextStatus = models.OrderStatusRefundPending
+	}
+
+	// 更新订单状态
 	updates := map[string]interface{}{
-		"status": models.OrderStatusRefunded,
+		"status": nextStatus,
 	}
 	if req.Reason != "" {
 		remark := order.AdminRemark
@@ -899,6 +946,8 @@ func (h *OrderHandler) RefundOrder(c *gin.Context) {
 	logger.LogOrderOperation(db, c, "refund", order.ID, map[string]interface{}{
 		"order_no":       order.OrderNo,
 		"reason":         req.Reason,
+		"status_after":   nextStatus,
+		"refund_pending": refundResult.Pending,
 		"refund_message": refundResult.Message,
 		"transaction_id": refundResult.TransactionID,
 	})
@@ -909,9 +958,10 @@ func (h *OrderHandler) RefundOrder(c *gin.Context) {
 			"order_no":       order.OrderNo,
 			"admin_id":       adminID,
 			"status_before":  beforeStatus,
-			"status_after":   models.OrderStatusRefunded,
+			"status_after":   nextStatus,
 			"reason":         req.Reason,
 			"transaction_id": refundResult.TransactionID,
+			"refund_pending": refundResult.Pending,
 			"message":        refundResult.Message,
 			"source":         "admin_api",
 			"completed_at":   time.Now().Format(time.RFC3339),
@@ -929,10 +979,204 @@ func (h *OrderHandler) RefundOrder(c *gin.Context) {
 
 	response.Success(c, gin.H{
 		"order_no":       order.OrderNo,
-		"status":         models.OrderStatusRefunded,
+		"status":         nextStatus,
 		"message":        refundResult.Message,
 		"transaction_id": refundResult.TransactionID,
+		"pending":        refundResult.Pending,
 		"data":           refundResult.Data,
+	})
+}
+
+// ConfirmRefund 手动确认退款完成
+func (h *OrderHandler) ConfirmRefund(c *gin.Context) {
+	adminID := middleware.MustGetUserID(c)
+	orderID, ok := parseAdminOrderID(c)
+	if !ok {
+		return
+	}
+
+	var req ConfirmRefundRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		// 允许不传 body
+	}
+
+	req.TransactionID = validator.SanitizeInput(req.TransactionID)
+	req.Remark = validator.SanitizeText(req.Remark)
+	if !validator.ValidateLength(req.TransactionID, 0, 255) {
+		respondAdminOrderValidationError(c, orderbiz.RefundTransactionIDTooLong(255))
+		return
+	}
+	if !validator.ValidateLength(req.Remark, 0, 500) {
+		respondAdminOrderValidationError(c, orderbiz.AdminRemarkTooLong(500))
+		return
+	}
+
+	order, err := h.orderService.GetOrderByID(orderID)
+	if err != nil {
+		response.NotFound(c, "Order not found")
+		return
+	}
+	if order.Status != models.OrderStatusRefundPending {
+		respondAdminOrderValidationError(c, orderbiz.RefundFinalizeStatusInvalid(order.Status))
+		return
+	}
+
+	beforeStatus := order.Status
+	hookExecCtx := h.buildOrderHookExecutionContext(c, adminID, uint(orderID))
+	if h.pluginManager != nil {
+		originalReq := req
+		hookPayload := map[string]interface{}{
+			"order_id":       order.ID,
+			"order_no":       order.OrderNo,
+			"admin_id":       adminID,
+			"status_before":  order.Status,
+			"remark":         req.Remark,
+			"transaction_id": req.TransactionID,
+			"source":         "admin_api",
+		}
+		hookResult, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+			Hook:    "order.admin.refund_finalize.before",
+			Payload: hookPayload,
+		}, hookExecCtx)
+		if hookErr != nil {
+			log.Printf("order.admin.refund_finalize.before hook execution failed: admin=%d order=%s err=%v", adminID, order.OrderNo, hookErr)
+		} else if hookResult != nil {
+			if hookResult.Blocked {
+				reason := strings.TrimSpace(hookResult.BlockReason)
+				if reason == "" {
+					reason = "Order refund finalization rejected by plugin"
+				}
+				response.BadRequest(c, reason)
+				return
+			}
+			if hookResult.Payload != nil {
+				if applyErr := applyAdminConfirmRefundHookPayload(&req, hookResult.Payload); applyErr != nil {
+					log.Printf("order.admin.refund_finalize.before payload apply failed, fallback to original request: admin=%d order=%s err=%v", adminID, order.OrderNo, applyErr)
+					req = originalReq
+				}
+			}
+		}
+	}
+	req.TransactionID = validator.SanitizeInput(req.TransactionID)
+	req.Remark = validator.SanitizeText(req.Remark)
+	if !validator.ValidateLength(req.TransactionID, 0, 255) {
+		respondAdminOrderValidationError(c, orderbiz.RefundTransactionIDTooLong(255))
+		return
+	}
+	if !validator.ValidateLength(req.Remark, 0, 500) {
+		respondAdminOrderValidationError(c, orderbiz.AdminRemarkTooLong(500))
+		return
+	}
+
+	db := database.GetDB()
+	now := time.Now().UTC()
+	remarkLines := make([]string, 0, 2)
+	if req.TransactionID != "" {
+		remarkLines = append(remarkLines, "[Refund Confirmed] transaction_id="+req.TransactionID)
+	} else {
+		remarkLines = append(remarkLines, "[Refund Confirmed]")
+	}
+	if req.Remark != "" {
+		remarkLines = append(remarkLines, req.Remark)
+	}
+	nextAdminRemark := order.AdminRemark
+	if len(remarkLines) > 0 {
+		if nextAdminRemark != "" {
+			nextAdminRemark += "\n"
+		}
+		nextAdminRemark += strings.Join(remarkLines, "\n")
+	}
+
+	if err := db.Transaction(func(tx *gorm.DB) error {
+		updates := map[string]interface{}{
+			"status":       models.OrderStatusRefunded,
+			"admin_remark": nextAdminRemark,
+		}
+		if err := tx.Model(order).Updates(updates).Error; err != nil {
+			return err
+		}
+
+		var opm models.OrderPaymentMethod
+		if err := tx.Where("order_id = ?", order.ID).First(&opm).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil
+			}
+			return err
+		}
+
+		paymentData := map[string]interface{}{}
+		if strings.TrimSpace(opm.PaymentData) != "" {
+			if err := json.Unmarshal([]byte(opm.PaymentData), &paymentData); err != nil {
+				paymentData["_raw_payment_data"] = opm.PaymentData
+			}
+		}
+		paymentData["refund_confirmed_at"] = now.Format(time.RFC3339)
+		paymentData["refund_confirmed_by"] = adminID
+		if req.TransactionID != "" {
+			paymentData["refund_transaction_id"] = req.TransactionID
+		}
+		if req.Remark != "" {
+			paymentData["refund_confirm_remark"] = req.Remark
+		}
+		encoded, err := json.Marshal(paymentData)
+		if err != nil {
+			return err
+		}
+		return tx.Model(&models.OrderPaymentMethod{}).
+			Where("order_id = ?", order.ID).
+			Update("payment_data", string(encoded)).Error
+	}); err != nil {
+		response.InternalError(c, "Failed to confirm refund")
+		return
+	}
+
+	if order.UserID != nil {
+		if err := h.orderService.SyncUserConsumptionStats(*order.UserID); err != nil {
+			logger.LogOrderOperation(db, c, "sync_user_consumption_stats_failed", order.ID, map[string]interface{}{
+				"order_no": order.OrderNo,
+				"user_id":  *order.UserID,
+				"error":    err.Error(),
+			})
+		}
+	}
+
+	logger.LogOrderOperation(db, c, "confirm_refund", order.ID, map[string]interface{}{
+		"order_no":       order.OrderNo,
+		"remark":         req.Remark,
+		"transaction_id": req.TransactionID,
+		"status_before":  beforeStatus,
+		"status_after":   models.OrderStatusRefunded,
+	})
+
+	if h.pluginManager != nil {
+		afterPayload := map[string]interface{}{
+			"order_id":       order.ID,
+			"order_no":       order.OrderNo,
+			"admin_id":       adminID,
+			"status_before":  beforeStatus,
+			"status_after":   models.OrderStatusRefunded,
+			"remark":         req.Remark,
+			"transaction_id": req.TransactionID,
+			"source":         "admin_api",
+			"completed_at":   now.Format(time.RFC3339),
+		}
+		go func(execCtx *service.ExecutionContext, payload map[string]interface{}, aid uint, orderNo string) {
+			_, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
+				Hook:    "order.admin.refund_finalize.after",
+				Payload: payload,
+			}, execCtx)
+			if hookErr != nil {
+				log.Printf("order.admin.refund_finalize.after hook execution failed: admin=%d order=%s err=%v", aid, orderNo, hookErr)
+			}
+		}(hookExecCtx, afterPayload, adminID, order.OrderNo)
+	}
+
+	response.Success(c, gin.H{
+		"order_no":       order.OrderNo,
+		"status":         models.OrderStatusRefunded,
+		"transaction_id": req.TransactionID,
+		"remark":         req.Remark,
+		"message":        "Refund confirmed",
 	})
 }
 
@@ -1523,6 +1767,11 @@ func (h *OrderHandler) RequestResubmit(c *gin.Context) {
 		response.InternalError(c, "Failed to request resubmission")
 		return
 	}
+	updatedOrder, err := h.orderService.GetOrderByID(order.ID)
+	if err != nil {
+		response.InternalError(c, "Failed to load updated order")
+		return
+	}
 
 	// 记录操作日志
 	db := database.GetDB()
@@ -1532,11 +1781,13 @@ func (h *OrderHandler) RequestResubmit(c *gin.Context) {
 	})
 
 	response.Success(c, gin.H{
-		"order_no":       order.OrderNo,
-		"status":         models.OrderStatusNeedResubmit,
-		"new_form_token": newToken,
-		"reason":         req.Reason,
-		"message":        "User has been asked to resubmit shipping info",
+		"order_no":        updatedOrder.OrderNo,
+		"status":          models.OrderStatusNeedResubmit,
+		"new_form_token":  newToken,
+		"new_form_url":    h.buildShippingFormURL(updatedOrder.FormToken),
+		"form_expires_at": updatedOrder.FormExpiresAt,
+		"reason":          req.Reason,
+		"message":         "User has been asked to resubmit shipping info",
 	})
 }
 
@@ -2011,16 +2262,56 @@ func (h *OrderHandler) UpdateOrderPrice(c *gin.Context) {
 	order.TotalAmount = *req.TotalAmountMinor
 
 	db := database.GetDB()
-	if err := db.Save(order).Error; err != nil {
+	paymentArtifactsReset := false
+	if err := db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Save(order).Error; err != nil {
+			return err
+		}
+
+		var opm models.OrderPaymentMethod
+		if err := tx.Where("order_id = ?", order.ID).First(&opm).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil
+			}
+			return err
+		}
+
+		cacheResult := tx.Model(&models.OrderPaymentMethod{}).
+			Where("order_id = ?", order.ID).
+			Updates(map[string]interface{}{
+				"payment_data":       "",
+				"payment_card_cache": "",
+				"cache_expires_at":   nil,
+			})
+		if cacheResult.Error != nil {
+			return cacheResult.Error
+		}
+
+		storageKeys := []string{
+			"order_" + strconv.FormatUint(uint64(order.ID), 10) + "_amount",
+			"order_" + strconv.FormatUint(uint64(order.ID), 10) + "_time",
+			"order_" + strconv.FormatUint(uint64(order.ID), 10) + "_address",
+		}
+		deleteResult := tx.
+			Where("payment_method_id = ? AND key IN ?", opm.PaymentMethodID, storageKeys).
+			Delete(&models.PaymentMethodStorageEntry{})
+		if deleteResult.Error != nil {
+			return deleteResult.Error
+		}
+
+		paymentArtifactsReset = cacheResult.RowsAffected > 0 || deleteResult.RowsAffected > 0
+		return nil
+	}); err != nil {
 		response.InternalError(c, "Failed to update order price")
 		return
 	}
 
 	// 记录操作日志
 	logger.LogOrderOperation(db, c, "update_price", order.ID, map[string]interface{}{
-		"order_no":               order.OrderNo,
-		"old_total_amount_minor": oldAmount,
-		"new_total_amount_minor": *req.TotalAmountMinor,
+		"order_no":                order.OrderNo,
+		"old_total_amount_minor":  oldAmount,
+		"new_total_amount_minor":  *req.TotalAmountMinor,
+		"payment_artifacts_reset": paymentArtifactsReset,
 	})
 
 	if h.pluginManager != nil {
@@ -2046,9 +2337,10 @@ func (h *OrderHandler) UpdateOrderPrice(c *gin.Context) {
 	}
 
 	response.Success(c, gin.H{
-		"order_no":           order.OrderNo,
-		"total_amount_minor": order.TotalAmount,
-		"message":            "Order price updated",
+		"order_no":                order.OrderNo,
+		"total_amount_minor":      order.TotalAmount,
+		"payment_artifacts_reset": paymentArtifactsReset,
+		"message":                 "Order price updated",
 	})
 }
 
@@ -2142,15 +2434,10 @@ func (h *OrderHandler) CreateDraft(c *gin.Context) {
 		"items_count":       len(req.Items),
 	})
 
-	var formURL string
-	if order.FormToken != nil {
-		formURL = h.cfg.App.URL + "/form/shipping?token=" + *order.FormToken
-	}
-
 	response.Success(c, gin.H{
 		"order_id":   order.ID,
 		"order_no":   order.OrderNo,
-		"form_url":   formURL,
+		"form_url":   h.buildShippingFormURL(order.FormToken),
 		"form_token": order.FormToken,
 		"status":     order.Status,
 		"expires_at": order.FormExpiresAt,
@@ -2251,17 +2538,13 @@ func (h *OrderHandler) CreateOrderForUser(c *gin.Context) {
 	}
 	logger.LogOrderOperation(db, c, "admin_create_order", order.ID, logDetails)
 
-	var formURL string
-	if order.FormToken != nil {
-		formURL = h.cfg.App.URL + "/form/shipping?token=" + *order.FormToken
-	}
-
 	response.Success(c, gin.H{
-		"order_id":   order.ID,
-		"order_no":   order.OrderNo,
-		"form_url":   formURL,
-		"form_token": order.FormToken,
-		"status":     order.Status,
-		"created_at": order.CreatedAt,
+		"order_id":        order.ID,
+		"order_no":        order.OrderNo,
+		"form_url":        h.buildShippingFormURL(order.FormToken),
+		"form_token":      order.FormToken,
+		"form_expires_at": order.FormExpiresAt,
+		"status":          order.Status,
+		"created_at":      order.CreatedAt,
 	})
 }

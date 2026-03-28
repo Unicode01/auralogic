@@ -62,6 +62,7 @@ export default function AdminDashboardPage() {
     shipped: t.order.status.shipped,
     completed: t.order.status.completed,
     cancelled: t.order.status.cancelled,
+    refund_pending: t.order.status.refund_pending,
     refunded: t.order.status.refunded,
   }
 
@@ -73,6 +74,7 @@ export default function AdminDashboardPage() {
     shipped: 'bg-purple-500',
     completed: 'bg-green-500',
     cancelled: 'bg-gray-500',
+    refund_pending: 'bg-amber-500',
     refunded: 'bg-red-400',
   }
 

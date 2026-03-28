@@ -53,7 +53,11 @@ interface OrderDetailProps {
   isVirtualOnly?: boolean
   paymentCard?: ReactNode
   shippingForm?: ReactNode
+  shippingFormURL?: string
+  shippingFormToken?: string
+  shippingFormExpiresAt?: string
   showVirtualStockRemark?: boolean
+  showOperationalMeta?: boolean
   pluginSlotNamespace?: string
   pluginSlotContext?: Record<string, any>
   pluginSlotPath?: string
@@ -66,7 +70,11 @@ export function OrderDetail({
   isVirtualOnly = false,
   paymentCard,
   shippingForm,
+  shippingFormURL,
+  shippingFormToken,
+  shippingFormExpiresAt,
   showVirtualStockRemark = false,
+  showOperationalMeta = false,
   pluginSlotNamespace,
   pluginSlotContext,
   pluginSlotPath,
@@ -96,6 +104,15 @@ export function OrderDetail({
         ? ` (${order.receiverPostcode || order.receiver_postcode})`
         : ''
     )
+  const formToken = String(shippingFormToken || order.formToken || order.form_token || '').trim()
+  const formExpiresAt = String(
+    shippingFormExpiresAt || order.formExpiresAt || order.form_expires_at || ''
+  ).trim()
+  const externalUserId = String(order.externalUserId || order.external_user_id || '').trim()
+  const externalOrderId = String(order.externalOrderId || order.external_order_id || '').trim()
+  const source = String(order.source || '').trim()
+  const sourcePlatform = String(order.sourcePlatform || order.source_platform || order.platform || '').trim()
+  const adminRemark = String(order.adminRemark || order.admin_remark || '').trim()
   const buildSectionPluginContext = (section: string, extra?: Record<string, any>) => ({
     ...(pluginSlotContext || {}),
     section,
@@ -428,10 +445,77 @@ export function OrderDetail({
                 {formatCurrency(order.total_amount_minor ?? 0, order.currency)}
               </dd>
             </div>
+            {showOperationalMeta && source && (
+              <div>
+                <dt className="text-muted-foreground">{t.order.orderSource}</dt>
+                <dd className="font-medium">{source}</dd>
+              </div>
+            )}
+            {showOperationalMeta && sourcePlatform && (
+              <div>
+                <dt className="text-muted-foreground">{t.order.sourcePlatform}</dt>
+                <dd className="font-medium">{sourcePlatform}</dd>
+              </div>
+            )}
+            {showOperationalMeta && externalUserId && (
+              <div>
+                <dt className="text-muted-foreground">{t.order.externalUserId}</dt>
+                <dd className="flex flex-wrap items-center gap-2 break-all font-mono font-medium">
+                  <span>{externalUserId}</span>
+                  {renderCopyButton(externalUserId, t.order.externalUserId)}
+                </dd>
+              </div>
+            )}
+            {showOperationalMeta && externalOrderId && (
+              <div>
+                <dt className="text-muted-foreground">{t.order.externalOrderId}</dt>
+                <dd className="flex flex-wrap items-center gap-2 break-all font-mono font-medium">
+                  <span>{externalOrderId}</span>
+                  {renderCopyButton(externalOrderId, t.order.externalOrderId)}
+                </dd>
+              </div>
+            )}
+            {showOperationalMeta && shippingFormURL && (
+              <div>
+                <dt className="text-muted-foreground">{t.order.shippingFormLink}</dt>
+                <dd className="flex flex-wrap items-center gap-2 break-all font-medium">
+                  <a
+                    href={shippingFormURL}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="min-w-0 flex-1 break-all text-primary underline-offset-4 hover:underline"
+                  >
+                    {shippingFormURL}
+                  </a>
+                  {renderCopyButton(shippingFormURL, t.order.shippingFormLink)}
+                </dd>
+              </div>
+            )}
+            {showOperationalMeta && formToken && (
+              <div>
+                <dt className="text-muted-foreground">{t.order.shippingFormToken}</dt>
+                <dd className="flex flex-wrap items-center gap-2 break-all font-mono font-medium">
+                  <span>{formToken}</span>
+                  {renderCopyButton(formToken, t.order.shippingFormToken)}
+                </dd>
+              </div>
+            )}
+            {showOperationalMeta && formExpiresAt && (
+              <div>
+                <dt className="text-muted-foreground">{t.order.formExpiresAt}</dt>
+                <dd>{formatDate(formExpiresAt)}</dd>
+              </div>
+            )}
             {(order.formSubmittedAt || order.form_submitted_at) && (
               <div>
                 <dt className="text-muted-foreground">{t.order.formSubmittedAt}</dt>
                 <dd>{formatDate(order.formSubmittedAt || order.form_submitted_at || '')}</dd>
+              </div>
+            )}
+            {showOperationalMeta && (order.updatedAt || order.updated_at) && (
+              <div>
+                <dt className="text-muted-foreground">{t.order.updatedAt}</dt>
+                <dd>{formatDate(order.updatedAt || order.updated_at || '')}</dd>
               </div>
             )}
             {(order.shippedAt || order.shipped_at) && (
@@ -849,6 +933,23 @@ export function OrderDetail({
             {renderSectionPluginSlot('remark.after', 'remark', {
               has_remark: true,
             })}
+          </CardContent>
+        </Card>
+      )}
+
+      {showOperationalMeta && adminRemark && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <MessageSquare className="h-5 w-5" />
+              {t.order.adminRemark}
+            </CardTitle>
+          </CardHeader>
+
+          <CardContent>
+            <div className="rounded-md bg-muted/50 p-4">
+              <p className="whitespace-pre-wrap text-sm">{adminRemark}</p>
+            </div>
           </CardContent>
         </Card>
       )}

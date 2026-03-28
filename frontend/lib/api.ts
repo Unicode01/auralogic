@@ -877,6 +877,13 @@ export async function adminRefundOrder(id: number, reason?: string) {
   return apiClient.post(`/api/admin/orders/${id}/refund`, { reason })
 }
 
+export async function adminConfirmRefund(
+  id: number,
+  data?: { transaction_id?: string; remark?: string }
+) {
+  return apiClient.post(`/api/admin/orders/${id}/confirm-refund`, data || {})
+}
+
 export async function batchUpdateOrders(orderIds: number[], action: string) {
   return apiClient.post('/api/admin/orders/batch/update', { order_ids: orderIds, action })
 }
@@ -1016,6 +1023,18 @@ export interface AdminPluginEffectiveCapabilityPolicy {
   valid: boolean
 }
 
+export interface AdminPluginWorkspaceCommand {
+  name: string
+  title?: string
+  description?: string
+  entry?: string
+  interactive: boolean
+  builtin?: boolean
+  permissions?: string[]
+  missing_permissions?: string[]
+  granted: boolean
+}
+
 export interface AdminPlugin {
   id: number
   name: string
@@ -1049,6 +1068,7 @@ export interface AdminPlugin {
   created_at?: string
   updated_at?: string
   effective_capability_policy?: AdminPluginEffectiveCapabilityPolicy
+  workspace_commands?: AdminPluginWorkspaceCommand[]
   latest_deployment?: AdminPluginDeployment
 }
 
@@ -2302,6 +2322,8 @@ export async function getOperationLogs(params?: {
   limit?: number
   action?: string
   resource_type?: string
+  resource_id?: string
+  order_no?: string
   user_id?: string
   start_date?: string
   end_date?: string
@@ -2311,6 +2333,8 @@ export async function getOperationLogs(params?: {
   if (params?.limit) query.append('limit', params.limit.toString())
   if (params?.action) query.append('action', params.action)
   if (params?.resource_type) query.append('resource_type', params.resource_type)
+  if (params?.resource_id) query.append('resource_id', params.resource_id)
+  if (params?.order_no) query.append('order_no', params.order_no)
   if (params?.user_id) query.append('user_id', params.user_id)
   if (params?.start_date) query.append('start_date', params.start_date)
   if (params?.end_date) query.append('end_date', params.end_date)
