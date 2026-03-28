@@ -226,8 +226,8 @@ export default function AdminKnowledgePage() {
   })
 
   const articles: KnowledgeArticle[] = articlesData?.data?.items || []
-  const totalArticles = articlesData?.data?.total || 0
-  const totalPages = Math.ceil(totalArticles / limit) || 1
+  const totalArticles = Number(articlesData?.data?.pagination?.total || 0)
+  const totalPages = Number(articlesData?.data?.pagination?.total_pages || 0) || 1
 
   const {
     data: selectedArticleData,

@@ -121,8 +121,8 @@ export default function AdminAnnouncementsPage() {
   })
 
   const announcements: Announcement[] = data?.data?.items || []
-  const total = data?.data?.total || 0
-  const totalPages = Math.ceil(total / limit) || 1
+  const total = Number(data?.data?.pagination?.total || 0)
+  const totalPages = Number(data?.data?.pagination?.total_pages || 0) || 1
 
   const {
     data: detailData,

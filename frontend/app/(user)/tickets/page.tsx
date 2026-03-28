@@ -210,8 +210,8 @@ function TicketsPageContent() {
   })
 
   const tickets: Ticket[] = ticketsData?.data?.items || []
-  const total = ticketsData?.data?.total || 0
-  const totalPages = Math.ceil(total / limit)
+  const total = Number(ticketsData?.data?.pagination?.total || 0)
+  const totalPages = Number(ticketsData?.data?.pagination?.total_pages || 0)
   const orders = ordersData?.data?.items || []
   const contentLength = draftContent.length
   const normalizedSearchText = normalizeQueryString(searchText)
