@@ -73,8 +73,8 @@ export default function KnowledgePage() {
 
   const categories: KnowledgeCategory[] = categoryData?.data || []
   const articles = articlesData?.data?.items || []
-  const total = articlesData?.data?.total || 0
-  const totalPages = Math.ceil(total / limit)
+  const total = Number(articlesData?.data?.pagination?.total || 0)
+  const totalPages = Number(articlesData?.data?.pagination?.total_pages || 0)
 
   const handleCategoryClick = (id?: string) => {
     setCategoryId(id)
