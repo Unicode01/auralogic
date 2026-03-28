@@ -18,6 +18,7 @@ var userPurchaseLimitStatuses = []models.OrderStatus{
 	models.OrderStatusPending,
 	models.OrderStatusShipped,
 	models.OrderStatusCompleted,
+	models.OrderStatusRefundPending,
 	models.OrderStatusRefunded,
 }
 

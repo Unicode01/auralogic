@@ -2069,8 +2069,11 @@ func (s *OrderService) CancelOrder(orderID uint, reason string) error {
 	}
 	previousStatus := order.Status
 
-	// 已发货和已完成的Order不能取消
-	if order.Status == models.OrderStatusShipped || order.Status == models.OrderStatusCompleted {
+	// 只有仍处于可取消流程中的订单允许取消
+	if order.Status != models.OrderStatusPendingPayment &&
+		order.Status != models.OrderStatusDraft &&
+		order.Status != models.OrderStatusPending &&
+		order.Status != models.OrderStatusNeedResubmit {
 		return newOrderCancelStatusInvalidError(order.Status)
 	}
 

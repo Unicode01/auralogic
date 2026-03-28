@@ -157,6 +157,8 @@ const DEFAULT_PLUGIN_HOOK_GROUPS: Record<PluginHookGroupKey, string[]> = {
     'order.admin.cancel.after',
     'order.admin.refund.before',
     'order.admin.refund.after',
+    'order.admin.refund_finalize.before',
+    'order.admin.refund_finalize.after',
     'order.admin.mark_paid.before',
     'order.admin.mark_paid.after',
     'order.admin.deliver_virtual.before',

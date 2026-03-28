@@ -19,6 +19,7 @@ import {
   updateOrderPrice,
   adminDeliverVirtualStock,
   adminRefundOrder,
+  adminConfirmRefund,
 } from '@/lib/api'
 import { resolveApiErrorMessage } from '@/lib/api-error'
 import { OrderDetail } from '@/components/orders/order-detail'
@@ -99,11 +100,14 @@ export default function AdminOrderDetailPage({ params }: { params: Promise<{ id:
   const [adminRemark, setAdminRemark] = useState('')
   const [cancelReason, setCancelReason] = useState('')
   const [refundReason, setRefundReason] = useState('')
+  const [confirmRefundRemark, setConfirmRefundRemark] = useState('')
+  const [confirmRefundTransactionId, setConfirmRefundTransactionId] = useState('')
   const [resubmitReason, setResubmitReason] = useState('')
   const [openTracking, setOpenTracking] = useState(false)
   const [openComplete, setOpenComplete] = useState(false)
   const [openCancel, setOpenCancel] = useState(false)
   const [openRefund, setOpenRefund] = useState(false)
+  const [openConfirmRefund, setOpenConfirmRefund] = useState(false)
   const [openDelete, setOpenDelete] = useState(false)
   const [openEdit, setOpenEdit] = useState(false)
   const [openResubmit, setOpenResubmit] = useState(false)
@@ -111,6 +115,11 @@ export default function AdminOrderDetailPage({ params }: { params: Promise<{ id:
   const [openUpdatePrice, setOpenUpdatePrice] = useState(false)
   const [markOnlyShipped, setMarkOnlyShipped] = useState(false)
   const [newPrice, setNewPrice] = useState('')
+  const [formAccess, setFormAccess] = useState<{
+    form_url?: string
+    form_token?: string
+    form_expires_at?: string
+  } | null>(null)
 
   // 编辑收货信息的表单状态
   const [editForm, setEditForm] = useState({
@@ -191,14 +200,36 @@ export default function AdminOrderDetailPage({ params }: { params: Promise<{ id:
 
   const refundMutation = useMutation({
     mutationFn: () => adminRefundOrder(orderId, refundReason),
-    onSuccess: () => {
-      toast.success(t.order.orderRefunded)
+    onSuccess: (response: any) => {
+      toast.success(
+        response?.data?.status === 'refund_pending'
+          ? t.order.orderRefundPending
+          : t.order.orderRefunded
+      )
       queryClient.invalidateQueries({ queryKey: ['adminOrderDetail', orderId] })
       setOpenRefund(false)
       setRefundReason('')
     },
     onError: (error: any) => {
       showOrderError(error, t.order.refundFailed)
+    },
+  })
+
+  const confirmRefundMutation = useMutation({
+    mutationFn: () =>
+      adminConfirmRefund(orderId, {
+        transaction_id: confirmRefundTransactionId,
+        remark: confirmRefundRemark,
+      }),
+    onSuccess: () => {
+      toast.success(t.order.refundConfirmed)
+      queryClient.invalidateQueries({ queryKey: ['adminOrderDetail', orderId] })
+      setOpenConfirmRefund(false)
+      setConfirmRefundRemark('')
+      setConfirmRefundTransactionId('')
+    },
+    onError: (error: any) => {
+      showOrderError(error, t.order.refundConfirmFailed)
     },
   })
 
@@ -227,8 +258,13 @@ export default function AdminOrderDetailPage({ params }: { params: Promise<{ id:
 
   const resubmitMutation = useMutation({
     mutationFn: () => requestOrderResubmit(orderId, resubmitReason),
-    onSuccess: () => {
-      toast.success(t.order.resubmitRequested)
+    onSuccess: (response: any) => {
+      setFormAccess({
+        form_url: response?.data?.new_form_url,
+        form_token: response?.data?.new_form_token,
+        form_expires_at: response?.data?.form_expires_at,
+      })
+      toast.success(response?.data?.message || t.order.resubmitRequested)
       queryClient.invalidateQueries({ queryKey: ['adminOrderDetail', orderId] })
       setOpenResubmit(false)
       setResubmitReason('')
@@ -251,8 +287,12 @@ export default function AdminOrderDetailPage({ params }: { params: Promise<{ id:
 
   const updatePriceMutation = useMutation({
     mutationFn: (amountMinor: number) => updateOrderPrice(orderId, amountMinor),
-    onSuccess: () => {
-      toast.success(t.order.priceUpdated)
+    onSuccess: (response: any) => {
+      toast.success(
+        response?.data?.payment_artifacts_reset
+          ? t.order.priceUpdatedAndPaymentReset
+          : t.order.priceUpdated
+      )
       queryClient.invalidateQueries({ queryKey: ['adminOrderDetail', orderId] })
       setOpenUpdatePrice(false)
       setNewPrice('')
@@ -333,6 +373,10 @@ export default function AdminOrderDetailPage({ params }: { params: Promise<{ id:
     }
   }, [data, handleMaskedField])
 
+  useEffect(() => {
+    setFormAccess(null)
+  }, [orderId])
+
   if (isLoading) {
     return <div className="py-12 text-center">{t.common.loading}</div>
   }
@@ -348,15 +392,25 @@ export default function AdminOrderDetailPage({ params }: { params: Promise<{ id:
   const paymentInfo = data.data.payment_info
   const orderNumber = order.orderNo || order.order_no
   const hasTracking = Boolean(order.trackingNo || order.tracking_no)
+  const orderFormURL = String(formAccess?.form_url || data.data.form_url || '').trim()
+  const orderFormToken = String(
+    formAccess?.form_token || order.formToken || order.form_token || ''
+  ).trim()
+  const orderFormExpiresAt = String(
+    formAccess?.form_expires_at || order.formExpiresAt || order.form_expires_at || ''
+  ).trim()
 
   // 判断是否为纯虚拟商品订单
   const isVirtualOnly =
     order.items?.every((item: any) => (item.product_type || item.productType) === 'virtual') ??
     false
+  const hasVirtualItems =
+    order.items?.some((item: any) => (item.product_type || item.productType) === 'virtual') ??
+    false
   const canMarkPaid = order.status === 'pending_payment'
   const canUpdatePrice = canMarkPaid
   const canDeliverVirtual =
-    order.status === 'pending' && isVirtualOnly && virtualStocks.length === 0
+    hasVirtualItems && (order.status === 'pending' || order.status === 'shipped')
   const canEditShipping =
     (order.status === 'pending' || order.status === 'need_resubmit') && !isVirtualOnly
   const canRequestResubmit = order.status === 'pending' && !isVirtualOnly
@@ -373,12 +427,14 @@ export default function AdminOrderDetailPage({ params }: { params: Promise<{ id:
     order.status === 'need_resubmit' ||
     order.status === 'shipped' ||
     order.status === 'completed'
+  const canConfirmRefund = order.status === 'refund_pending'
   const canDelete =
     order.status === 'pending_payment' ||
     order.status === 'draft' ||
     order.status === 'cancelled' ||
     order.status === 'refunded'
-  const secondaryActionCount = Number(canCancel) + Number(canRefund) + Number(canDelete)
+  const secondaryActionCount =
+    Number(canCancel) + Number(canRefund) + Number(canConfirmRefund) + Number(canDelete)
   const adminOrderDetailPluginContext = {
     view: 'admin_order_detail',
     order: {
@@ -421,6 +477,27 @@ export default function AdminOrderDetailPage({ params }: { params: Promise<{ id:
   }
 
   const paymentData = parsePaymentData()
+  const paymentDataEntries = paymentData
+    ? Object.entries(paymentData).filter(([key, value]) => {
+        if (key === 'paid_at' || key === 'transaction_id') return false
+        return value !== undefined && value !== null && String(value).trim() !== ''
+      })
+    : []
+  const formatPaymentFieldLabel = (key: string) =>
+    key
+      .split('_')
+      .filter(Boolean)
+      .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
+      .join(' ')
+  const formatPaymentFieldValue = (value: unknown) => {
+    if (typeof value === 'string') return value
+    if (typeof value === 'number' || typeof value === 'boolean') return String(value)
+    try {
+      return JSON.stringify(value)
+    } catch {
+      return String(value)
+    }
+  }
 
   // 获取付款方式图标
   const getPaymentIcon = () => {
@@ -462,7 +539,7 @@ export default function AdminOrderDetailPage({ params }: { params: Promise<{ id:
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-4 text-sm">
+        <div className="grid grid-cols-1 gap-4 text-sm md:grid-cols-2">
           <div>
             <dt className="flex items-center gap-1 text-muted-foreground">
               <Clock className="h-3.5 w-3.5" />
@@ -470,6 +547,12 @@ export default function AdminOrderDetailPage({ params }: { params: Promise<{ id:
             </dt>
             <dd>{formatDate(paymentInfo.selected_at)}</dd>
           </div>
+          {paymentInfo.updated_at && (
+            <div>
+              <dt className="text-muted-foreground">{t.order.paymentUpdatedAt}</dt>
+              <dd>{formatDate(paymentInfo.updated_at)}</dd>
+            </div>
+          )}
           {paymentData?.paid_at && (
             <div>
               <dt className="flex items-center gap-1 text-muted-foreground">
@@ -480,12 +563,41 @@ export default function AdminOrderDetailPage({ params }: { params: Promise<{ id:
             </div>
           )}
           {paymentData?.transaction_id && (
-            <div className="col-span-2">
+            <div className="md:col-span-2">
               <dt className="text-muted-foreground">{t.order.transactionId}</dt>
               <dd className="break-all font-mono text-xs">{paymentData.transaction_id}</dd>
             </div>
           )}
+          <div>
+            <dt className="text-muted-foreground">{t.order.paymentCacheStatus}</dt>
+            <dd className="text-xs font-medium">
+              {paymentInfo.payment_card_cached
+                ? t.order.paymentCacheReady
+                : t.order.paymentCacheEmpty}
+            </dd>
+          </div>
+          {paymentInfo.payment_card_cache_expires_at && (
+            <div>
+              <dt className="text-muted-foreground">{t.order.paymentCacheExpiresAt}</dt>
+              <dd>{formatDate(paymentInfo.payment_card_cache_expires_at)}</dd>
+            </div>
+          )}
         </div>
+        {paymentDataEntries.length > 0 && (
+          <div className="space-y-2 border-t pt-4">
+            <p className="text-sm font-medium">{t.order.paymentRawData}</p>
+            <dl className="grid grid-cols-1 gap-3 text-sm md:grid-cols-2">
+              {paymentDataEntries.map(([key, value]) => (
+                <div key={key}>
+                  <dt className="text-muted-foreground">{formatPaymentFieldLabel(key)}</dt>
+                  <dd className="break-all font-mono text-xs">
+                    {formatPaymentFieldValue(value)}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          </div>
+        )}
       </CardContent>
     </Card>
   ) : null
@@ -940,7 +1052,18 @@ export default function AdminOrderDetailPage({ params }: { params: Promise<{ id:
                       {t.order.refundOrder}
                     </DropdownMenuItem>
                   )}
-                  {canDelete && (canCancel || canRefund) ? <DropdownMenuSeparator /> : null}
+                  {canConfirmRefund && (
+                    <DropdownMenuItem
+                      className="cursor-pointer gap-2"
+                      onSelect={() => setOpenConfirmRefund(true)}
+                    >
+                      <CheckCircle className="h-4 w-4" />
+                      {t.order.confirmRefundPending}
+                    </DropdownMenuItem>
+                  )}
+                  {canDelete && (canCancel || canRefund || canConfirmRefund) ? (
+                    <DropdownMenuSeparator />
+                  ) : null}
                   {canDelete && (
                     <DropdownMenuItem
                       className="cursor-pointer gap-2 text-destructive focus:bg-destructive/10 focus:text-destructive"
@@ -1023,6 +1146,49 @@ export default function AdminOrderDetailPage({ params }: { params: Promise<{ id:
             </Dialog>
           )}
 
+          {canConfirmRefund && (
+            <Dialog open={openConfirmRefund} onOpenChange={setOpenConfirmRefund}>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>{t.order.confirmRefundPendingTitle}</DialogTitle>
+                  <DialogDescription>{t.order.confirmRefundPendingDesc}</DialogDescription>
+                </DialogHeader>
+                <div className="space-y-4 py-4">
+                  <div className="space-y-2">
+                    <Label>{t.order.refundTransactionIdLabel}</Label>
+                    <Input
+                      placeholder={t.order.refundTransactionIdPlaceholder}
+                      value={confirmRefundTransactionId}
+                      onChange={(e) => setConfirmRefundTransactionId(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>{t.order.remarkOptional}</Label>
+                    <Textarea
+                      placeholder={t.order.refundConfirmRemarkPlaceholder}
+                      value={confirmRefundRemark}
+                      onChange={(e) => setConfirmRefundRemark(e.target.value)}
+                      rows={3}
+                    />
+                  </div>
+                </div>
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => setOpenConfirmRefund(false)}>
+                    {t.common.cancel}
+                  </Button>
+                  <Button
+                    onClick={() => confirmRefundMutation.mutate()}
+                    disabled={confirmRefundMutation.isPending}
+                  >
+                    {confirmRefundMutation.isPending
+                      ? t.order.confirmingRefundPending
+                      : t.order.confirmRefundPending}
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+          )}
+
           {canDelete && (
             <AlertDialog open={openDelete} onOpenChange={setOpenDelete}>
               <AlertDialogContent className="max-w-lg">
@@ -1069,7 +1235,11 @@ export default function AdminOrderDetailPage({ params }: { params: Promise<{ id:
         virtualStocks={virtualStocks}
         isVirtualOnly={isVirtualOnly}
         paymentCard={paymentCard}
+        shippingFormURL={orderFormURL || undefined}
+        shippingFormToken={orderFormToken || undefined}
+        shippingFormExpiresAt={orderFormExpiresAt || undefined}
         showVirtualStockRemark
+        showOperationalMeta
         pluginSlotNamespace="admin.order_detail"
         pluginSlotContext={adminOrderDetailPluginContext}
         pluginSlotPath={`/admin/orders/${orderId}`}

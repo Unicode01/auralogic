@@ -6,6 +6,7 @@ export const ORDER_STATUS_CONFIG = {
   shipped: { label: '已发货', color: 'green' },
   completed: { label: '已完成', color: 'purple' },
   cancelled: { label: '已取消', color: 'gray' },
+  refund_pending: { label: '退款处理中', color: 'orange' },
   refunded: { label: '已退款', color: 'red' },
 } as const
 

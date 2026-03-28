@@ -1,6 +1,7 @@
 'use client'
 
 import { useMemo, useState } from 'react'
+import Link from 'next/link'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   getOperationLogs,
@@ -140,6 +141,17 @@ function humanizeLogToken(value: string): string {
     .replace(/\b\w/g, (char) => char.toUpperCase())
 }
 
+function getOperationDetailValue(details: unknown, key: string): string {
+  if (!details || typeof details !== 'object' || Array.isArray(details)) {
+    return ''
+  }
+  const value = (details as Record<string, unknown>)[key]
+  if (value === undefined || value === null) {
+    return ''
+  }
+  return String(value).trim()
+}
+
 export default function LogsPage() {
   const { locale } = useLocale()
   const t = getTranslations(locale)
@@ -152,6 +164,8 @@ export default function LogsPage() {
   const [operationFilters, setOperationFilters] = useState({
     action: '',
     resource_type: '',
+    resource_id: '',
+    order_no: '',
     user_id: '',
     start_date: '',
     end_date: '',
@@ -238,6 +252,8 @@ export default function LogsPage() {
       ? [
           operationFilters.action,
           operationFilters.resource_type,
+          operationFilters.resource_id,
+          operationFilters.order_no,
           operationFilters.user_id,
           operationFilters.start_date,
           operationFilters.end_date,
@@ -522,14 +538,46 @@ export default function LogsPage() {
         ),
     },
     {
-      header: 'Resource ID',
+      header: t.admin.resourceIdLabel,
       accessorKey: 'resource_id',
-      cell: ({ row }: { row: { original: any } }) =>
-        row.original.resource_id ? (
-          <span className="text-sm">#{row.original.resource_id}</span>
+      cell: ({ row }: { row: { original: any } }) => {
+        const resourceId = row.original.resource_id
+        const isOrderResource = row.original.resource_type === 'order'
+        return resourceId ? (
+          isOrderResource ? (
+            <Link
+              href={`/admin/orders/${resourceId}`}
+              className="text-sm font-medium text-primary hover:underline"
+            >
+              #{resourceId}
+            </Link>
+          ) : (
+            <span className="text-sm">#{resourceId}</span>
+          )
         ) : (
           <span className="text-muted-foreground">-</span>
-        ),
+        )
+      },
+    },
+    {
+      header: t.admin.orderNoLabel,
+      cell: ({ row }: { row: { original: any } }) => {
+        const orderNo =
+          getOperationDetailValue(row.original.details, 'order_no') ||
+          (operationFilters.order_no && row.original.resource_type === 'order'
+            ? operationFilters.order_no
+            : '')
+        return orderNo ? (
+          <Link
+            href={`/admin/orders?search=${encodeURIComponent(orderNo)}`}
+            className="font-mono text-sm text-primary hover:underline"
+          >
+            {orderNo}
+          </Link>
+        ) : (
+          <span className="text-muted-foreground">-</span>
+        )
+      },
     },
     {
       header: t.admin.operatorUser,
@@ -644,6 +692,11 @@ export default function LogsPage() {
         <div>
           <h1 className="text-3xl font-bold">{t.admin.systemLogs}</h1>
           <p className="mt-1 text-sm text-muted-foreground">{activeLogTabLabel}</p>
+          <p className="text-xs text-muted-foreground">
+            {activeLogFilters.length > 0
+              ? t.admin.logsFilterSummary.replace('{count}', String(activeLogFilters.length))
+              : t.admin.logsFilterHint}
+          </p>
         </div>
       </div>
 
@@ -757,7 +810,7 @@ export default function LogsPage() {
               <CardTitle className="text-base">{t.admin.filterConditions}</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="grid gap-4 md:grid-cols-5">
+              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
                 <div>
                   <Label htmlFor="resource_type">{t.admin.resourceType}</Label>
                   <Select
@@ -814,6 +867,46 @@ export default function LogsPage() {
                   </Select>
                 </div>
                 <div>
+                  <Label htmlFor="resource_id">{t.admin.resourceIdLabel}</Label>
+                  <Input
+                    id="resource_id"
+                    type="number"
+                    min="1"
+                    placeholder={t.admin.resourceIdLabel}
+                    value={operationFilters.resource_id}
+                    onChange={(e) => {
+                      setOperationFilters({ ...operationFilters, resource_id: e.target.value })
+                      setOperationPage(1)
+                    }}
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="operation_order_no">{t.admin.orderNoLabel}</Label>
+                  <Input
+                    id="operation_order_no"
+                    placeholder={t.admin.orderNoLabel}
+                    value={operationFilters.order_no}
+                    onChange={(e) => {
+                      setOperationFilters({ ...operationFilters, order_no: e.target.value })
+                      setOperationPage(1)
+                    }}
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="operation_user_id">{t.admin.userId}</Label>
+                  <Input
+                    id="operation_user_id"
+                    type="number"
+                    min="1"
+                    placeholder={t.admin.userId}
+                    value={operationFilters.user_id}
+                    onChange={(e) => {
+                      setOperationFilters({ ...operationFilters, user_id: e.target.value })
+                      setOperationPage(1)
+                    }}
+                  />
+                </div>
+                <div>
                   <Label htmlFor="start_date">{t.admin.startDate}</Label>
                   <Input
                     id="start_date"
@@ -844,6 +937,8 @@ export default function LogsPage() {
                       setOperationFilters({
                         action: '',
                         resource_type: '',
+                        resource_id: '',
+                        order_no: '',
                         user_id: '',
                         start_date: '',
                         end_date: '',
