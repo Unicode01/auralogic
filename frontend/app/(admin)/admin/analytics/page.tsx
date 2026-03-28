@@ -133,6 +133,7 @@ export default function AnalyticsPage() {
     shipped: t.order.status.shipped,
     completed: t.order.status.completed,
     cancelled: t.order.status.cancelled,
+    refund_pending: t.order.status.refund_pending,
     refunded: t.order.status.refunded,
   }
 

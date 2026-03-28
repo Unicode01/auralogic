@@ -18,6 +18,7 @@ const (
 	OrderStatusShipped        OrderStatus = "shipped"         // 已发货
 	OrderStatusCompleted      OrderStatus = "completed"       // 已完成
 	OrderStatusCancelled      OrderStatus = "cancelled"       // 已取消
+	OrderStatusRefundPending  OrderStatus = "refund_pending"  // 退款处理中（需人工执行或等待确认）
 	OrderStatusRefunded       OrderStatus = "refunded"        // 已退款
 )
 

@@ -31,6 +31,7 @@ type pluginResponse struct {
 	PackagePathDisplay        string                                  `json:"package_path_display,omitempty"`
 	AddressDisplay            string                                  `json:"address_display,omitempty"`
 	EffectiveCapabilityPolicy service.EffectivePluginCapabilityPolicy `json:"effective_capability_policy"`
+	WorkspaceCommands         []service.PluginWorkspaceCommand        `json:"workspace_commands,omitempty"`
 	LatestDeployment          *pluginDeploymentResponse               `json:"latest_deployment,omitempty"`
 }
 
@@ -53,6 +54,7 @@ func buildPluginResponseWithDeployment(
 		PackagePathDisplay:        buildPluginPackagePathDisplay(plugin.PackagePath, artifactRoot),
 		AddressDisplay:            buildPluginAddressDisplay(plugin.Runtime, plugin.Address, artifactRoot),
 		EffectiveCapabilityPolicy: service.ResolveEffectivePluginCapabilityPolicy(&plugin),
+		WorkspaceCommands:         service.ResolvePluginWorkspaceCommands(&plugin),
 		LatestDeployment:          latestResp,
 	}
 }
