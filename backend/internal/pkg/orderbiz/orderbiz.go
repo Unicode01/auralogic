@@ -38,6 +38,16 @@ func RefundStatusInvalid(status models.OrderStatus) *bizerr.Error {
 		WithParams(map[string]interface{}{"status": status})
 }
 
+func RefundFinalizeStatusInvalid(status models.OrderStatus) *bizerr.Error {
+	return bizerr.Newf("order.refundFinalizeStatusInvalid", "Current order status does not support refund finalization (current status: %s)", status).
+		WithParams(map[string]interface{}{"status": status})
+}
+
+func RefundTransactionIDTooLong(max int) *bizerr.Error {
+	return bizerr.Newf("order.refundTransactionIDTooLong", "Refund transaction ID length cannot exceed %d characters", max).
+		WithParams(map[string]interface{}{"max": max})
+}
+
 func OrderPaymentMethodNotFound() *bizerr.Error {
 	return bizerr.New("order.orderPaymentMethodNotFound", "Order payment method not found")
 }

@@ -225,6 +225,8 @@ var pluginTestAllHookChecks = []string{
 	"hook.order.admin.cancel.after",
 	"hook.order.admin.refund.before",
 	"hook.order.admin.refund.after",
+	"hook.order.admin.refund_finalize.before",
+	"hook.order.admin.refund_finalize.after",
 	"hook.order.admin.mark_paid.before",
 	"hook.order.admin.mark_paid.after",
 	"hook.order.admin.deliver_virtual.before",

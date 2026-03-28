@@ -223,13 +223,14 @@ func (h *OrderHandler) ExportOrders(c *gin.Context) {
 
 		// Order status translation
 		statusMap := map[string]string{
-			"draft":         "Draft",
-			"pending":       "Pending Shipment",
-			"need_resubmit": "Needs Resubmit",
-			"shipped":       "Shipped",
-			"completed":     "Completed",
-			"cancelled":     "Cancelled",
-			"refunded":      "Refunded",
+			"draft":          "Draft",
+			"pending":        "Pending Shipment",
+			"need_resubmit":  "Needs Resubmit",
+			"shipped":        "Shipped",
+			"completed":      "Completed",
+			"cancelled":      "Cancelled",
+			"refund_pending": "Refund Pending",
+			"refunded":       "Refunded",
 		}
 		statusText := statusMap[string(order.Status)]
 		if statusText == "" {
@@ -477,13 +478,14 @@ func (h *OrderHandler) ImportOrders(c *gin.Context) {
 		if order.Status != models.OrderStatusPending && order.Status != models.OrderStatusNeedResubmit {
 			skipCount++
 			statusText := map[string]string{
-				"draft":         "Draft",
-				"pending":       "Pending Shipment",
-				"need_resubmit": "Needs Resubmit",
-				"shipped":       "Shipped",
-				"completed":     "Completed",
-				"cancelled":     "Cancelled",
-				"refunded":      "Refunded",
+				"draft":          "Draft",
+				"pending":        "Pending Shipment",
+				"need_resubmit":  "Needs Resubmit",
+				"shipped":        "Shipped",
+				"completed":      "Completed",
+				"cancelled":      "Cancelled",
+				"refund_pending": "Refund Pending",
+				"refunded":       "Refunded",
 			}[string(order.Status)]
 			if statusText == "" {
 				statusText = string(order.Status)

@@ -99,7 +99,14 @@ function OrderDetailContent({ orderNo }: { orderNo: string }) {
   // 订单非终态时自动轮询状态，终态自动停止
   useEffect(() => {
     if (!order?.status) return
-    const activeStatuses = ['pending_payment', 'draft', 'need_resubmit', 'pending', 'shipped']
+    const activeStatuses = [
+      'pending_payment',
+      'draft',
+      'need_resubmit',
+      'pending',
+      'shipped',
+      'refund_pending',
+    ]
     setShouldAutoRefresh(activeStatuses.includes(order.status))
   }, [order?.status])
 
@@ -410,6 +417,15 @@ function OrderDetailContent({ orderNo }: { orderNo: string }) {
               </p>
             )}
           </div>
+        </div>
+      )}
+
+      {order.status === 'refund_pending' && (
+        <div className="rounded-lg border border-amber-300 bg-amber-50/80 p-4 text-sm text-amber-900 dark:border-amber-500/40 dark:bg-amber-950/30 dark:text-amber-200">
+          <p className="font-medium">{t.order.refundPendingTitle}</p>
+          <p className="mt-1 text-muted-foreground dark:text-amber-100/80">
+            {t.order.refundPendingDesc}
+          </p>
         </div>
       )}
 

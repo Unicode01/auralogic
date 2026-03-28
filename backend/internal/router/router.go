@@ -371,6 +371,7 @@ func SetupRouter(
 			orders.POST("/:id/complete", middleware.RequirePermission("order.status_update"), adminOrderHandler.CompleteOrder)
 			orders.POST("/:id/cancel", middleware.RequirePermission("order.status_update"), adminOrderHandler.CancelOrder)
 			orders.POST("/:id/refund", middleware.RequirePermission("order.refund"), adminOrderHandler.RefundOrder)
+			orders.POST("/:id/confirm-refund", middleware.RequirePermission("order.refund"), adminOrderHandler.ConfirmRefund)
 			orders.POST("/:id/mark-paid", middleware.RequirePermission("order.status_update"), adminOrderHandler.MarkAsPaid)
 			orders.POST("/:id/deliver-virtual", middleware.RequirePermission("order.status_update"), adminOrderHandler.DeliverVirtualStock)
 			orders.PUT("/:id/price", middleware.RequirePermission("order.edit"), adminOrderHandler.UpdateOrderPrice)
