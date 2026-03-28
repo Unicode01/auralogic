@@ -70,6 +70,9 @@ import {
   resolvePluginWorkspaceHistoryNavigation,
   shouldHandlePluginWorkspaceHistoryNavigation,
 } from '@/lib/plugin-workspace-history'
+import {
+  resolvePluginWorkspaceSubmission,
+} from '@/lib/plugin-workspace-command'
 import { parseWorkspaceRuntimeConsoleLine } from '@/lib/plugin-workspace-runtime'
 import {
   applyWorkspaceStreamEvent,
@@ -141,34 +144,6 @@ type WorkspaceCompletionOverlay = {
   token: string
   resolvedToken: string
   suggestions: string[]
-}
-
-const WORKSPACE_BASE_COMMAND_TEMPLATES = ['help', 'pwd']
-
-const WORKSPACE_FILE_COMMAND_TEMPLATES = [
-  'ls',
-  'stat <path>',
-  'find "<pattern>" .',
-  'grep "<pattern>" .',
-  'cat <path>',
-  'mkdir <path>',
-]
-
-const WORKSPACE_STORAGE_COMMAND_TEMPLATES = ['kv.list']
-
-function resolveWorkspaceCommandAssistSelection(value: string): { start: number; end: number } {
-  const placeholderStart = value.indexOf('<')
-  const placeholderEnd = placeholderStart >= 0 ? value.indexOf('>', placeholderStart + 1) : -1
-  if (placeholderStart >= 0 && placeholderEnd > placeholderStart + 1) {
-    return {
-      start: placeholderStart + 1,
-      end: placeholderEnd,
-    }
-  }
-  return {
-    start: value.length,
-    end: value.length,
-  }
 }
 
 function formatWorkspaceTerminalTimestamp(value?: string, locale?: string): string {
@@ -891,7 +866,7 @@ export function PluginWorkspaceDialog({
   const [commandHistory, setCommandHistory] = useState<string[]>([])
   const [commandHistoryIndex, setCommandHistoryIndex] = useState(-1)
   const [commandHistoryDraft, setCommandHistoryDraft] = useState('')
-  const [completionStatus, setCompletionStatus] = useState('')
+  const [, setCompletionStatus] = useState('')
   const [completionSelectedIndex, setCompletionSelectedIndex] = useState(0)
   const [completionOverlay, setCompletionOverlay] = useState<WorkspaceCompletionOverlay | null>(
     null
@@ -1469,21 +1444,6 @@ export function PluginWorkspaceDialog({
     () => filteredEntries.filter((entry) => resolveWorkspaceTranscriptKind(entry) !== 'system'),
     [filteredEntries]
   )
-  const allowFileSystemCommandAssist =
-    plugin?.effective_capability_policy?.allow_file_system !== false
-  const workspaceCommandTemplates = useMemo(
-    () =>
-      allowFileSystemCommandAssist
-        ? [
-            ...WORKSPACE_BASE_COMMAND_TEMPLATES,
-            ...WORKSPACE_FILE_COMMAND_TEMPLATES,
-            ...WORKSPACE_STORAGE_COMMAND_TEMPLATES,
-          ]
-        : [...WORKSPACE_BASE_COMMAND_TEMPLATES, ...WORKSPACE_STORAGE_COMMAND_TEMPLATES],
-    [allowFileSystemCommandAssist]
-  )
-  const recentCommandTemplates = useMemo(() => commandHistory.slice(-5).reverse(), [commandHistory])
-  const showCommandAssist = controlGranted && !activeTerminalSession && !commandLineText.trim()
   const hasTerminalTranscript = terminalSourceEntries.length > 0
   const searchSummaryLabel = normalizedSearchText
     ? t.admin.pluginWorkspaceSearchSummary
@@ -1493,13 +1453,6 @@ export function PluginWorkspaceDialog({
   const copyButtonLabel = normalizedSearchText
     ? t.admin.pluginWorkspaceCopyFiltered
     : t.admin.pluginWorkspaceCopyAll
-  const inputShortcutHints = [
-    ['Tab', t.admin.pluginWorkspaceShortcutAutocomplete],
-    ['↑/↓', t.admin.pluginWorkspaceShortcutHistory],
-    ['Ctrl/Cmd+F', t.admin.pluginWorkspaceShortcutSearch],
-    ['Ctrl/Cmd+J', t.admin.pluginWorkspaceShortcutLatest],
-    ['Ctrl/Cmd+C', t.admin.pluginWorkspaceShortcutInterrupt],
-  ] as const
   const showWorkspaceLoadingOverlay = workspaceLoading && !effectiveWorkspace
   const transcriptBlocks = useMemo(
     () => buildWorkspaceTranscriptBlocks(terminalEntries),
@@ -1705,15 +1658,6 @@ export function PluginWorkspaceDialog({
     setCommandLineText(value)
   }
 
-  const applyCommandAssist = (value: string) => {
-    const normalized = String(value || '')
-    setCommandHistoryIndex(-1)
-    setCommandHistoryDraft('')
-    replaceCommandLineText(normalized, {
-      selection: resolveWorkspaceCommandAssistSelection(normalized),
-    })
-  }
-
   const rememberSubmittedCommandLine = (value: string) => {
     const normalized = String(value || '').trim()
     if (!normalized) {
@@ -1880,16 +1824,41 @@ export function PluginWorkspaceDialog({
     }
 
     const runtimeLine = commandLineText
-    const parsedCommand = parseWorkspaceRuntimeConsoleLine(runtimeLine)
-    if (hasPendingTerminalSubmission() || !runtimeLine.trim()) {
+    const resolvedSubmission = resolvePluginWorkspaceSubmission(
+      runtimeLine,
+      plugin?.workspace_commands
+    )
+    if (hasPendingTerminalSubmission() || resolvedSubmission.mode === 'noop') {
       return
     }
     rememberSubmittedCommandLine(runtimeLine)
     setFollowTerminalOutputState(true)
     setPendingTerminalOutput(false)
+
+    if (resolvedSubmission.mode === 'terminal_line') {
+      const requestID = createWorkspaceRequestID()
+      if (
+        sendWorkspaceSocketFrame({
+          type: 'terminal_line',
+          request_id: requestID,
+          line: resolvedSubmission.line,
+        })
+      ) {
+        setSocketInputPendingRequest(requestID, runtimeLine, 'terminal_line')
+        setStreamError('')
+        setCommandLineText('')
+        return
+      }
+      onSubmitTerminalLine({
+        line: resolvedSubmission.line,
+      })
+      setCommandLineText('')
+      return
+    }
+
     const requestID = createWorkspaceRequestID()
     const requestAction: 'runtime_eval' | 'runtime_inspect' =
-      parsedCommand.action === 'inspect' ? 'runtime_inspect' : 'runtime_eval'
+      resolvedSubmission.mode === 'runtime_inspect' ? 'runtime_inspect' : 'runtime_eval'
     const runtimeTaskID = createWorkspaceTaskID()
     setPendingRuntimeTask(runtimeTaskID)
     if (
@@ -1897,8 +1866,8 @@ export function PluginWorkspaceDialog({
         type: requestAction,
         request_id: requestID,
         task_id: runtimeTaskID,
-        line: parsedCommand.expression,
-        depth: parsedCommand.action === 'inspect' ? parsedCommand.depth : undefined,
+        line: resolvedSubmission.line,
+        depth: resolvedSubmission.mode === 'runtime_inspect' ? resolvedSubmission.depth : undefined,
       })
     ) {
       setSocketInputPendingRequest(requestID, runtimeLine, requestAction)
@@ -1909,14 +1878,14 @@ export function PluginWorkspaceDialog({
     setRuntimeCommandPendingState(true)
     try {
       const response =
-        parsedCommand.action === 'inspect'
+        resolvedSubmission.mode === 'runtime_inspect'
           ? await inspectAdminPluginWorkspaceRuntime(pluginID, {
-              line: parsedCommand.expression,
-              depth: parsedCommand.depth,
+              line: resolvedSubmission.line,
+              depth: resolvedSubmission.depth,
               task_id: runtimeTaskID,
             })
           : await evaluateAdminPluginWorkspaceRuntime(pluginID, {
-              line: parsedCommand.expression,
+              line: resolvedSubmission.line,
               task_id: runtimeTaskID,
             })
       const next = extractWorkspaceSnapshot(response)
@@ -2746,43 +2715,6 @@ export function PluginWorkspaceDialog({
                   )}
 
                   <div className="mt-2 pt-1">
-                    {showCommandAssist ? (
-                      <div className="mb-3 space-y-2">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-neutral-500">
-                            {t.admin.pluginWorkspaceQuickCommands}
-                          </span>
-                          {workspaceCommandTemplates.map((command) => (
-                            <button
-                              key={command}
-                              type="button"
-                              className="rounded-sm border border-white/10 bg-white/[0.03] px-2 py-1 font-mono text-[11px] text-neutral-300 transition hover:border-white/20 hover:bg-white/[0.08] hover:text-white"
-                              onClick={() => applyCommandAssist(command)}
-                            >
-                              {command}
-                            </button>
-                          ))}
-                        </div>
-                        {recentCommandTemplates.length > 0 ? (
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-neutral-500">
-                              {t.admin.pluginWorkspaceRecentCommands}
-                            </span>
-                            {recentCommandTemplates.map((command) => (
-                              <button
-                                key={`recent-${command}`}
-                                type="button"
-                                className="max-w-full truncate rounded-sm border border-white/10 bg-black/20 px-2 py-1 font-mono text-[11px] text-neutral-400 transition hover:border-white/20 hover:bg-white/[0.06] hover:text-neutral-100"
-                                onClick={() => applyCommandAssist(command)}
-                                title={command}
-                              >
-                                {command}
-                              </button>
-                            ))}
-                          </div>
-                        ) : null}
-                      </div>
-                    ) : null}
                     <div className="relative flex items-start gap-3 py-0.5">
                       <span
                         className={`mt-0.5 shrink-0 select-none font-mono text-[12px] font-semibold leading-6 ${terminalPromptClass}`}
@@ -2861,23 +2793,6 @@ export function PluginWorkspaceDialog({
                         <Loader2 className="mt-1 h-4 w-4 shrink-0 animate-spin text-neutral-500" />
                       ) : null}
                     </div>
-                    {completionStatus ? (
-                      <div className="pt-1 text-[11px] leading-5 text-neutral-500">
-                        {completionStatus}
-                      </div>
-                    ) : null}
-                    {controlGranted ? (
-                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pt-2 text-[10px] text-neutral-500">
-                        {inputShortcutHints.map(([shortcut, label]) => (
-                          <span key={shortcut} className="inline-flex items-center gap-1.5">
-                            <span className="rounded-sm border border-white/10 bg-white/[0.04] px-1.5 py-0.5 font-mono text-[10px] text-neutral-300">
-                              {shortcut}
-                            </span>
-                            <span>{label}</span>
-                          </span>
-                        ))}
-                      </div>
-                    ) : null}
                   </div>
                 </div>
               )}

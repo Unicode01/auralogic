@@ -33,6 +33,7 @@ import {
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -54,7 +55,7 @@ import {
 } from '@/components/ui/select'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Textarea } from '@/components/ui/textarea'
-import { Search, UserPlus, Shield, Trash2, Edit, ShoppingBag, Plus, X } from 'lucide-react'
+import { Search, UserPlus, Shield, Trash2, Edit, ShoppingBag, Plus, X, Copy } from 'lucide-react'
 import { getRoleColor } from '@/lib/role-utils'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
@@ -124,6 +125,7 @@ export default function AdminUsersPage() {
   const [editingPermissions, setEditingPermissions] = useState<string[]>([])
   const [openCreateOrder, setOpenCreateOrder] = useState(false)
   const [createOrderUser, setCreateOrderUser] = useState<any>(null)
+  const [createdOrderResult, setCreatedOrderResult] = useState<any>(null)
   const [orderItems, setOrderItems] = useState<
     {
       sku: string
@@ -292,7 +294,8 @@ export default function AdminUsersPage() {
 
   const createOrderMutation = useMutation({
     mutationFn: createAdminOrder,
-    onSuccess: () => {
+    onSuccess: (response: any) => {
+      setCreatedOrderResult(response?.data || null)
       toast.success(t.admin.orderCreated)
       setOpenCreateOrder(false)
       setCreateOrderUser(null)
@@ -338,6 +341,36 @@ export default function AdminUsersPage() {
   ).length
   const currentPageVerifiedCount = displayData.filter((item: any) => item.email_verified).length
   const currentPagePhoneCount = displayData.filter((item: any) => item.phone).length
+  const copyCreatedOrderValue = (value: string) => {
+    const normalized = String(value || '').trim()
+    if (!normalized) return
+    void navigator.clipboard.writeText(normalized)
+    toast.success(t.common.copiedToClipboard)
+  }
+  const getOrderStatusLabel = (status: string | undefined) => {
+    switch (status) {
+      case 'pending_payment':
+        return t.order.status.pending_payment
+      case 'draft':
+        return t.order.status.draft
+      case 'pending':
+        return t.order.status.pending
+      case 'need_resubmit':
+        return t.order.status.need_resubmit
+      case 'shipped':
+        return t.order.status.shipped
+      case 'completed':
+        return t.order.status.completed
+      case 'cancelled':
+        return t.order.status.cancelled
+      case 'refund_pending':
+        return t.order.status.refund_pending
+      case 'refunded':
+        return t.order.status.refunded
+      default:
+        return status || '-'
+    }
+  }
   const usersRangeSummary = t.admin.usersRangeSummary
     .replace('{start}', String(visibleStart))
     .replace('{end}', String(Math.max(visibleEnd, 0)))
@@ -1709,6 +1742,90 @@ export default function AdminUsersPage() {
               </div>
             </form>
           )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={Boolean(createdOrderResult)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setCreatedOrderResult(null)
+          }
+        }}
+      >
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>{t.admin.orderCreated}</DialogTitle>
+            <DialogDescription>{t.admin.orderCreatedDesc}</DialogDescription>
+          </DialogHeader>
+          {createdOrderResult ? (
+            <div className="space-y-4 text-sm">
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <div>
+                  <p className="text-muted-foreground">{t.order.orderNo}</p>
+                  <p className="font-mono font-medium">{createdOrderResult.order_no}</p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground">{t.order.orderStatus}</p>
+                  <p className="font-medium">{getOrderStatusLabel(createdOrderResult.status)}</p>
+                </div>
+              </div>
+              {createdOrderResult.form_expires_at ? (
+                <div>
+                  <p className="text-muted-foreground">{t.order.formExpiresAt}</p>
+                  <p className="font-medium">{String(createdOrderResult.form_expires_at)}</p>
+                </div>
+              ) : null}
+              {createdOrderResult.form_url ? (
+                <div className="space-y-2">
+                  <p className="text-muted-foreground">{t.order.shippingFormLink}</p>
+                  <div className="flex flex-wrap items-center gap-2 rounded-md border p-3">
+                    <a
+                      href={createdOrderResult.form_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="min-w-0 flex-1 break-all text-primary underline-offset-4 hover:underline"
+                    >
+                      {createdOrderResult.form_url}
+                    </a>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => copyCreatedOrderValue(createdOrderResult.form_url)}
+                    >
+                      <Copy className="mr-2 h-4 w-4" />
+                      {t.common.copy}
+                    </Button>
+                  </div>
+                </div>
+              ) : null}
+              {createdOrderResult.form_token ? (
+                <div className="space-y-2">
+                  <p className="text-muted-foreground">{t.order.shippingFormToken}</p>
+                  <div className="flex flex-wrap items-center gap-2 rounded-md border p-3">
+                    <code className="min-w-0 flex-1 break-all font-mono">
+                      {createdOrderResult.form_token}
+                    </code>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => copyCreatedOrderValue(createdOrderResult.form_token)}
+                    >
+                      <Copy className="mr-2 h-4 w-4" />
+                      {t.common.copy}
+                    </Button>
+                  </div>
+                </div>
+              ) : null}
+              <div className="flex justify-end">
+                <Button type="button" onClick={() => setCreatedOrderResult(null)}>
+                  {t.common.close}
+                </Button>
+              </div>
+            </div>
+          ) : null}
         </DialogContent>
       </Dialog>
     </div>
