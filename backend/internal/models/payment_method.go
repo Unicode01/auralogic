@@ -389,6 +389,7 @@ function onRefund(order, config) {
 
     return {
         success: true,
+        pending: true,
         message: 'USDT TRC20退款需手动操作，请将' + (savedAmount || ((order.total_amount_minor || 0) / 100).toFixed(2)) + ' USDT转回用户地址',
         data: {
             network: 'TRC20',
@@ -723,6 +724,7 @@ function onRefund(order, config) {
 
     return {
         success: true,
+        pending: true,
         message: 'USDT BEP20退款需手动操作，请将' + (savedAmount || ((order.total_amount_minor || 0) / 100).toFixed(2)) + ' USDT转回用户地址',
         data: {
             network: 'BEP20',

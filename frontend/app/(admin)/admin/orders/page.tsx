@@ -94,6 +94,8 @@ function orderStatusLabel(
       return t.order.status.completed
     case 'cancelled':
       return t.order.status.cancelled
+    case 'refund_pending':
+      return t.order.status.refund_pending
     case 'refunded':
       return t.order.status.refunded
     default:

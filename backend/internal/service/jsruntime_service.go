@@ -1230,16 +1230,16 @@ func (s *JSRuntimeService) parseCheckResult(result goja.Value) (*PaymentCheckRes
 }
 
 type PaymentWebhookResult struct {
-	AckStatus    int                    `json:"ack_status"`
-	AckHeaders   map[string]string      `json:"ack_headers,omitempty"`
-	AckBody      string                 `json:"ack_body,omitempty"`
-	Paid         bool                   `json:"paid"`
-	OrderID      uint                   `json:"order_id,omitempty"`
-	OrderNo      string                 `json:"order_no,omitempty"`
-	TransactionID string                `json:"transaction_id,omitempty"`
-	Message      string                 `json:"message,omitempty"`
-	Data         map[string]interface{} `json:"data,omitempty"`
-	QueuePolling bool                   `json:"queue_polling,omitempty"`
+	AckStatus     int                    `json:"ack_status"`
+	AckHeaders    map[string]string      `json:"ack_headers,omitempty"`
+	AckBody       string                 `json:"ack_body,omitempty"`
+	Paid          bool                   `json:"paid"`
+	OrderID       uint                   `json:"order_id,omitempty"`
+	OrderNo       string                 `json:"order_no,omitempty"`
+	TransactionID string                 `json:"transaction_id,omitempty"`
+	Message       string                 `json:"message,omitempty"`
+	Data          map[string]interface{} `json:"data,omitempty"`
+	QueuePolling  bool                   `json:"queue_polling,omitempty"`
 }
 
 func (s *JSRuntimeService) parseWebhookResult(result goja.Value) (*PaymentWebhookResult, error) {
@@ -1265,7 +1265,7 @@ func (s *JSRuntimeService) parseWebhookResult(result goja.Value) (*PaymentWebhoo
 		}, nil
 	case map[string]interface{}:
 		out := &PaymentWebhookResult{
-			AckStatus: 200,
+			AckStatus:  200,
 			AckHeaders: map[string]string{},
 		}
 		if value, ok := parsePaymentWebhookResultInt(v["ack_status"]); ok && value > 0 {
@@ -1464,6 +1464,7 @@ type PaymentCheckResult struct {
 // RefundResult 退款结果
 type RefundResult struct {
 	Success       bool                   `json:"success"`
+	Pending       bool                   `json:"pending,omitempty"`
 	TransactionID string                 `json:"transaction_id,omitempty"`
 	Message       string                 `json:"message,omitempty"`
 	Data          map[string]interface{} `json:"data,omitempty"`
@@ -1524,6 +1525,12 @@ func (s *JSRuntimeService) parseRefundResult(result goja.Value) (*RefundResult, 
 		refundResult := &RefundResult{}
 		if success, ok := v["success"].(bool); ok {
 			refundResult.Success = success
+		}
+		if pending, ok := v["pending"].(bool); ok {
+			refundResult.Pending = pending
+		}
+		if manualRequired, ok := v["manual_required"].(bool); ok && manualRequired {
+			refundResult.Pending = true
 		}
 		if txID, ok := v["transaction_id"].(string); ok {
 			refundResult.TransactionID = txID

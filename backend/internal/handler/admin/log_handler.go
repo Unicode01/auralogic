@@ -77,12 +77,29 @@ func decodeRetryEmailIDs(value interface{}) ([]uint, error) {
 	return ids, nil
 }
 
+func escapeLikePattern(value string) string {
+	replacer := strings.NewReplacer(
+		`\`, `\\`,
+		`%`, `\%`,
+		`_`, `\_`,
+	)
+	return replacer.Replace(value)
+}
+
+func buildJSONContainsStringPairPattern(key, value string) string {
+	keyJSON, _ := json.Marshal(key)
+	valueJSON, _ := json.Marshal(value)
+	return "%" + escapeLikePattern(string(keyJSON)+":"+string(valueJSON)) + "%"
+}
+
 // ListOperationLogs get操作日志列表
 func (h *LogHandler) ListOperationLogs(c *gin.Context) {
 	page, limit := response.GetPagination(c)
 	action := c.Query("action")
 	resourceType := c.Query("resource_type")
-	userID := c.Query("user_id")
+	resourceID := strings.TrimSpace(c.Query("resource_id"))
+	orderNo := strings.TrimSpace(c.Query("order_no"))
+	userID := strings.TrimSpace(c.Query("user_id"))
 	startDate := c.Query("start_date")
 	endDate := c.Query("end_date")
 
@@ -97,6 +114,27 @@ func (h *LogHandler) ListOperationLogs(c *gin.Context) {
 	}
 	if resourceType != "" {
 		query = query.Where("resource_type = ?", resourceType)
+	}
+	if resourceID != "" {
+		query = query.Where("resource_id = ?", resourceID)
+	}
+	if orderNo != "" {
+		orderNoPattern := buildJSONContainsStringPairPattern("order_no", orderNo)
+		var matchedOrderIDs []uint
+		if err := h.db.Model(&models.Order{}).Where("order_no = ?", orderNo).Pluck("id", &matchedOrderIDs).Error; err != nil {
+			response.InternalError(c, "Query failed")
+			return
+		}
+		if len(matchedOrderIDs) > 0 {
+			query = query.Where(
+				"((resource_type = ? AND resource_id IN ?) OR details LIKE ? ESCAPE '\\')",
+				"order",
+				matchedOrderIDs,
+				orderNoPattern,
+			)
+		} else {
+			query = query.Where("details LIKE ? ESCAPE '\\'", orderNoPattern)
+		}
 	}
 	if userID != "" {
 		query = query.Where("user_id = ?", userID)

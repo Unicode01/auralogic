@@ -22,6 +22,11 @@ export interface Order {
   externalUserName?: string
   external_user_name?: string
   platform?: string
+  source?: string
+  sourcePlatform?: string
+  source_platform?: string
+  externalOrderId?: string
+  external_order_id?: string
   status: OrderStatus
   items: OrderItem[]
   total_amount_minor?: number
@@ -81,6 +86,7 @@ export type OrderStatus =
   | 'shipped'
   | 'completed'
   | 'cancelled'
+  | 'refund_pending'
   | 'refunded'
 
 export interface OrderListResponse {

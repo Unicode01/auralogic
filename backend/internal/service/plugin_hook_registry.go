@@ -193,6 +193,8 @@ var hookDefinitions = map[string]hookDefinition{
 	"order.admin.deliver_virtual.before": newRestrictedHookDefinition("order.admin.deliver_virtual.before", hookPhaseBefore, "mark_only_shipped"),
 	"order.admin.mark_paid.after":        newReadOnlyHookDefinition("order.admin.mark_paid.after", hookPhaseAfter),
 	"order.admin.mark_paid.before":       newRestrictedHookDefinition("order.admin.mark_paid.before", hookPhaseBefore, "admin_remark", "skip_auto_delivery"),
+	"order.admin.refund_finalize.after":  newReadOnlyHookDefinition("order.admin.refund_finalize.after", hookPhaseAfter),
+	"order.admin.refund_finalize.before": newRestrictedHookDefinition("order.admin.refund_finalize.before", hookPhaseBefore, "remark", "transaction_id"),
 	"order.admin.refund.after":           newReadOnlyHookDefinition("order.admin.refund.after", hookPhaseAfter),
 	"order.admin.refund.before":          newRestrictedHookDefinition("order.admin.refund.before", hookPhaseBefore, "reason"),
 	"order.admin.update_price.after":     newReadOnlyHookDefinition("order.admin.update_price.after", hookPhaseAfter),
