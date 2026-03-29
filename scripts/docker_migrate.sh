@@ -29,6 +29,38 @@ warn()  { echo -e "${YELLOW}[WARN]${NC} $1"; }
 err()   { echo -e "${RED}[ERROR]${NC} $1"; }
 step()  { echo -e "\n${BLUE}==>${NC} ${BLUE}$1${NC}\n"; }
 
+COMPOSE_CMD_STR=""
+
+init_compose_cmd() {
+  if docker compose version >/dev/null 2>&1; then
+    COMPOSE_CMD_STR="docker compose"
+    return 0
+  fi
+
+  if command -v docker-compose >/dev/null 2>&1; then
+    COMPOSE_CMD_STR="docker-compose"
+    return 0
+  fi
+
+  return 1
+}
+
+run_compose() {
+  if [ -z "$COMPOSE_CMD_STR" ]; then
+    if ! init_compose_cmd; then
+      err "未检测到 docker compose / docker-compose，请先安装 Docker Compose"
+      exit 1
+    fi
+  fi
+
+  if [ "$COMPOSE_CMD_STR" = "docker-compose" ]; then
+    docker-compose "$@"
+    return
+  fi
+
+  docker compose "$@"
+}
+
 # 需要迁移的挂载点 (容器内路径)
 MOUNT_POINTS=(/app/backend/data /app/backend/logs /app/backend/uploads /var/lib/redis)
 
@@ -61,7 +93,12 @@ check_docker() {
     err "Docker 未运行，请先启动 Docker 服务"
     exit 1
   fi
+  if ! init_compose_cmd; then
+    err "未检测到 docker compose / docker-compose，请先安装 Docker Compose"
+    exit 1
+  fi
   ok "Docker 环境正常"
+  ok "Compose 命令可用: ${COMPOSE_CMD_STR}"
 }
 
 # ---------------------------
@@ -77,7 +114,7 @@ get_current_image_tag() {
   fi
   # 其次从 docker-compose.yml 获取
   if [ -f "$PROJECT_ROOT/docker-compose.yml" ]; then
-    tag=$(grep -oP "image:\s*\K${IMAGE_NAME}:\S+" "$PROJECT_ROOT/docker-compose.yml" 2>/dev/null | head -1)
+    tag=$(sed -n "s|^[[:space:]]*image:[[:space:]]*\\(${IMAGE_NAME}:[^[:space:]]*\\)[[:space:]]*$|\\1|p" "$PROJECT_ROOT/docker-compose.yml" 2>/dev/null | head -1)
     if [ -n "$tag" ]; then
       echo "$tag"
       return
@@ -393,7 +430,7 @@ COMPEOF
     # 先用 docker compose create 创建容器和 volume (不启动)
     info "创建容器以初始化 volume..."
     cd "$DEPLOY_DIR"
-    docker compose create --no-start 2>/dev/null || docker compose up --no-start 2>/dev/null || true
+    run_compose create --no-start 2>/dev/null || run_compose up --no-start 2>/dev/null || true
 
     # 从新创建的容器检测实际 volume 名
     local new_mapping
@@ -434,7 +471,7 @@ COMPEOF
   read -rp "$(echo -e "${CYAN}是否立即启动容器?${NC} [Y/n]: ")" start_confirm
   if [[ ! "$start_confirm" =~ ^[Nn]$ ]]; then
     cd "$DEPLOY_DIR"
-    docker compose up -d
+    run_compose up -d
     ok "容器已启动"
   fi
 
@@ -448,9 +485,9 @@ COMPEOF
   echo ""
   echo "管理命令:"
   echo "  cd $DEPLOY_DIR"
-  echo "  docker compose up -d      # 启动"
-  echo "  docker compose down       # 停止"
-  echo "  docker compose logs -f    # 查看日志"
+  echo "  ${COMPOSE_CMD_STR:-docker compose} up -d      # 启动"
+  echo "  ${COMPOSE_CMD_STR:-docker compose} down       # 停止"
+  echo "  ${COMPOSE_CMD_STR:-docker compose} logs -f    # 查看日志"
   echo "=========================================="
 }
 

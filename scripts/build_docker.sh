@@ -31,6 +31,38 @@ warn()  { echo -e "${YELLOW}[WARN]${NC} $1"; }
 err()   { echo -e "${RED}[ERROR]${NC} $1"; }
 step()  { echo -e "\n${BLUE}==>${NC} ${BLUE}$1${NC}\n"; }
 
+COMPOSE_CMD_STR=""
+
+init_compose_cmd() {
+  if docker compose version >/dev/null 2>&1; then
+    COMPOSE_CMD_STR="docker compose"
+    return 0
+  fi
+
+  if command -v docker-compose >/dev/null 2>&1; then
+    COMPOSE_CMD_STR="docker-compose"
+    return 0
+  fi
+
+  return 1
+}
+
+run_compose() {
+  if [ -z "$COMPOSE_CMD_STR" ]; then
+    if ! init_compose_cmd; then
+      err "未检测到 docker compose / docker-compose，请先安装 Docker Compose"
+      exit 1
+    fi
+  fi
+
+  if [ "$COMPOSE_CMD_STR" = "docker-compose" ]; then
+    docker-compose "$@"
+    return
+  fi
+
+  docker compose "$@"
+}
+
 # ---------------------------
 # 加载上次构建配置
 # ---------------------------
@@ -243,6 +275,12 @@ check_deps() {
     fi
   fi
   ok "Docker 运行中"
+
+  if ! init_compose_cmd; then
+    err "未检测到 docker compose / docker-compose，一键脚本无法继续"
+    exit 1
+  fi
+  ok "Compose 命令可用: ${COMPOSE_CMD_STR}"
 
   # 检查项目目录结构
   if [ ! -d "$PROJECT_ROOT/backend" ] || [ ! -d "$PROJECT_ROOT/frontend" ]; then
@@ -1493,8 +1531,8 @@ NEXTEOF
     fi
 
     cd "$WORK_DIR"
-    docker compose up -d --force-recreate
-    ok "容器已通过 docker compose 更新"
+    run_compose up -d --force-recreate
+    ok "容器已通过 ${COMPOSE_CMD_STR} 更新"
   else
     # 无 compose 文件时，优先复用当前容器卷，避免意外切到新卷。
     if [ "$has_existing_container" = true ]; then
@@ -1588,7 +1626,7 @@ summary() {
   echo ""
   echo "启动服务:"
   echo "  cd $WORK_DIR"
-  echo "  docker compose up -d"
+  echo "  ${COMPOSE_CMD_STR:-docker compose} up -d"
   echo ""
   echo "访问应用:"
   echo "  $APP_URL"
@@ -1632,6 +1670,67 @@ full_build() {
 }
 
 # ---------------------------
+# CI / 非交互构建校验
+# ---------------------------
+ci_build() {
+  step "CI 非交互 Docker 构建校验"
+
+  check_deps
+
+  APP_NAME="${APP_NAME:-AuraLogic}"
+  APP_URL="${APP_URL:-http://localhost:8080}"
+  EXPOSE_PORT="${EXPOSE_PORT:-8080}"
+  APP_ENV="${APP_ENV:-production}"
+  APP_DEBUG="${APP_DEBUG:-false}"
+  IMAGE_TAG="${IMAGE_TAG:-ci}"
+
+  DB_DRIVER="${DB_DRIVER:-sqlite}"
+  DB_HOST="${DB_HOST:-}"
+  DB_PORT="${DB_PORT:-0}"
+  DB_NAME="${DB_NAME:-data/auralogic.db?_busy_timeout=5000&_journal_mode=WAL}"
+  DB_USER="${DB_USER:-}"
+  DB_PASSWORD="${DB_PASSWORD:-}"
+  DB_SSL_MODE="${DB_SSL_MODE:-}"
+
+  read_redis_config
+
+  JWT_SECRET="${JWT_SECRET:-$(generate_secret)}"
+  JWT_EXPIRE="${JWT_EXPIRE:-24}"
+  JWT_REFRESH_EXPIRE="${JWT_REFRESH_EXPIRE:-168}"
+
+  GITHUB_ENABLED="false"
+  GITHUB_CLIENT_ID=""
+  GITHUB_CLIENT_SECRET=""
+  GITHUB_REDIRECT_URL=""
+  GOOGLE_ENABLED="false"
+  GOOGLE_CLIENT_ID=""
+  GOOGLE_CLIENT_SECRET=""
+  GOOGLE_REDIRECT_URL=""
+
+  SMTP_ENABLED="false"
+  SMTP_HOST=""
+  SMTP_PORT="587"
+  SMTP_USER=""
+  SMTP_PASSWORD=""
+  SMTP_FROM_EMAIL=""
+  SMTP_FROM_NAME=""
+
+  SMS_ENABLED="false"
+  SMS_PROVIDER="aliyun"
+
+  ADMIN_EMAIL="${ADMIN_EMAIL:-admin@example.com}"
+  ADMIN_PASSWORD="${ADMIN_PASSWORD:-Admin123456}"
+  ADMIN_NAME="${ADMIN_NAME:-CI Admin}"
+
+  generate_configs
+  copy_docker_files
+  build_docker_image
+  generate_compose
+
+  ok "CI Docker 构建校验完成"
+}
+
+# ---------------------------
 # 主流程
 # ---------------------------
 main() {
@@ -1666,9 +1765,12 @@ main() {
       check_deps
       update_container
       ;;
+    ci)
+      ci_build
+      ;;
     *)
       err "未知操作: $action"
-      echo "用法: $0 [build|update]"
+      echo "用法: $0 [build|update|ci]"
       exit 1
       ;;
   esac
