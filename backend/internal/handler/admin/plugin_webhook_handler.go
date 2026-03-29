@@ -15,6 +15,7 @@ import (
 	"unicode/utf8"
 
 	"auralogic/internal/models"
+	"auralogic/internal/pkg/utils"
 	"auralogic/internal/pluginipc"
 	"auralogic/internal/service"
 	"github.com/gin-gonic/gin"
@@ -99,10 +100,10 @@ func (h *PluginHandler) HandlePluginWebhook(c *gin.Context) {
 	execCtx := &service.ExecutionContext{
 		SessionID: strings.TrimSpace(c.GetHeader("X-Session-ID")),
 		Metadata: map[string]string{
-			"request_path":              strings.TrimSpace(c.Request.URL.Path),
-			"plugin_webhook_key":        webhook.Key,
-			"plugin_webhook_method":     strings.ToUpper(strings.TrimSpace(c.Request.Method)),
-			"plugin_webhook_auth_mode":  webhook.AuthMode,
+			"request_path":               strings.TrimSpace(c.Request.URL.Path),
+			"plugin_webhook_key":         webhook.Key,
+			"plugin_webhook_method":      strings.ToUpper(strings.TrimSpace(c.Request.Method)),
+			"plugin_webhook_auth_mode":   webhook.AuthMode,
 			"plugin_webhook_plugin_name": plugin.Name,
 		},
 		RequestContext: c.Request.Context(),
@@ -116,7 +117,7 @@ func (h *PluginHandler) HandlePluginWebhook(c *gin.Context) {
 			BodyText:    bodyText,
 			BodyBase64:  base64.StdEncoding.EncodeToString(rawBody),
 			ContentType: strings.TrimSpace(c.ContentType()),
-			RemoteAddr:  strings.TrimSpace(c.ClientIP()),
+			RemoteAddr:  strings.TrimSpace(utils.GetRealIP(c)),
 		},
 	}
 
