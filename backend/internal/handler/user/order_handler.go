@@ -19,6 +19,7 @@ import (
 	"auralogic/internal/pkg/cache"
 	"auralogic/internal/pkg/money"
 	"auralogic/internal/pkg/response"
+	"auralogic/internal/pkg/utils"
 	"auralogic/internal/pkg/validator"
 	"auralogic/internal/service"
 	"github.com/gin-gonic/gin"
@@ -189,7 +190,7 @@ func (h *OrderHandler) buildOrderHookExecutionContext(c *gin.Context, userID uin
 		"request_path":    c.Request.URL.Path,
 		"route":           c.FullPath(),
 		"method":          c.Request.Method,
-		"client_ip":       c.ClientIP(),
+		"client_ip":       utils.GetRealIP(c),
 		"user_agent":      c.GetHeader("User-Agent"),
 		"accept_language": c.GetHeader("Accept-Language"),
 	}

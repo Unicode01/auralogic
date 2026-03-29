@@ -3353,7 +3353,7 @@ export const zhTranslations = {
     trustedProxies: 'Trusted Proxies (一行一个)',
     trustedProxiesPlaceholder: '127.0.0.1\n::1\n10.0.0.0/8\n172.16.0.0/12\n192.168.0.0/16',
     trustedProxiesHint:
-      '留空则信任所有来源的 IP Header（不推荐生产环境）。不为空时，仅当请求的对端IP属于这些地址/网段时才信任。支持单个IP或CIDR，例如 10.0.0.0/8。',
+      '留空则默认信任本机回环代理（127.0.0.1 / ::1）的 IP Header，适合本机反向代理环境。若填写值，则仅当请求对端IP属于这些地址/网段时才信任。支持单个IP或CIDR，例如 10.0.0.0/8。',
     redisConfigReadonly: 'Redis配置（只读）',
     redisConfigReadonlyDesc: '查看Redis连接信息',
     host: '主机',

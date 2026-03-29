@@ -9,6 +9,11 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+var (
+	defaultTrustedProxyCIDRs = []string{"127.0.0.1/32", "::1/128"}
+	defaultRealIPHeaders     = []string{"CF-Connecting-IP", "X-Real-IP", "X-Forwarded-For"}
+)
+
 // GetRealIP returns the best-effort "real client IP" for logging/rate-limit/captcha.
 //
 // Security note:
@@ -20,14 +25,15 @@ func GetRealIP(c *gin.Context) string {
 
 	if cfg != nil {
 		// Only trust forwarded headers from trusted proxies.
-		// If TrustedProxies is empty, we trust no peers and fall back to the TCP peer IP.
-		trustHeaders := isTrustedProxy(peerIP, cfg.Security.TrustedProxies)
+		// If TrustedProxies is empty, default to local loopback proxies so local
+		// reverse proxy setups keep working without trusting arbitrary peers.
+		trustHeaders := isTrustedProxy(peerIP, effectiveTrustedProxies(cfg.Security.TrustedProxies))
 
 		if trustHeaders {
 			// If no explicit header configured, use a safe default order.
 			headers := []string{cfg.Security.IPHeader}
 			if strings.TrimSpace(cfg.Security.IPHeader) == "" {
-				headers = []string{"CF-Connecting-IP", "X-Forwarded-For", "X-Real-IP"}
+				headers = defaultRealIPHeaders
 			}
 
 			for _, h := range headers {
@@ -43,6 +49,21 @@ func GetRealIP(c *gin.Context) string {
 	}
 
 	return peerIP
+}
+
+func effectiveTrustedProxies(trusted []string) []string {
+	normalized := make([]string, 0, len(trusted))
+	for _, entry := range trusted {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		normalized = append(normalized, entry)
+	}
+	if len(normalized) > 0 {
+		return normalized
+	}
+	return defaultTrustedProxyCIDRs
 }
 
 func getPeerIP(c *gin.Context) string {

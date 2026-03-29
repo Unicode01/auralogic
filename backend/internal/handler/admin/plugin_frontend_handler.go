@@ -16,6 +16,7 @@ import (
 	"auralogic/internal/middleware"
 	"auralogic/internal/models"
 	"auralogic/internal/pkg/response"
+	"auralogic/internal/pkg/utils"
 	"auralogic/internal/pluginobs"
 	"auralogic/internal/service"
 	"github.com/gin-gonic/gin"
@@ -175,7 +176,7 @@ func resolvePluginPublicCacheVaryKey(c *gin.Context, scope pluginAccessScope, us
 		resolvePluginPublicCacheSubjectKey(scope, userID),
 		sessionID,
 		resolvePluginPublicCacheLocaleVaryKey(c),
-		c.ClientIP(),
+		utils.GetRealIP(c),
 		c.GetHeader("User-Agent"),
 	)
 }
@@ -626,7 +627,7 @@ func (h *PluginHandler) buildFrontendExtensionsRuntimeContext(c *gin.Context) fr
 	if runtimeCtx.Route == "" {
 		runtimeCtx.Route = runtimeCtx.RequestPath
 	}
-	runtimeCtx.ClientIP = c.ClientIP()
+	runtimeCtx.ClientIP = utils.GetRealIP(c)
 	runtimeCtx.UserAgent = c.GetHeader("User-Agent")
 	runtimeCtx.Locale, runtimeCtx.AcceptLanguage = resolvePluginRequestLocaleMetadata(c)
 	return runtimeCtx
@@ -1441,7 +1442,7 @@ func (h *PluginHandler) buildFrontendPluginExecutionContext(
 	metadata := map[string]string{
 		"request_path":             c.Request.URL.Path,
 		"route":                    c.FullPath(),
-		"client_ip":                c.ClientIP(),
+		"client_ip":                utils.GetRealIP(c),
 		"user_agent":               c.GetHeader("User-Agent"),
 		"accept_language":          acceptLanguage,
 		"bootstrap_area":           normalizeFrontendBootstrapArea(area),

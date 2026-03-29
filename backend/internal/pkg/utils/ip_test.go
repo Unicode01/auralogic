@@ -67,6 +67,22 @@ func TestGetRealIPIgnoresForwardedHeadersWithoutTrustedProxy(t *testing.T) {
 	}
 }
 
+func TestGetRealIPUsesForwardedHeadersFromLoopbackProxyByDefault(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cfg := loadIPTestConfig(t)
+	cfg.Security.IPHeader = ""
+	cfg.Security.TrustedProxies = nil
+
+	ctx := newIPTestContext("127.0.0.1:8080", map[string]string{
+		"X-Forwarded-For": "198.51.100.20, 127.0.0.1",
+		"X-Real-IP":       "198.51.100.21",
+	})
+
+	if got := GetRealIP(ctx); got != "198.51.100.21" {
+		t.Fatalf("expected default loopback proxy handling to use X-Real-IP, got %q", got)
+	}
+}
+
 func TestGetRealIPUsesForwardedHeaderFromTrustedProxy(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	cfg := loadIPTestConfig(t)
