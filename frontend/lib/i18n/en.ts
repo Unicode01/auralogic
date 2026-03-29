@@ -3556,7 +3556,7 @@ export const enTranslations = {
     trustedProxies: 'Trusted Proxies (one per line)',
     trustedProxiesPlaceholder: '127.0.0.1\n::1\n10.0.0.0/8\n172.16.0.0/12\n192.168.0.0/16',
     trustedProxiesHint:
-      'Empty = trust IP headers from any peer (not recommended for production). When set, only trust headers when the TCP peer IP matches these IPs/CIDRs. Supports single IP or CIDR, e.g. 10.0.0.0/8.',
+      'Empty = trust IP headers from local loopback proxies only (127.0.0.1 / ::1), which suits local reverse proxy setups. When set, only trust headers when the TCP peer IP matches these IPs/CIDRs. Supports single IP or CIDR, e.g. 10.0.0.0/8.',
     redisConfigReadonly: 'Redis Configuration (Read-only)',
     redisConfigReadonlyDesc: 'View Redis connection info',
     host: 'Host',

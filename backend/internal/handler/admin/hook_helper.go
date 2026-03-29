@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 
+	"auralogic/internal/pkg/utils"
 	"auralogic/internal/service"
 	"github.com/gin-gonic/gin"
 )
@@ -23,7 +24,7 @@ func buildAdminHookExecutionContext(
 		"request_path":    c.Request.URL.Path,
 		"route":           c.FullPath(),
 		"method":          c.Request.Method,
-		"client_ip":       c.ClientIP(),
+		"client_ip":       utils.GetRealIP(c),
 		"user_agent":      c.GetHeader("User-Agent"),
 		"accept_language": c.GetHeader("Accept-Language"),
 		"operator_type":   "admin",

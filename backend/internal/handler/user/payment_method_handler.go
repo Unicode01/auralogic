@@ -14,6 +14,7 @@ import (
 	"auralogic/internal/middleware"
 	"auralogic/internal/models"
 	"auralogic/internal/pkg/response"
+	"auralogic/internal/pkg/utils"
 	"auralogic/internal/service"
 
 	"github.com/gin-gonic/gin"
@@ -49,7 +50,7 @@ func (h *PaymentMethodHandler) buildPaymentHookExecutionContext(c *gin.Context, 
 		"request_path":    c.Request.URL.Path,
 		"route":           c.FullPath(),
 		"method":          c.Request.Method,
-		"client_ip":       c.ClientIP(),
+		"client_ip":       utils.GetRealIP(c),
 		"user_agent":      c.GetHeader("User-Agent"),
 		"accept_language": c.GetHeader("Accept-Language"),
 		"operator_type":   "user",
@@ -271,7 +272,7 @@ func (h *PaymentMethodHandler) HandleWebhook(c *gin.Context) {
 		BodyText:    bodyText,
 		BodyBase64:  base64.StdEncoding.EncodeToString(rawBody),
 		ContentType: strings.TrimSpace(c.ContentType()),
-		RemoteAddr:  strings.TrimSpace(c.ClientIP()),
+		RemoteAddr:  strings.TrimSpace(utils.GetRealIP(c)),
 	})
 	if err != nil {
 		response.HandleError(c, "Payment webhook execution failed", err)
