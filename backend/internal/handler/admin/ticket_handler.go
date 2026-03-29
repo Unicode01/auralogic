@@ -16,6 +16,7 @@ import (
 	"auralogic/internal/models"
 	"auralogic/internal/pkg/response"
 	"auralogic/internal/pkg/ticketbiz"
+	"auralogic/internal/pkg/utils"
 	"auralogic/internal/pkg/validator"
 	"auralogic/internal/service"
 	"github.com/gin-gonic/gin"
@@ -187,7 +188,7 @@ func (h *TicketHandler) buildTicketHookExecutionContext(c *gin.Context, adminID 
 		"request_path":    c.Request.URL.Path,
 		"route":           c.FullPath(),
 		"method":          c.Request.Method,
-		"client_ip":       c.ClientIP(),
+		"client_ip":       utils.GetRealIP(c),
 		"user_agent":      c.GetHeader("User-Agent"),
 		"accept_language": c.GetHeader("Accept-Language"),
 		"ticket_id":       strconv.FormatUint(uint64(ticketID), 10),

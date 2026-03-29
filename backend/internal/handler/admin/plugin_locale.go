@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"auralogic/internal/pkg/utils"
 	"auralogic/internal/service"
 	"github.com/gin-gonic/gin"
 )
@@ -48,7 +49,7 @@ func enrichPluginExecutionContextWithRequestMetadata(
 	defaults := map[string]string{
 		"request_path": c.Request.URL.Path,
 		"route":        c.FullPath(),
-		"client_ip":    c.ClientIP(),
+		"client_ip":    utils.GetRealIP(c),
 		"user_agent":   c.GetHeader("User-Agent"),
 	}
 	if acceptLanguage != "" {
