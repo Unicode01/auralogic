@@ -17,6 +17,7 @@ import (
 	"auralogic/internal/models"
 	"auralogic/internal/pkg/bizerr"
 	"auralogic/internal/pkg/logger"
+	"auralogic/internal/pkg/utils"
 	"auralogic/internal/service"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -1447,7 +1448,7 @@ func buildTestExecutionContext(c *gin.Context, req testPluginRequest) *service.E
 	metadata := map[string]string{
 		"request_path":    c.Request.URL.Path,
 		"route":           c.FullPath(),
-		"client_ip":       c.ClientIP(),
+		"client_ip":       utils.GetRealIP(c),
 		"user_agent":      c.GetHeader("User-Agent"),
 		"accept_language": acceptLanguage,
 	}
