@@ -1,0 +1,55 @@
+name: docker-build-validation
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/docker-build-validation.yml"
+      - ".dockerignore"
+      - "backend/**"
+      - "frontend/**"
+      - "scripts/build_docker.sh"
+      - "scripts/docker_migrate.sh"
+      - "scripts/docker/**"
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - ".github/workflows/docker-build-validation.yml"
+      - ".dockerignore"
+      - "backend/**"
+      - "frontend/**"
+      - "scripts/build_docker.sh"
+      - "scripts/docker_migrate.sh"
+      - "scripts/docker/**"
+
+jobs:
+  backend-dockerfile:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Build backend image
+        run: docker build -f backend/Dockerfile -t auralogic-backend-ci:latest backend
+
+  all-in-one-script:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Validate shell script syntax
+        run: |
+          bash -n scripts/build_docker.sh
+          bash -n scripts/docker_migrate.sh
+
+      - name: Run one-click Docker build in CI mode
+        env:
+          IMAGE_TAG: ci
+          ADMIN_EMAIL: admin@example.com
+          ADMIN_PASSWORD: Admin123456
+          ADMIN_NAME: CI Admin
+          APP_URL: http://localhost:8080
+          EXPOSE_PORT: "8080"
+        run: bash scripts/build_docker.sh ci

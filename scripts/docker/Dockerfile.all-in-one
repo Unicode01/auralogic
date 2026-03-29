@@ -23,10 +23,10 @@ RUN go build -o /build/bin/init_admin scripts/init_admin.go
 # ----------------
 # 阶段 2: 构建前端
 # ----------------
-FROM node:18-alpine AS frontend-builder
+FROM node:22-alpine AS frontend-builder
 WORKDIR /build
 COPY frontend/package.json frontend/package-lock.json* ./
-RUN npm install
+RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi
 COPY frontend/ ./
 # 覆盖前端配置为构建脚本生成的版本
 COPY docker-build/next.config.js ./next.config.js
@@ -38,7 +38,7 @@ RUN npm run build
 # ----------------
 # 阶段 3: 最终镜像
 # ----------------
-FROM node:18-alpine
+FROM node:22-alpine
 
 # 安装必要工具 (包含 SQLite 运行时库和 Redis)
 RUN apk add --no-cache nginx ca-certificates tzdata supervisor netcat-openbsd sqlite-libs musl redis \
