@@ -67,6 +67,9 @@ func TestExecutePluginHostActionMasksPrivacyProtectedOrder(t *testing.T) {
 	if got := result["receiver_address"]; got != "***" {
 		t.Fatalf("expected masked receiver_address, got %#v", got)
 	}
+	if _, exists := result["form_token"]; exists {
+		t.Fatalf("expected form_token to stay hidden, got %#v", result["form_token"])
+	}
 }
 
 func TestExecutePluginHostActionRequiresOperatorPermission(t *testing.T) {
