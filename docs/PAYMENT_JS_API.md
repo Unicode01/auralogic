@@ -2,10 +2,10 @@
 
 AuraLogic 付款方式使用 JavaScript 脚本进行扩展，本文档描述了所有可用的 API。
 
-官方本地示例包可直接参考：
+官方示例包已拆到 `feat/official-packages` 派生分支，可直接参考：
 
-- `payment_packages/payment-js-template` - webhook-first / 手工确认风格模板
-- `payment_packages/payment-js-hosted-template` - hosted checkout / redirect 风格模板
+- `feat/official-packages` 分支中的 `payment_packages/payment-js-template` - webhook-first / 手工确认风格模板
+- `feat/official-packages` 分支中的 `payment_packages/payment-js-hosted-template` - hosted checkout / redirect 风格模板
 
 ## 回调函数
 
