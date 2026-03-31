@@ -51,6 +51,41 @@ func TestValidatePreservesExplicitDisabledPluginSlotAnimations(t *testing.T) {
 	}
 }
 
+func TestValidateRejectsWildcardCORSOrigins(t *testing.T) {
+	cfg := newValidTestConfig()
+	cfg.Security.CORS.AllowedOrigins = []string{"https://*.example.com"}
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatalf("expected validation error for wildcard cors origin")
+	}
+	if !strings.Contains(err.Error(), "allowed_origins") {
+		t.Fatalf("expected cors allowed_origins error, got %v", err)
+	}
+}
+
+func TestValidateNormalizesCORSOrigins(t *testing.T) {
+	cfg := newValidTestConfig()
+	cfg.Security.CORS.AllowedOrigins = []string{
+		" https://Example.com/ ",
+		"https://example.com",
+		"http://LOCALHOST:3000/",
+	}
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("expected config to be valid, got %v", err)
+	}
+	if len(cfg.Security.CORS.AllowedOrigins) != 2 {
+		t.Fatalf("expected 2 normalized origins, got %v", cfg.Security.CORS.AllowedOrigins)
+	}
+	if cfg.Security.CORS.AllowedOrigins[0] != "https://example.com" {
+		t.Fatalf("unexpected first normalized origin %q", cfg.Security.CORS.AllowedOrigins[0])
+	}
+	if cfg.Security.CORS.AllowedOrigins[1] != "http://localhost:3000" {
+		t.Fatalf("unexpected second normalized origin %q", cfg.Security.CORS.AllowedOrigins[1])
+	}
+}
+
 func newValidTestConfig() Config {
 	return Config{
 		App: AppConfig{

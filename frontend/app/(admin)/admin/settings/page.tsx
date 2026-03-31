@@ -37,6 +37,7 @@ import { useToast } from '@/hooks/use-toast'
 import { useLocale } from '@/hooks/use-locale'
 import { getTranslations } from '@/lib/i18n'
 import { usePageTitle } from '@/hooks/use-page-title'
+import { sanitizeAuthBrandingHtml } from '@/lib/auth-branding-html'
 import {
   Settings,
   Database,
@@ -329,6 +330,7 @@ function AuthBrandingCard({
 }) {
   const [local, setLocal] = useState<AuthBrandingData>(initial)
   const [preview, setPreview] = useState(false)
+  const previewHtml = local.mode === 'custom' ? sanitizeAuthBrandingHtml(local.custom_html) : ''
 
   useEffect(() => {
     setLocal(initial)
@@ -448,7 +450,7 @@ function AuthBrandingCard({
                 <div
                   className="w-full"
                   style={{ minHeight: '400px' }}
-                  dangerouslySetInnerHTML={{ __html: local.custom_html }}
+                  dangerouslySetInnerHTML={{ __html: previewHtml }}
                 />
               </div>
             ) : (
@@ -802,6 +804,13 @@ export default function SettingsPage() {
   }
 
   const settingsData = settings?.data
+  const savedCaptchaProvider = settingsData?.security?.captcha?.provider || 'none'
+  const captchaProviderChanged = captchaProvider !== savedCaptchaProvider
+  const customHeaderKeys = Array.isArray(settingsData?.sms?.custom_header_keys)
+    ? settingsData.sms.custom_header_keys
+    : []
+  const customHeadersConfigured = Boolean(settingsData?.sms?.custom_headers_configured)
+  const captchaSecretConfigured = Boolean(settingsData?.security?.captcha?.secret_key_configured)
   const adminSettingsPluginContext = {
     view: 'admin_settings',
     active_tab: activeTab,
@@ -1548,9 +1557,21 @@ export default function SettingsPage() {
                   e.preventDefault()
                   const formData = new FormData(e.currentTarget)
                   let customHeaders: Record<string, string> = {}
+                  const rawCustomHeaders = String(formData.get('custom_headers') || '').trim()
+                  const customHeadersSubmitted = rawCustomHeaders !== ''
                   try {
-                    const raw = (formData.get('custom_headers') as string) || ''
-                    if (raw.trim()) customHeaders = JSON.parse(raw)
+                    if (customHeadersSubmitted) {
+                      const parsed = JSON.parse(rawCustomHeaders)
+                      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+                        toast.error(t.admin.pmInvalidJson)
+                        return
+                      }
+                      if (Object.values(parsed).some((value) => typeof value !== 'string')) {
+                        toast.error(t.admin.pmInvalidJson)
+                        return
+                      }
+                      customHeaders = parsed
+                    }
                   } catch {
                     toast.error(t.admin.pmInvalidJson)
                     return
@@ -1573,7 +1594,8 @@ export default function SettingsPage() {
                     twilio_from_number: formData.get('twilio_from_number') || '',
                     custom_url: formData.get('custom_url') || '',
                     custom_method: formData.get('custom_method') || 'POST',
-                    custom_headers: customHeaders,
+                    custom_headers_submitted: customHeadersSubmitted,
+                    ...(customHeadersSubmitted ? { custom_headers: customHeaders } : {}),
                     custom_body_template: formData.get('custom_body_template') || '',
                   })
                 }}
@@ -1754,14 +1776,17 @@ export default function SettingsPage() {
                       <Label>{t.admin.customHeaders}</Label>
                       <Input
                         name="custom_headers"
-                        defaultValue={
-                          settingsData?.sms?.custom_headers
-                            ? JSON.stringify(settingsData.sms.custom_headers)
-                            : ''
-                        }
                         placeholder='{"Content-Type":"application/json"}'
                         className="mt-1.5"
                       />
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {t.admin.customHeadersKeepHint}
+                      </p>
+                      {customHeadersConfigured && customHeaderKeys.length > 0 ? (
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {t.admin.customHeadersConfiguredKeys}: {customHeaderKeys.join(', ')}
+                        </p>
+                      ) : null}
                     </div>
                     <div>
                       <Label>{t.admin.customBodyTemplate}</Label>
@@ -2088,11 +2113,13 @@ export default function SettingsPage() {
                   onSubmit={(e) => {
                     e.preventDefault()
                     const formData = new FormData(e.currentTarget)
+                    const captchaSecretKey = String(formData.get('captcha_secret_key') || '').trim()
                     handleSubmit('security', {
                       captcha: {
                         provider: captchaProvider,
                         site_key: formData.get('captcha_site_key') || '',
-                        secret_key: formData.get('captcha_secret_key') || '',
+                        secret_key: captchaSecretKey,
+                        secret_key_submitted: captchaSecretKey !== '',
                         enable_for_login: formData.get('captcha_enable_login') === 'on',
                         enable_for_register: formData.get('captcha_enable_register') === 'on',
                         enable_for_serial_verify:
@@ -2119,13 +2146,17 @@ export default function SettingsPage() {
                   </div>
 
                   {(captchaProvider === 'cloudflare' || captchaProvider === 'google') && (
-                    <>
+                    <div key={captchaProvider} className="space-y-4">
                       <div>
                         <Label htmlFor="captcha_site_key">Site Key</Label>
                         <Input
                           id="captcha_site_key"
                           name="captcha_site_key"
-                          defaultValue={settingsData?.security?.captcha?.site_key || ''}
+                          defaultValue={
+                            captchaProviderChanged
+                              ? ''
+                              : settingsData?.security?.captcha?.site_key || ''
+                          }
                           placeholder={
                             captchaProvider === 'cloudflare'
                               ? 'Turnstile Site Key'
@@ -2140,16 +2171,22 @@ export default function SettingsPage() {
                           id="captcha_secret_key"
                           name="captcha_secret_key"
                           type="password"
-                          defaultValue={settingsData?.security?.captcha?.secret_key || ''}
                           placeholder={
-                            captchaProvider === 'cloudflare'
-                              ? 'Turnstile Secret Key'
-                              : 'reCAPTCHA Secret Key'
+                            !captchaProviderChanged && captchaSecretConfigured
+                              ? t.admin.passwordPlaceholder
+                              : captchaProvider === 'cloudflare'
+                                ? 'Turnstile Secret Key'
+                                : 'reCAPTCHA Secret Key'
                           }
                           className="mt-1.5"
                         />
+                        {!captchaProviderChanged && captchaSecretConfigured ? (
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            {t.admin.captchaSecretKeepHint}
+                          </p>
+                        ) : null}
                       </div>
-                    </>
+                    </div>
                   )}
 
                   {captchaProvider !== 'none' && (

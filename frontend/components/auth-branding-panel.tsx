@@ -2,11 +2,11 @@
 
 import { useEffect, useLayoutEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import DOMPurify from 'dompurify'
 import { getPublicConfig } from '@/lib/api'
 import { useLocale } from '@/hooks/use-locale'
 import { getTranslations } from '@/lib/i18n'
 import { PluginSlot } from '@/components/plugins/plugin-slot'
+import { sanitizeAuthBrandingHtml } from '@/lib/auth-branding-html'
 
 const CACHE_KEY = 'auth_branding_cache'
 
@@ -87,14 +87,10 @@ export function AuthBrandingPanel() {
   const branding = net?.customization?.auth_branding || cached?.auth_branding
   const bgStyle = primaryColor ? { backgroundColor: `hsl(${primaryColor})` } : undefined
   const safeCustomHtml = useMemo(() => {
-    if (typeof window === 'undefined' || branding?.mode !== 'custom' || !branding.custom_html) {
+    if (branding?.mode !== 'custom' || !branding.custom_html) {
       return ''
     }
-    return DOMPurify.sanitize(branding.custom_html, {
-      FORBID_TAGS: ['script', 'iframe', 'object', 'embed'],
-      FORBID_ATTR: ['onerror', 'onload', 'onclick', 'onmouseover'],
-      FORCE_BODY: true,
-    })
+    return sanitizeAuthBrandingHtml(branding.custom_html)
   }, [branding?.custom_html, branding?.mode])
   const authBrandingPluginContext = useMemo(
     () => ({

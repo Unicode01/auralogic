@@ -2553,7 +2553,6 @@ func buildPluginHostOrderDetailResponse(order *models.Order, hasPrivacyPermissio
 		return resp
 	}
 	resp["actual_attributes"] = order.ActualAttributes
-	resp["form_token"] = order.FormToken
 	resp["form_submitted_at"] = order.FormSubmittedAt
 	resp["form_expires_at"] = order.FormExpiresAt
 	resp["user_email"] = order.UserEmail
