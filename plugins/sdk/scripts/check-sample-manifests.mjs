@@ -1,6 +1,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const sdkRoot = path.resolve(scriptDir, "..");
@@ -22,7 +23,15 @@ const samples = [
   }
 ];
 
-for (const sample of samples) {
+const existingSamples = samples.filter((sample) =>
+  existsSync(path.join(repoRoot, sample.pluginRoot, "manifest.json"))
+);
+
+if (existingSamples.length === 0) {
+  throw new Error("no sample manifests found in the current branch");
+}
+
+for (const sample of existingSamples) {
   const result = spawnSync(process.execPath, [syncScriptPath, sample.pluginRoot, `--profile=${sample.profile}`, "--check"], {
     cwd: repoRoot,
     stdio: "inherit"
@@ -37,4 +46,4 @@ for (const sample of samples) {
   }
 }
 
-console.log("all sample plugin manifests are in sync");
+console.log("all current-branch sample plugin manifests are in sync");

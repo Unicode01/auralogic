@@ -161,7 +161,7 @@ const validPermission = isOfficialHostPermissionKey("host.market.catalog.read");
   - `allowed_frontend_slots` 校验
   - `requested_permissions` / `granted_permissions` / `permissions[].key` 校验
 - `OFFICIAL_PLUGIN_PERMISSION_KEYS` 覆盖全部官方插件权限键，包括基础能力权限（例如 `hook.execute` / `frontend.extensions` / `runtime.file_system`）以及全部 `host.*` 权限
-- 当前官方目录已经覆盖完整 Hook 扩展面，`plugins/js-worker-debugger` 也会用测试持续校验这些导出与宿主保持同步
+- 当前官方目录已经覆盖完整 Hook 扩展面，官方 debugger 示例 manifest 也会通过测试持续校验这些导出与宿主保持同步
 
 ### 3.2 直接校验插件 manifest 目录字段
 
@@ -237,7 +237,7 @@ if (!compatibility.compatible) {
 }
 ```
 
-当前 `--profile=debugger` 会把 `plugins/js-worker-debugger/manifest.json` 的：
+当前 `--profile=debugger` 会把 debugger 官方示例 manifest 的：
 
 - `capabilities.hooks`
 - `capabilities.allowed_frontend_slots`
@@ -249,7 +249,7 @@ if (!compatibility.compatible) {
 
 另外两个官方示例也已经接入 profile：
 
-- `--profile=template`：同步 `plugins/js-worker-template/manifest.json` 的兼容性字段、模板示例权限、Hook 与插件页 slot
+- `--profile=template`：同步 template 官方示例 manifest 的兼容性字段、模板示例权限、Hook 与插件页 slot
 - `--profile=market`：同步 `plugins/js_market/manifest.json` 的兼容性字段、市场示例权限、Hook 与插件页 slot
 
 如果你只想检查官方示例是否已经漂移，而不实际改文件，可以直接运行：
@@ -258,11 +258,10 @@ if (!compatibility.compatible) {
 npm run check:sample-manifests
 ```
 
-它会串行执行三份 `--check`：
+它会串行检查当前分支可用的官方示例 manifest：
 
-- `plugins/js-worker-debugger`
-- `plugins/js-worker-template`
-- `plugins/js_market`
+- 主分支通常包含 `plugins/js_market`
+- `feat/official-packages` 分支还会包含 debugger / template 官方示例
 
 ### 4. 访问宿主原生数据 API
 
@@ -467,7 +466,7 @@ module.exports = definePlugin({
 - 依赖声明：`"@auralogic/plugin-sdk": "file:../sdk"`
 - 推荐在构建阶段把依赖 bundle 到单个 `index.js`
 - 如果不做 bundle，就需要把 SDK 的 `dist/` 与 `package.json` 一起打进插件 zip
-- `plugins/js-worker-template` 与 `plugins/js-worker-debugger` 已演示完整打包方式
+- 官方 template / debugger 示例已演示完整打包方式；主分支不再内置这两个示例目录
 
 ## 构建
 
@@ -481,11 +480,10 @@ module.exports = definePlugin({
 
 - `npm run generate:catalog` 会从宿主 Hook 注册表、权限注册表和前端 slot 使用点重新生成 `src/generated-catalog.ts`
 - `npm run ensure:dist` 会在 `dist/` 缺失或过期时自动重建 SDK，供示例插件的 `build/test/typecheck/dev` 复用
-- `npm run check:sample-manifests` 会校验三套官方示例 manifest 是否仍与 SDK profile 保持一致
+- `npm run check:sample-manifests` 会校验当前分支可用的官方示例 manifest 是否仍与 SDK profile 保持一致
 - 当宿主新增 Hook / `host.*` 权限 / 前端 slot 后，先跑这一步，再跑测试和打包，会更不容易出现 catalog 漂移
 
 ## 参考
 
-- 模板：`plugins/js-worker-template`
-- 调试器：`plugins/js-worker-debugger`
-- 插件总文档：`plugins/README.md`
+- 主分支插件文档入口：本文件与 `plugins/js_market/README.md`
+- 官方 template / debugger 示例：`feat/official-packages` 派生分支
