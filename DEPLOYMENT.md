@@ -1,165 +1,127 @@
-# 生产环境部署指南
+# 部署指南
 
-## 🌐 域名配置
+本文档只说明主分支当前实际包含的部署方式与必改配置。
 
-**生产域名**: `https://auralogic.un1c0de.com`
+## 部署范围
 
-## 📋 配置清单
+主分支包含：
 
-### 1. 后端配置
+- `backend` 后端 API 与插件宿主
+- `frontend` 前端应用
+- `scripts/build_docker.sh` 一键构建脚本
+- `plugins/js_market` 与 `plugins/sdk`
 
-#### 使用生产配置文件
+主分支不包含市场注册表、官方模板包、支付包与插件示例目录；这些内容位于派生分支。
+
+## 推荐方式：一键脚本
+
+在仓库根目录执行：
+
+```bash
+bash scripts/build_docker.sh
+```
+
+脚本会引导生成运行配置并构建 Docker 镜像。后续启动：
+
+```bash
+docker compose up -d
+```
+
+若代码更新后需要重新构建：
+
+```bash
+bash scripts/build_docker.sh update
+```
+
+## 手动部署
+
+### 1. 后端
+
+先基于示例配置准备生产配置：
 
 ```bash
 cd backend
-# 将生产配置复制为正式配置
-cp config/config.prod.json config/config.json
+cp config/config.prod.example.json config/config.prod.json
 ```
 
-或者在启动时指定配置文件：
+建议显式指定配置文件启动：
 
 ```bash
-CONFIG_FILE=config/config.prod.json go run cmd/api/main.go
-```
-
-#### 关键配置项
-
-**config/config.prod.json**:
-- ✅ `app.url`: `https://auralogic.un1c0de.com`
-- ✅ `app.env`: `production`
-- ✅ `app.debug`: `false`
-- ✅ `oauth.google.redirect_url`: 设置为生产环境回调地址
-- ✅ `security.cors.allowed_origins`: `["https://auralogic.un1c0de.com"]`
-- ✅ `rate_limit.enabled`: `true`
-- ✅ `log.level`: `info`
-- ⚠️  `jwt.secret`: **必须修改为强密码！**
-
-### 2. 前端配置
-
-#### Next.js 环境变量
-
-**方法一：通过 .env.local（本地覆盖）**
-
-创建 `frontend/.env.local` 文件：
-```bash
-NEXT_PUBLIC_API_URL=https://auralogic.un1c0de.com
-```
-
-**方法二：通过系统环境变量**
-
-```bash
-export NEXT_PUBLIC_API_URL=https://auralogic.un1c0de.com
-```
-
-**方法三：通过 next.config.js（已配置）**
-
-默认值已设置为生产域名，无需额外配置。
-
-#### 本地开发切换
-
-如果需要在本地开发，创建 `.env.local`:
-```bash
-NEXT_PUBLIC_API_URL=http://localhost:8080
-```
-
-### 3. OAuth 配置
-
-如果启用了 OAuth 登录（Google/Github），需要在对应平台更新回调 URL 为生产环境地址。
-
-## 🚀 部署步骤
-
-### 后端部署
-
-```bash
-cd backend
-
-# 1. 构建
-go build -o auralogic cmd/api/main.go
-
-# 2. 运行（使用生产配置）
 CONFIG_FILE=config/config.prod.json ./auralogic
-
-# 或者使用 systemd 服务（推荐）
-sudo systemctl start auralogic
 ```
 
-### 前端部署
+典型构建方式：
 
-```bash
-cd frontend
-
-# 1. 设置环境变量
-export NEXT_PUBLIC_API_URL=https://auralogic.un1c0de.com
-
-# 2. 构建
-npm run build
-
-# 3. 启动
-npm start
-
-# 或者使用 PM2（推荐）
-pm2 start npm --name "auralogic-frontend" -- start
-```
-
-## 🔒 安全检查清单
-
-- [ ] 修改 JWT secret 为强随机密码（至少32字符）
-- [ ] 更新 OAuth 回调 URL 为生产环境地址
-- [ ] 配置 HTTPS 证书（Let's Encrypt）
-- [ ] 启用速率限制（rate_limit.enabled: true）
-- [ ] 配置 SMTP 邮件服务
-- [ ] 检查 CORS 配置（只允许生产域名）
-- [ ] 关闭调试模式（app.debug: false）
-- [ ] 配置数据库备份
-
-## 📝 已更新的文件
-
-### 后端
-- ✅ `backend/config/config.json` - 更新为生产URL
-- ✅ `backend/config/config.prod.json` - 新建生产配置模板
-
-### 前端
-- ✅ `frontend/next.config.js` - 添加域名到 images.domains
-- ✅ `frontend/next.config.js` - 设置默认 API URL
-- ✅ `frontend/lib/api.ts` - 更新默认 API URL
-- ✅ `frontend/components/forms/shipping-form.tsx` - 更新 API URL
-- ✅ `frontend/app/(admin)/admin/orders/page.tsx` - 更新导出/导入 URL
-- ✅ `frontend/app/(admin)/admin/orders/[id]/page.tsx` - 更新 API URL
-
-## 🔄 回滚到本地开发
-
-如果需要切回本地开发：
-
-**后端**:
 ```bash
 cd backend
-git checkout config/config.json
-# 或者手动改回 localhost
+go build -o auralogic cmd/api/main.go
+CONFIG_FILE=config/config.prod.json ./auralogic
 ```
 
-**前端**:
+首次部署前记得初始化管理员账号：
+
+```bash
+cd backend
+go run scripts/init_admin.go
+```
+
+### 2. 前端
+
+生产环境不要依赖仓库中的默认回退值，务必显式设置环境变量：
+
 ```bash
 cd frontend
-# 创建 .env.local
-echo "NEXT_PUBLIC_API_URL=http://localhost:8080" > .env.local
+export NEXT_PUBLIC_API_URL=https://api.yourdomain.com
+export NEXT_PUBLIC_APP_URL=https://yourdomain.com
+npm install
+npm run build
+npm run start
 ```
 
-## 🧪 测试
+如果前后端同域反代，也至少应显式设置 `NEXT_PUBLIC_API_URL`。
 
-部署后测试以下功能：
+## 必改配置
 
-1. ✅ 用户登录/注册
-2. ✅ OAuth 登录（回调 URL 是否正确）
-3. ✅ 商品浏览和购买
-4. ✅ 订单创建和管理
-5. ✅ 管理后台访问
-6. ✅ 图片上传（URL 是否正确）
+部署前至少检查以下配置：
 
-## 📞 技术支持
+- `backend/config/config.prod.json`
+  - `app.url`
+  - `database`
+  - `redis`
+  - `jwt.secret`
+  - `security.cors.allowed_origins`
+  - `smtp`
+  - `oauth.google.redirect_url`
+  - `oauth.github.redirect_url`
+- `backend/config/admin.json`
+  - 初始管理员邮箱、密码、名称
+- 前端环境变量
+  - `NEXT_PUBLIC_API_URL`
+  - `NEXT_PUBLIC_APP_URL`
 
-如有问题，请检查：
-- 后端日志：`backend/logs/app.log`
-- 前端日志：浏览器控制台
-- Nginx/反向代理配置
-- 防火墙规则
+## 安全检查
 
+- `jwt.secret` 使用至少 32 位随机强密钥
+- `security.cors.allowed_origins` 只保留实际生产域名
+- `app.debug` 关闭
+- 数据库、Redis、SMTP 使用生产凭据
+- OAuth 回调地址与生产域名一致
+- 站点启用 HTTPS
+- 日志与数据库做好备份
+
+## 验证清单
+
+部署完成后建议至少验证：
+
+1. 用户登录 / 注册 / 找回密码
+2. 订单创建、支付、订单详情
+3. 管理后台登录与关键页面加载
+4. 文件上传与图片访问
+5. SMTP / SMS / OAuth 等已启用能力
+6. 反向代理后真实 IP 获取是否正常
+
+## 补充说明
+
+- `backend/config/config.prod.json` 可以作为本地样板，但不应直接照搬仓库中的域名、邮箱和凭据。
+- 若使用 Docker / Nginx / Supervisor 组合，根目录 `scripts/docker/` 下提供了对应资源。
+- 若你需要连同市场注册表、官方模板包或插件示例一起部署，请切换到对应派生分支查看说明。
