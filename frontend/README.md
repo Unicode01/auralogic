@@ -1,10 +1,10 @@
 # AuraLogic - 前端
 
-基于 Next.js 14 + TypeScript + Tailwind CSS + shadcn/ui 构建的现代化订单管理系统前端应用。
+基于 Next.js 15 + TypeScript + Tailwind CSS + shadcn/ui 构建的现代化订单管理系统前端应用。
 
 ## 📚 技术栈
 
-- **框架**: Next.js 14 (App Router)
+- **框架**: Next.js 15 (App Router)
 - **语言**: TypeScript 5
 - **样式**: Tailwind CSS 3
 - **UI组件**: shadcn/ui + Radix UI
@@ -19,10 +19,6 @@
 
 ```bash
 npm install
-# 或
-yarn install
-# 或
-pnpm install
 ```
 
 ### 2. 配置环境变量
@@ -38,10 +34,6 @@ NEXT_PUBLIC_APP_URL=http://localhost:3000
 
 ```bash
 npm run dev
-# 或
-yarn dev
-# 或
-pnpm dev
 ```
 
 访问 http://localhost:3000
