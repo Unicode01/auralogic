@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"log/slog"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -650,6 +651,14 @@ func (c *Config) Validate() error {
 	if len(c.JWT.Secret) < 32 {
 		return fmt.Errorf("jwt.secret must be at least 32 characters")
 	}
+	normalizedCORSOrigins, err := NormalizeCORSAllowedOrigins(c.Security.CORS.AllowedOrigins)
+	if err != nil {
+		return err
+	}
+	c.Security.CORS.AllowedOrigins = normalizedCORSOrigins
+	if c.Security.CORS.MaxAge < 0 {
+		return fmt.Errorf("security.cors.max_age must be greater than or equal to 0")
+	}
 
 	// 设置默认值
 	if c.JWT.ExpireHours == 0 {
@@ -939,6 +948,53 @@ func (c *Config) Validate() error {
 	}
 
 	return nil
+}
+
+func NormalizeCORSAllowedOrigins(origins []string) ([]string, error) {
+	if len(origins) == 0 {
+		return nil, nil
+	}
+
+	normalized := make([]string, 0, len(origins))
+	seen := make(map[string]struct{}, len(origins))
+	for _, rawOrigin := range origins {
+		origin := strings.TrimSpace(rawOrigin)
+		if origin == "" {
+			continue
+		}
+		if origin == "*" || strings.Contains(origin, "*") {
+			return nil, fmt.Errorf("security.cors.allowed_origins must not contain wildcard origins")
+		}
+
+		parsed, err := url.Parse(origin)
+		if err != nil {
+			return nil, fmt.Errorf("security.cors.allowed_origins contains invalid origin %q: %w", origin, err)
+		}
+		if parsed.Scheme != "http" && parsed.Scheme != "https" {
+			return nil, fmt.Errorf("security.cors.allowed_origins contains invalid scheme for %q", origin)
+		}
+		if parsed.Host == "" {
+			return nil, fmt.Errorf("security.cors.allowed_origins contains origin without host %q", origin)
+		}
+		if parsed.User != nil {
+			return nil, fmt.Errorf("security.cors.allowed_origins must not include credentials for %q", origin)
+		}
+		if parsed.RawQuery != "" || parsed.Fragment != "" {
+			return nil, fmt.Errorf("security.cors.allowed_origins must not include query or fragment for %q", origin)
+		}
+		if parsed.Path != "" && parsed.Path != "/" {
+			return nil, fmt.Errorf("security.cors.allowed_origins must not include path for %q", origin)
+		}
+
+		canonicalOrigin := strings.ToLower(parsed.Scheme) + "://" + strings.ToLower(parsed.Host)
+		if _, exists := seen[canonicalOrigin]; exists {
+			continue
+		}
+		seen[canonicalOrigin] = struct{}{}
+		normalized = append(normalized, canonicalOrigin)
+	}
+
+	return normalized, nil
 }
 
 func normalizeLowerStringList(values []string) []string {
