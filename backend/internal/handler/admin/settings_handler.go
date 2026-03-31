@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -236,6 +237,7 @@ func (h *SettingsHandler) GetSettings(c *gin.Context) {
 	if defaultTheme == "" {
 		defaultTheme = "system"
 	}
+	customHeaderKeys := sortedConfiguredHeaderKeys(h.cfg.SMS.CustomHeaders)
 	// 返回可编辑的配置项（敏感Info需脱敏）
 	settings := gin.H{
 		"app": gin.H{
@@ -264,19 +266,20 @@ func (h *SettingsHandler) GetSettings(c *gin.Context) {
 				"reset_password": h.cfg.SMS.Templates.ResetPassword,
 				"bind_phone":     h.cfg.SMS.Templates.BindPhone,
 			},
-			"dypns_code_length":    h.cfg.SMS.DYPNSCodeLength,
-			"twilio_account_sid":   h.cfg.SMS.TwilioAccountSID,
-			"twilio_from_number":   h.cfg.SMS.TwilioFromNumber,
-			"custom_url":           h.cfg.SMS.CustomURL,
-			"custom_method":        h.cfg.SMS.CustomMethod,
-			"custom_headers":       h.cfg.SMS.CustomHeaders,
-			"custom_body_template": h.cfg.SMS.CustomBodyTemplate,
+			"dypns_code_length":         h.cfg.SMS.DYPNSCodeLength,
+			"twilio_account_sid":        h.cfg.SMS.TwilioAccountSID,
+			"twilio_from_number":        h.cfg.SMS.TwilioFromNumber,
+			"custom_url":                h.cfg.SMS.CustomURL,
+			"custom_method":             h.cfg.SMS.CustomMethod,
+			"custom_headers_configured": len(customHeaderKeys) > 0,
+			"custom_header_keys":        customHeaderKeys,
+			"custom_body_template":      h.cfg.SMS.CustomBodyTemplate,
 		},
 		"security": gin.H{
 			"password_policy": h.cfg.Security.PasswordPolicy,
 			"login":           h.cfg.Security.Login,
 			"cors":            h.cfg.Security.CORS,
-			"captcha":         h.cfg.Security.Captcha,
+			"captcha":         buildSafeCaptchaSettingsResponse(h.cfg.Security.Captcha),
 			"ip_header":       h.cfg.Security.IPHeader,
 			"trusted_proxies": h.cfg.Security.TrustedProxies,
 		},
@@ -428,6 +431,72 @@ func (h *SettingsHandler) GetSettings(c *gin.Context) {
 	response.Success(c, settings)
 }
 
+func buildSafeCaptchaSettingsResponse(captcha config.CaptchaConfig) gin.H {
+	return gin.H{
+		"provider":                 captcha.Provider,
+		"site_key":                 captcha.SiteKey,
+		"secret_key_configured":    strings.TrimSpace(captcha.SecretKey) != "",
+		"enable_for_login":         captcha.EnableForLogin,
+		"enable_for_register":      captcha.EnableForRegister,
+		"enable_for_serial_verify": captcha.EnableForSerialVerify,
+		"enable_for_bind":          captcha.EnableForBind,
+	}
+}
+
+func sortedConfiguredHeaderKeys(headers map[string]string) []string {
+	if len(headers) == 0 {
+		return []string{}
+	}
+	keys := make([]string, 0, len(headers))
+	for key := range headers {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func captchaProviderRequiresSecret(provider string) bool {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "cloudflare", "google":
+		return true
+	default:
+		return false
+	}
+}
+
+func resolveCaptchaSecretForUpdate(existing map[string]interface{}, req *settingsCaptchaUpdateRequest) string {
+	if req == nil {
+		return ""
+	}
+	secretKey := req.SecretKey
+	if !captchaProviderRequiresSecret(req.Provider) {
+		return secretKey
+	}
+	if req.SecretKeySubmitted {
+		return secretKey
+	}
+	if existing == nil {
+		return ""
+	}
+	existingProvider, _ := existing["provider"].(string)
+	if !strings.EqualFold(strings.TrimSpace(existingProvider), strings.TrimSpace(req.Provider)) {
+		return ""
+	}
+	existingSecret, _ := existing["secret_key"].(string)
+	return existingSecret
+}
+
+type settingsCaptchaUpdateRequest struct {
+	Provider              string `json:"provider"`
+	SiteKey               string `json:"site_key"`
+	SecretKey             string `json:"secret_key,omitempty"`
+	SecretKeySubmitted    bool   `json:"secret_key_submitted,omitempty"`
+	EnableForLogin        bool   `json:"enable_for_login"`
+	EnableForRegister     bool   `json:"enable_for_register"`
+	EnableForSerialVerify bool   `json:"enable_for_serial_verify"`
+	EnableForBind         bool   `json:"enable_for_bind"`
+}
+
 // UpdateSettingsRequest Update设置请求
 type UpdateSettingsRequest struct {
 	App struct {
@@ -448,37 +517,38 @@ type UpdateSettingsRequest struct {
 	} `json:"smtp,omitempty"`
 
 	SMS struct {
-		Submitted             bool              `json:"_submitted"`
-		Enabled               bool              `json:"enabled"`
-		Provider              string            `json:"provider"`
-		AliyunAccessKeyID     string            `json:"aliyun_access_key_id"`
-		AliyunAccessSecret    string            `json:"aliyun_access_secret,omitempty"`
-		AliyunSignName        string            `json:"aliyun_sign_name"`
-		AliyunTemplateCode    string            `json:"aliyun_template_code"`
-		TemplateLogin         string            `json:"template_login"`
-		TemplateRegister      string            `json:"template_register"`
-		TemplateResetPassword string            `json:"template_reset_password"`
-		TemplateBindPhone     string            `json:"template_bind_phone"`
-		TwilioAccountSID      string            `json:"twilio_account_sid"`
-		TwilioAuthToken       string            `json:"twilio_auth_token,omitempty"`
-		TwilioFromNumber      string            `json:"twilio_from_number"`
-		DYPNSCodeLength       int               `json:"dypns_code_length"`
-		CustomURL             string            `json:"custom_url"`
-		CustomMethod          string            `json:"custom_method"`
-		CustomHeaders         map[string]string `json:"custom_headers"`
-		CustomBodyTemplate    string            `json:"custom_body_template"`
+		Submitted              bool              `json:"_submitted"`
+		Enabled                bool              `json:"enabled"`
+		Provider               string            `json:"provider"`
+		AliyunAccessKeyID      string            `json:"aliyun_access_key_id"`
+		AliyunAccessSecret     string            `json:"aliyun_access_secret,omitempty"`
+		AliyunSignName         string            `json:"aliyun_sign_name"`
+		AliyunTemplateCode     string            `json:"aliyun_template_code"`
+		TemplateLogin          string            `json:"template_login"`
+		TemplateRegister       string            `json:"template_register"`
+		TemplateResetPassword  string            `json:"template_reset_password"`
+		TemplateBindPhone      string            `json:"template_bind_phone"`
+		TwilioAccountSID       string            `json:"twilio_account_sid"`
+		TwilioAuthToken        string            `json:"twilio_auth_token,omitempty"`
+		TwilioFromNumber       string            `json:"twilio_from_number"`
+		DYPNSCodeLength        int               `json:"dypns_code_length"`
+		CustomURL              string            `json:"custom_url"`
+		CustomMethod           string            `json:"custom_method"`
+		CustomHeaders          map[string]string `json:"custom_headers"`
+		CustomHeadersSubmitted bool              `json:"custom_headers_submitted,omitempty"`
+		CustomBodyTemplate     string            `json:"custom_body_template"`
 	} `json:"sms,omitempty"`
 
 	Security struct {
-		PasswordPolicy          config.PasswordPolicyConfig `json:"password_policy,omitempty"`
-		Login                   config.LoginConfig          `json:"login,omitempty"`
-		LoginSubmitted          bool                        `json:"login_submitted,omitempty"`
-		CORS                    config.CORSConfig           `json:"cors,omitempty"`
-		Captcha                 *config.CaptchaConfig       `json:"captcha,omitempty"`
-		IPHeader                string                      `json:"ip_header,omitempty"`
-		IPHeaderSubmitted       bool                        `json:"ip_header_submitted,omitempty"`
-		TrustedProxies          []string                    `json:"trusted_proxies,omitempty"`
-		TrustedProxiesSubmitted bool                        `json:"trusted_proxies_submitted,omitempty"`
+		PasswordPolicy          config.PasswordPolicyConfig   `json:"password_policy,omitempty"`
+		Login                   config.LoginConfig            `json:"login,omitempty"`
+		LoginSubmitted          bool                          `json:"login_submitted,omitempty"`
+		CORS                    config.CORSConfig             `json:"cors,omitempty"`
+		Captcha                 *settingsCaptchaUpdateRequest `json:"captcha,omitempty"`
+		IPHeader                string                        `json:"ip_header,omitempty"`
+		IPHeaderSubmitted       bool                          `json:"ip_header_submitted,omitempty"`
+		TrustedProxies          []string                      `json:"trusted_proxies,omitempty"`
+		TrustedProxiesSubmitted bool                          `json:"trusted_proxies_submitted,omitempty"`
 	} `json:"security,omitempty"`
 
 	RateLimit config.RateLimitConfig `json:"rate_limit,omitempty"`
@@ -729,7 +799,13 @@ func (h *SettingsHandler) UpdateSettings(c *gin.Context) {
 		smsConfig["twilio_from_number"] = req.SMS.TwilioFromNumber
 		smsConfig["custom_url"] = req.SMS.CustomURL
 		smsConfig["custom_method"] = req.SMS.CustomMethod
-		smsConfig["custom_headers"] = req.SMS.CustomHeaders
+		if req.SMS.CustomHeadersSubmitted {
+			if req.SMS.CustomHeaders == nil {
+				smsConfig["custom_headers"] = map[string]string{}
+			} else {
+				smsConfig["custom_headers"] = req.SMS.CustomHeaders
+			}
+		}
 		smsConfig["custom_body_template"] = req.SMS.CustomBodyTemplate
 		smsConfig["templates"] = map[string]interface{}{
 			"login":          req.SMS.TemplateLogin,
@@ -951,19 +1027,25 @@ func (h *SettingsHandler) UpdateSettings(c *gin.Context) {
 
 	// UpdateCORS配置
 	if len(req.Security.CORS.AllowedOrigins) > 0 {
+		normalizedOrigins, normalizeErr := config.NormalizeCORSAllowedOrigins(req.Security.CORS.AllowedOrigins)
+		if normalizeErr != nil {
+			response.BadRequest(c, normalizeErr.Error())
+			return
+		}
 		securityConfig := currentConfig["security"].(map[string]interface{})
 		corsConfig := securityConfig["cors"].(map[string]interface{})
-		corsConfig["allowed_origins"] = req.Security.CORS.AllowedOrigins
+		corsConfig["allowed_origins"] = normalizedOrigins
 		corsConfig["max_age"] = req.Security.CORS.MaxAge
 	}
 
 	// Update验证码配置
 	if req.Security.Captcha != nil {
 		securityConfig := currentConfig["security"].(map[string]interface{})
+		existingCaptchaConfig, _ := securityConfig["captcha"].(map[string]interface{})
 		securityConfig["captcha"] = map[string]interface{}{
 			"provider":                 req.Security.Captcha.Provider,
 			"site_key":                 req.Security.Captcha.SiteKey,
-			"secret_key":               req.Security.Captcha.SecretKey,
+			"secret_key":               resolveCaptchaSecretForUpdate(existingCaptchaConfig, req.Security.Captcha),
 			"enable_for_login":         req.Security.Captcha.EnableForLogin,
 			"enable_for_register":      req.Security.Captcha.EnableForRegister,
 			"enable_for_serial_verify": req.Security.Captcha.EnableForSerialVerify,
