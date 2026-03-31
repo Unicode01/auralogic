@@ -1,36 +1,37 @@
 # AuraLogic 文档索引
 
-这份索引用来说明当前仓库里哪些文档是主文档，哪些只是人工维护的参考摘要，以及哪些历史设计稿已经收敛。
+本目录只保留主分支当前仍在维护的宿主文档。
 
-## 当前主文档
-
-- [插件开发文档](../plugins/README.md)
-  - `js_worker` 插件开发、SDK、workspace、runtime console、`Plugin.fs`、`Plugin.storage`、`Worker`、Hook 与前端扩展的主文档。
-- [Payment JS API](./PAYMENT_JS_API.md)
-  - `payment_js` 运行时 API、回调函数、HTTP、storage、webhook URL 与模板包示例。
-- [虚拟库存 JS 发货](./VIRTUAL_INVENTORY_JS_DELIVERY.md)
-  - `type=script` 虚拟库存发货链路、兼容逻辑和代码定位。
-- [市场注册表文档](../market_registry/README.md)
-  - market_registry 的唯一文档入口，包含运行方式、发布流程、管理后台和兼容说明。
-
-## 人工维护的参考文档
+## 主文档
 
 - [API 总览](./API.md)
-  - 这是人工维护的接口总览，适合快速浏览，不保证覆盖最新所有字段与路由。
-  - 实际集成时请以 `backend/internal/router`、handler/service、前端调用代码和测试为准。
+  - 人工维护的接口概览，适合快速浏览。
+  - 具体字段、权限与最新行为请以 `backend/internal/router`、handler/service、前端调用代码和测试为准。
+- [Payment JS API](./PAYMENT_JS_API.md)
+  - `payment_js` 付款方式脚本运行时 API、回调约定与集成说明。
+- [虚拟库存 JS 发货](./VIRTUAL_INVENTORY_JS_DELIVERY.md)
+  - `type=script` 虚拟库存发货链路、兼容逻辑与代码定位。
 
-## 已收敛的历史文档
+## 相关 README
 
-- `docs/PLUGIN_JS_WORKSPACE_DESIGN.md`
-  - 这份文档原本用于推动 `js_worker` workspace / runtime console / attach 设计。
-  - 相关能力已经进入正式实现与开发文档，主入口改为 [插件开发文档](../plugins/README.md)。
-  - 仓库中不再保留这类“已基本落地但仍以 Draft/设计稿形态存在”的重复文档。
-- `market_registry` 历史拆分文档
-  - 市场相关文档已经整体收敛到 [market_registry/README.md](../market_registry/README.md)。
-  - 仓库中不再保留额外的市场协议拆分文档，避免重复维护。
+- [仓库总览](../README.md)
+- [部署指南](../DEPLOYMENT.md)
+- [后端文档](../backend/README.md)
+- [前端文档](../frontend/README.md)
+- [插件 SDK 文档](../plugins/sdk/README.md)
+- [JS Market 插件文档](../plugins/js_market/README.md)
+
+## 派生分支
+
+以下内容已不再放在主分支维护：
+
+- `feat/market-registry`
+  - 市场注册表相关实现与文档。
+- `feat/official-packages`
+  - 官方模板、支付包、插件示例等次要内容。
 
 ## 维护约定
 
-- 面向插件作者的能力说明，优先写进 `plugins/README.md`。
-- 面向市场的说明统一保留在 `market_registry/README.md`。
-- 若某份文档仍然写着“计划”“草稿”“后续将支持”，但能力已经稳定落地，应优先合并进正式文档并删除历史稿。
+- 主分支文档只描述主分支当前实际存在的目录、脚本和能力。
+- 若某项内容已经迁移到派生分支，不在主分支保留重复说明与失效链接。
+- 若某份文档只是实现笔记、迁移草稿或阶段性设计稿，应优先合并到正式文档后删除。

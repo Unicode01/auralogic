@@ -15,7 +15,7 @@
 
 ## 技术栈
 
-- **语言**: Go 1.21+
+- **语言**: Go 1.24+
 - **Web框架**: Gin
 - **ORM**: GORM
 - **数据库**: PostgreSQL / MySQL / SQLite
@@ -104,8 +104,8 @@ docker-compose up -d
 
 ## 📚 文档
 
-- [API完整参考](../docs/API.md) - 所有API端点详细说明 📖
-- [付款方式JS API](../docs/PAYMENT_JS_API.md) - 自定义付款方式脚本开发 💳
+- [API 总览](../docs/API.md) - 手工维护的接口概览，最新实现请以代码与测试为准 📖
+- [付款方式 JS API](../docs/PAYMENT_JS_API.md) - 自定义付款方式脚本开发 💳
 - [部署指南](../DEPLOYMENT.md) - 生产环境部署配置 🚀
 
 ### 主要API端点
@@ -128,7 +128,7 @@ docker-compose up -d
 - API密钥管理
 - 权限管理
 
-#### 表单API - 需要登录
+#### 表单API - 安全令牌 / 登录用户
 - 获取发货信息表单
 - 提交发货信息（自动创建用户）
 
