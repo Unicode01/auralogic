@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
@@ -283,161 +283,164 @@ export default function LogsPage() {
               smsFilters.end_date,
             ]
   ).filter(Boolean)
-  const resolveOperationResourceLabel = (resourceType: string) => {
-    switch (resourceType) {
-      case 'auth':
-        return t.admin.resourceAuth
-      case 'order':
-        return t.admin.resourceOrder
-      case 'user':
-        return t.admin.resourceUser
-      case 'admin':
-        return t.admin.resourceAdmin
-      case 'api_key':
-        return t.admin.resourceApiKey
-      case 'product':
-        return t.admin.logResourceProduct
-      case 'inventory':
-        return t.admin.logResourceInventory
-      case 'payment_method':
-        return t.admin.logResourcePaymentMethod
-      case 'payment':
-        return t.admin.logResourcePayment
-      case 'marketing_batch':
-        return t.admin.logResourceMarketingBatch
-      case 'plugin':
-        return t.admin.logResourcePlugin
-      case 'system':
-        return t.admin.system
-      case 'system_config':
-        return t.admin.logResourceSystemConfig
-      default:
-        return locale === 'zh' ? String(resourceType || '') : humanizeLogToken(resourceType)
-    }
-  }
-  const resolveOperationActionLabel = (action: string) => {
-    switch (action) {
-      case 'create':
-        return t.admin.actionCreate
-      case 'update':
-        return t.admin.actionUpdate
-      case 'delete':
-        return t.admin.actionDelete
-      case 'login':
-        return t.admin.actionLogin
-      case 'register':
-        return t.admin.logActionRegister
-      case 'verify_email':
-        return t.admin.logActionVerifyEmail
-      case 'assign_tracking':
-        return t.admin.logActionAssignTracking
-      case 'complete':
-        return t.admin.logActionComplete
-      case 'cancel':
-        return t.admin.logActionCancel
-      case 'refund':
-        return t.admin.logActionRefund
-      case 'mark_paid':
-        return t.admin.logActionMarkPaid
-      case 'deliver_virtual_stock':
-        return t.admin.logActionDeliverVirtualStock
-      case 'request_resubmit':
-        return t.admin.logActionRequestResubmit
-      case 'batch_complete_orders':
-        return t.admin.logActionBatchCompleteOrders
-      case 'batch_cancel_orders':
-        return t.admin.logActionBatchCancelOrders
-      case 'batch_delete_orders':
-        return t.admin.logActionBatchDeleteOrders
-      case 'create_draft':
-        return t.admin.logActionCreateDraft
-      case 'create_draft_failed':
-        return t.admin.logActionCreateDraftFailed
-      case 'admin_create_order':
-        return t.admin.logActionAdminCreateOrder
-      case 'update_price':
-        return t.admin.logActionUpdatePrice
-      case 'form_submit':
-        return t.admin.logActionFormSubmit
-      case 'form_submit_failed':
-        return t.admin.logActionFormSubmitFailed
-      case 'payment_method_selected':
-        return t.admin.logActionPaymentMethodSelected
-      case 'adjust_stock':
-        return t.admin.logActionAdjustStock
-      case 'import':
-        return t.admin.logActionImport
-      case 'payment_method_market_preview':
-        return t.admin.logActionPaymentMethodMarketPreview
-      case 'payment_method_init':
-        return t.admin.logActionPaymentMethodInit
-      case 'payment_method_legacy_migration':
-        return t.admin.logActionPaymentMethodLegacyMigration
-      case 'payment_success':
-        return t.admin.logActionPaymentSuccess
-      case 'payment_update_failed':
-        return t.admin.logActionPaymentUpdateFailed
-      case 'payment_polling_add':
-        return t.admin.logActionPaymentPollingAdd
-      case 'payment_polling_timeout':
-        return t.admin.logActionPaymentPollingTimeout
-      case 'payment_polling_max_retries':
-        return t.admin.logActionPaymentPollingMaxRetries
-      case 'payment_polling_check_failed':
-        return t.admin.logActionPaymentPollingCheckFailed
-      case 'payment_polling_backfill':
-        return t.admin.logActionPaymentPollingBackfill
-      case 'check_auto_delivery_failed':
-        return t.admin.logActionCheckAutoDeliveryFailed
-      case 'virtual_delivery_failed':
-        return t.admin.logActionVirtualDeliveryFailed
-      case 'order_auto_cancelled':
-        return t.admin.logActionOrderAutoCancelled
-      case 'queue_marketing':
-        return t.admin.logActionQueueMarketing
-      case 'maintenance':
-        return t.admin.logActionMaintenance
-      case 'order_cancel_service_start':
-        return t.admin.logActionOrderCancelServiceStart
-      case 'order_cancel_service_stop':
-        return t.admin.logActionOrderCancelServiceStop
-      case 'order_auto_cancel':
-        return t.admin.logActionOrderAutoCancel
-      case 'payment_polling_start':
-        return t.admin.logActionPaymentPollingStart
-      case 'payment_polling_stop':
-        return t.admin.logActionPaymentPollingStop
-      case 'payment_polling_recover':
-        return t.admin.logActionPaymentPollingRecover
-      case 'ticket_attachment_cleanup_start':
-        return t.admin.logActionTicketAttachmentCleanupStart
-      case 'ticket_attachment_cleanup_stop':
-        return t.admin.logActionTicketAttachmentCleanupStop
-      case 'ticket_attachment_cleanup':
-        return t.admin.logActionTicketAttachmentCleanup
-      case 'ticket_auto_close_start':
-        return t.admin.logActionTicketAutoCloseStart
-      case 'ticket_auto_close_stop':
-        return t.admin.logActionTicketAutoCloseStop
-      case 'ticket_auto_close':
-        return t.admin.logActionTicketAutoClose
-      default:
-        return locale === 'zh' ? String(action || '') : humanizeLogToken(action)
-    }
-  }
+  const resolveOperationResourceLabel = useCallback(
+    (resourceType: string) => {
+      switch (resourceType) {
+        case 'auth':
+          return t.admin.resourceAuth
+        case 'order':
+          return t.admin.resourceOrder
+        case 'user':
+          return t.admin.resourceUser
+        case 'admin':
+          return t.admin.resourceAdmin
+        case 'api_key':
+          return t.admin.resourceApiKey
+        case 'product':
+          return t.admin.logResourceProduct
+        case 'inventory':
+          return t.admin.logResourceInventory
+        case 'payment_method':
+          return t.admin.logResourcePaymentMethod
+        case 'payment':
+          return t.admin.logResourcePayment
+        case 'marketing_batch':
+          return t.admin.logResourceMarketingBatch
+        case 'plugin':
+          return t.admin.logResourcePlugin
+        case 'system':
+          return t.admin.system
+        case 'system_config':
+          return t.admin.logResourceSystemConfig
+        default:
+          return locale === 'zh' ? String(resourceType || '') : humanizeLogToken(resourceType)
+      }
+    },
+    [locale, t.admin]
+  )
+  const resolveOperationActionLabel = useCallback(
+    (action: string) => {
+      switch (action) {
+        case 'create':
+          return t.admin.actionCreate
+        case 'update':
+          return t.admin.actionUpdate
+        case 'delete':
+          return t.admin.actionDelete
+        case 'login':
+          return t.admin.actionLogin
+        case 'register':
+          return t.admin.logActionRegister
+        case 'verify_email':
+          return t.admin.logActionVerifyEmail
+        case 'assign_tracking':
+          return t.admin.logActionAssignTracking
+        case 'complete':
+          return t.admin.logActionComplete
+        case 'cancel':
+          return t.admin.logActionCancel
+        case 'refund':
+          return t.admin.logActionRefund
+        case 'mark_paid':
+          return t.admin.logActionMarkPaid
+        case 'deliver_virtual_stock':
+          return t.admin.logActionDeliverVirtualStock
+        case 'request_resubmit':
+          return t.admin.logActionRequestResubmit
+        case 'batch_complete_orders':
+          return t.admin.logActionBatchCompleteOrders
+        case 'batch_cancel_orders':
+          return t.admin.logActionBatchCancelOrders
+        case 'batch_delete_orders':
+          return t.admin.logActionBatchDeleteOrders
+        case 'create_draft':
+          return t.admin.logActionCreateDraft
+        case 'create_draft_failed':
+          return t.admin.logActionCreateDraftFailed
+        case 'admin_create_order':
+          return t.admin.logActionAdminCreateOrder
+        case 'update_price':
+          return t.admin.logActionUpdatePrice
+        case 'form_submit':
+          return t.admin.logActionFormSubmit
+        case 'form_submit_failed':
+          return t.admin.logActionFormSubmitFailed
+        case 'payment_method_selected':
+          return t.admin.logActionPaymentMethodSelected
+        case 'adjust_stock':
+          return t.admin.logActionAdjustStock
+        case 'import':
+          return t.admin.logActionImport
+        case 'payment_method_market_preview':
+          return t.admin.logActionPaymentMethodMarketPreview
+        case 'payment_method_init':
+          return t.admin.logActionPaymentMethodInit
+        case 'payment_method_legacy_migration':
+          return t.admin.logActionPaymentMethodLegacyMigration
+        case 'payment_success':
+          return t.admin.logActionPaymentSuccess
+        case 'payment_update_failed':
+          return t.admin.logActionPaymentUpdateFailed
+        case 'payment_polling_add':
+          return t.admin.logActionPaymentPollingAdd
+        case 'payment_polling_timeout':
+          return t.admin.logActionPaymentPollingTimeout
+        case 'payment_polling_max_retries':
+          return t.admin.logActionPaymentPollingMaxRetries
+        case 'payment_polling_check_failed':
+          return t.admin.logActionPaymentPollingCheckFailed
+        case 'payment_polling_backfill':
+          return t.admin.logActionPaymentPollingBackfill
+        case 'check_auto_delivery_failed':
+          return t.admin.logActionCheckAutoDeliveryFailed
+        case 'virtual_delivery_failed':
+          return t.admin.logActionVirtualDeliveryFailed
+        case 'order_auto_cancelled':
+          return t.admin.logActionOrderAutoCancelled
+        case 'queue_marketing':
+          return t.admin.logActionQueueMarketing
+        case 'maintenance':
+          return t.admin.logActionMaintenance
+        case 'order_cancel_service_start':
+          return t.admin.logActionOrderCancelServiceStart
+        case 'order_cancel_service_stop':
+          return t.admin.logActionOrderCancelServiceStop
+        case 'order_auto_cancel':
+          return t.admin.logActionOrderAutoCancel
+        case 'payment_polling_start':
+          return t.admin.logActionPaymentPollingStart
+        case 'payment_polling_stop':
+          return t.admin.logActionPaymentPollingStop
+        case 'payment_polling_recover':
+          return t.admin.logActionPaymentPollingRecover
+        case 'ticket_attachment_cleanup_start':
+          return t.admin.logActionTicketAttachmentCleanupStart
+        case 'ticket_attachment_cleanup_stop':
+          return t.admin.logActionTicketAttachmentCleanupStop
+        case 'ticket_attachment_cleanup':
+          return t.admin.logActionTicketAttachmentCleanup
+        case 'ticket_auto_close_start':
+          return t.admin.logActionTicketAutoCloseStart
+        case 'ticket_auto_close_stop':
+          return t.admin.logActionTicketAutoCloseStop
+        case 'ticket_auto_close':
+          return t.admin.logActionTicketAutoClose
+        default:
+          return locale === 'zh' ? String(action || '') : humanizeLogToken(action)
+      }
+    },
+    [locale, t.admin]
+  )
   const operationResourceOptions = useMemo(() => {
     const observedResourceTypes = uniqueStrings(
       (operationLogs?.data?.items || []).map((item: any) => item?.resource_type)
     )
-    const orderedValues = uniqueStrings([
-      ...operationResourceOrder,
-      ...observedResourceTypes,
-    ])
+    const orderedValues = uniqueStrings([...operationResourceOrder, ...observedResourceTypes])
     return orderedValues.map((value) => ({
       value,
       label: resolveOperationResourceLabel(value),
     }))
-  }, [operationLogs?.data?.items, t])
+  }, [operationLogs?.data?.items, resolveOperationResourceLabel])
   const operationActionOptions = useMemo(() => {
     const selectedResourceType = operationFilters.resource_type
     const defaultActions = selectedResourceType
@@ -451,7 +454,7 @@ export default function LogsPage() {
       value,
       label: resolveOperationActionLabel(value),
     }))
-  }, [operationFilters.resource_type, operationLogs?.data?.items, t])
+  }, [operationFilters.resource_type, operationLogs?.data?.items, resolveOperationActionLabel])
   const adminLogsPluginContext = {
     view: 'admin_logs',
     active_tab: activeTab,
@@ -532,7 +535,9 @@ export default function LogsPage() {
       accessorKey: 'resource_type',
       cell: ({ row }: { row: { original: any } }) =>
         row.original.resource_type ? (
-          <span className="text-sm">{resolveOperationResourceLabel(row.original.resource_type)}</span>
+          <span className="text-sm">
+            {resolveOperationResourceLabel(row.original.resource_type)}
+          </span>
         ) : (
           <span className="text-muted-foreground">-</span>
         ),
@@ -815,16 +820,14 @@ export default function LogsPage() {
                   <Label htmlFor="resource_type">{t.admin.resourceType}</Label>
                   <Select
                     value={operationFilters.resource_type || 'all'}
-                    onValueChange={(value) =>
-                      {
-                        setOperationFilters({
-                          ...operationFilters,
-                          resource_type: value === 'all' ? '' : value,
-                          action: '',
-                        })
-                        setOperationPage(1)
-                      }
-                    }
+                    onValueChange={(value) => {
+                      setOperationFilters({
+                        ...operationFilters,
+                        resource_type: value === 'all' ? '' : value,
+                        action: '',
+                      })
+                      setOperationPage(1)
+                    }}
                   >
                     <SelectTrigger id="resource_type">
                       <SelectValue placeholder={t.admin.all} />
@@ -843,15 +846,13 @@ export default function LogsPage() {
                   <Label htmlFor="action">{t.admin.operationType}</Label>
                   <Select
                     value={operationFilters.action || 'all'}
-                    onValueChange={(value) =>
-                      {
-                        setOperationFilters({
-                          ...operationFilters,
-                          action: value === 'all' ? '' : value,
-                        })
-                        setOperationPage(1)
-                      }
-                    }
+                    onValueChange={(value) => {
+                      setOperationFilters({
+                        ...operationFilters,
+                        action: value === 'all' ? '' : value,
+                      })
+                      setOperationPage(1)
+                    }}
                   >
                     <SelectTrigger id="action">
                       <SelectValue placeholder={t.admin.all} />

@@ -106,7 +106,10 @@ func (h *KnowledgeHandler) ListArticles(c *gin.Context) {
 
 // GetArticle 文章详情
 func (h *KnowledgeHandler) GetArticle(c *gin.Context) {
-	userID := middleware.MustGetUserID(c)
+	userID, userIDOK := middleware.RequireUserID(c)
+	if !userIDOK {
+		return
+	}
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		response.BadRequest(c, "Invalid ID")
