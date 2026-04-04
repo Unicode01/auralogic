@@ -585,7 +585,10 @@ type CompleteOrderRequest struct {
 
 // CompleteOrder Admin标记Order完成
 func (h *OrderHandler) CompleteOrder(c *gin.Context) {
-	adminID := middleware.MustGetUserID(c)
+	adminID, adminIDOK := middleware.RequireUserID(c)
+	if !adminIDOK {
+		return
+	}
 	orderID, ok := parseAdminOrderID(c)
 	if !ok {
 		return
@@ -694,7 +697,10 @@ type CancelOrderRequest struct {
 
 // CancelOrder 取消Order
 func (h *OrderHandler) CancelOrder(c *gin.Context) {
-	adminID := middleware.MustGetUserID(c)
+	adminID, adminIDOK := middleware.RequireUserID(c)
+	if !adminIDOK {
+		return
+	}
 	orderID, ok := parseAdminOrderID(c)
 	if !ok {
 		return
@@ -806,7 +812,10 @@ type ConfirmRefundRequest struct {
 
 // RefundOrder 退款Order
 func (h *OrderHandler) RefundOrder(c *gin.Context) {
-	adminID := middleware.MustGetUserID(c)
+	adminID, adminIDOK := middleware.RequireUserID(c)
+	if !adminIDOK {
+		return
+	}
 	orderID, ok := parseAdminOrderID(c)
 	if !ok {
 		return
@@ -990,7 +999,10 @@ func (h *OrderHandler) RefundOrder(c *gin.Context) {
 
 // ConfirmRefund 手动确认退款完成
 func (h *OrderHandler) ConfirmRefund(c *gin.Context) {
-	adminID := middleware.MustGetUserID(c)
+	adminID, adminIDOK := middleware.RequireUserID(c)
+	if !adminIDOK {
+		return
+	}
 	orderID, ok := parseAdminOrderID(c)
 	if !ok {
 		return
@@ -1183,7 +1195,10 @@ func (h *OrderHandler) ConfirmRefund(c *gin.Context) {
 
 // MarkAsPaid 标记订单为已付款
 func (h *OrderHandler) MarkAsPaid(c *gin.Context) {
-	adminID := middleware.MustGetUserID(c)
+	adminID, adminIDOK := middleware.RequireUserID(c)
+	if !adminIDOK {
+		return
+	}
 	orderID, ok := parseAdminOrderID(c)
 	if !ok {
 		return
@@ -1282,7 +1297,10 @@ func (h *OrderHandler) MarkAsPaid(c *gin.Context) {
 
 // DeliverVirtualStock 手动发货虚拟商品库存
 func (h *OrderHandler) DeliverVirtualStock(c *gin.Context) {
-	adminID := middleware.MustGetUserID(c)
+	adminID, adminIDOK := middleware.RequireUserID(c)
+	if !adminIDOK {
+		return
+	}
 	orderID, ok := parseAdminOrderID(c)
 	if !ok {
 		return
@@ -1388,7 +1406,10 @@ func (h *OrderHandler) DeliverVirtualStock(c *gin.Context) {
 
 // DeleteOrder DeleteOrder
 func (h *OrderHandler) DeleteOrder(c *gin.Context) {
-	adminID := middleware.MustGetUserID(c)
+	adminID, adminIDOK := middleware.RequireUserID(c)
+	if !adminIDOK {
+		return
+	}
 	if adminID == 0 {
 		response.Unauthorized(c, "User not authenticated")
 		return
@@ -1482,7 +1503,10 @@ type UpdateShippingInfoRequest struct {
 
 // UpdateShippingInfo UpdateOrder收货Info（need order.edit Permission）
 func (h *OrderHandler) UpdateShippingInfo(c *gin.Context) {
-	adminID := middleware.MustGetUserID(c)
+	adminID, adminIDOK := middleware.RequireUserID(c)
+	if !adminIDOK {
+		return
+	}
 	if adminID == 0 {
 		response.Unauthorized(c, "User not authenticated")
 		return
@@ -1926,7 +1950,10 @@ type BatchUpdateOrdersRequest struct {
 
 // BatchUpdateOrders 批量操作订单（完成/取消/删除）
 func (h *OrderHandler) BatchUpdateOrders(c *gin.Context) {
-	adminID := middleware.MustGetUserID(c)
+	adminID, adminIDOK := middleware.RequireUserID(c)
+	if !adminIDOK {
+		return
+	}
 
 	var req BatchUpdateOrdersRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -2184,7 +2211,10 @@ type UpdateOrderPriceRequest struct {
 
 // UpdateOrderPrice 修改未付款订单价格
 func (h *OrderHandler) UpdateOrderPrice(c *gin.Context) {
-	adminID := middleware.MustGetUserID(c)
+	adminID, adminIDOK := middleware.RequireUserID(c)
+	if !adminIDOK {
+		return
+	}
 	if adminID == 0 {
 		response.Unauthorized(c, "User not authenticated")
 		return

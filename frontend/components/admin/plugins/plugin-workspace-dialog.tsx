@@ -1,6 +1,7 @@
 'use client'
 
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -9,16 +10,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
 } from 'react'
 
-import {
-  Copy,
-  Loader2,
-  RefreshCw,
-  RotateCcw,
-  Search,
-  Trash2,
-  Wifi,
-  WifiOff,
-} from 'lucide-react'
+import { Copy, Loader2, RefreshCw, RotateCcw, Search, Trash2, Wifi, WifiOff } from 'lucide-react'
 
 import { useToast } from '@/hooks/use-toast'
 import { Button } from '@/components/ui/button'
@@ -70,9 +62,7 @@ import {
   resolvePluginWorkspaceHistoryNavigation,
   shouldHandlePluginWorkspaceHistoryNavigation,
 } from '@/lib/plugin-workspace-history'
-import {
-  resolvePluginWorkspaceSubmission,
-} from '@/lib/plugin-workspace-command'
+import { resolvePluginWorkspaceSubmission } from '@/lib/plugin-workspace-command'
 import { parseWorkspaceRuntimeConsoleLine } from '@/lib/plugin-workspace-runtime'
 import {
   applyWorkspaceStreamEvent,
@@ -402,8 +392,7 @@ function buildWorkspaceTerminalDisplayItems(
   }
 
   for (const block of blocks) {
-    const canVisualize =
-      block.kind === 'stdout' || block.kind === 'stderr' || block.kind === 'log'
+    const canVisualize = block.kind === 'stdout' || block.kind === 'stderr' || block.kind === 'log'
     const consolePreviews = canVisualize
       ? extractWorkspaceConsolePreviewsFromMetadata(block.metadata)
       : []
@@ -881,9 +870,10 @@ export function PluginWorkspaceDialog({
   const [socketSignalPending, setSocketSignalPending] = useState<'interrupt' | 'terminate' | null>(
     null
   )
-  const [runtimeSignalPending, setRuntimeSignalPending] = useState<'interrupt' | 'terminate' | null>(
-    null
-  )
+  const [runtimeSignalPending, setRuntimeSignalPending] = useState<
+    'interrupt' | 'terminate' | null
+  >(null)
+  const runtimeStateRef = useRef<AdminPluginWorkspaceRuntimeState | null>(null)
   const workspaceSocketRef = useRef<WebSocket | null>(null)
   const shellInputRef = useRef<HTMLTextAreaElement | null>(null)
   const pendingShellSelectionRef = useRef<{ start: number; end: number } | null>(null)
@@ -910,66 +900,75 @@ export function PluginWorkspaceDialog({
     [plugin?.id]
   )
 
-  const clearSocketInputPending = () => {
+  useEffect(() => {
+    runtimeStateRef.current = runtimeState
+  }, [runtimeState])
+
+  const clearSocketInputPending = useCallback(() => {
     pendingTerminalRequestIDRef.current = ''
     pendingTerminalLineRef.current = ''
     pendingTerminalActionRef.current = ''
     setSocketInputPending(false)
-  }
+  }, [])
 
-  const clearSocketSignalPending = () => {
+  const clearSocketSignalPending = useCallback(() => {
     pendingSignalRequestRef.current = null
     setSocketSignalPending(null)
-  }
+  }, [])
 
-  const clearPendingRuntimeTask = () => {
+  const clearPendingRuntimeTask = useCallback(() => {
     pendingRuntimeTaskIdRef.current = ''
     setPendingRuntimeTaskId('')
-  }
+  }, [])
 
-  const setPendingRuntimeTask = (taskId: string) => {
+  const setPendingRuntimeTask = useCallback((taskId: string) => {
     const normalizedTaskId = String(taskId || '').trim()
     pendingRuntimeTaskIdRef.current = normalizedTaskId
     setPendingRuntimeTaskId(normalizedTaskId)
-  }
+  }, [])
 
-  const setRuntimeCommandPendingState = (next: boolean) => {
+  const setRuntimeCommandPendingState = useCallback((next: boolean) => {
     runtimeCommandPendingRef.current = next
     setRuntimeCommandPending(next)
-  }
+  }, [])
 
-  const setRuntimeSignalPendingState = (next: 'interrupt' | 'terminate' | null) => {
+  const setRuntimeSignalPendingState = useCallback((next: 'interrupt' | 'terminate' | null) => {
     runtimeSignalPendingRef.current = next
     setRuntimeSignalPending(next)
-  }
+  }, [])
 
-  const hasPendingTerminalSubmission = () =>
-    terminalSubmitting ||
-    socketInputPending ||
-    runtimeCommandPendingRef.current ||
-    pendingTerminalRequestIDRef.current.trim().length > 0
+  const hasPendingTerminalSubmission = useCallback(
+    () =>
+      terminalSubmitting ||
+      socketInputPending ||
+      runtimeCommandPendingRef.current ||
+      pendingTerminalRequestIDRef.current.trim().length > 0,
+    [socketInputPending, terminalSubmitting]
+  )
 
-  const setFollowTerminalOutputState = (next: boolean) => {
+  const setFollowTerminalOutputState = useCallback((next: boolean) => {
     followTerminalOutputRef.current = next
     setFollowTerminalOutput(next)
-  }
+  }, [])
 
-  const markTerminalUserScrollIntent = () => {
+  const markTerminalUserScrollIntent = useCallback(() => {
     terminalUserScrollIntentRef.current = Date.now()
-  }
+  }, [])
 
-  const hasRecentTerminalUserScrollIntent = () =>
-    Date.now() - terminalUserScrollIntentRef.current <= 400
+  const hasRecentTerminalUserScrollIntent = useCallback(
+    () => Date.now() - terminalUserScrollIntentRef.current <= 400,
+    []
+  )
 
-  const isViewportNearBottom = (viewport: HTMLDivElement | null) => {
+  const isViewportNearBottom = useCallback((viewport: HTMLDivElement | null) => {
     if (!viewport) {
       return true
     }
     const remaining = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight
     return remaining <= 96
-  }
+  }, [])
 
-  const cancelScheduledTerminalScroll = () => {
+  const cancelScheduledTerminalScroll = useCallback(() => {
     if (typeof window === 'undefined') {
       return
     }
@@ -977,126 +976,145 @@ export function PluginWorkspaceDialog({
       window.cancelAnimationFrame(terminalScrollFrameRef.current)
       terminalScrollFrameRef.current = null
     }
-  }
+  }, [])
 
-  const scrollTerminalToBottom = (options?: {
-    preserveFollow?: boolean
-    frameCount?: number
-  }) => {
-    if (typeof window === 'undefined') {
-      return
-    }
-    cancelScheduledTerminalScroll()
-    const preserveFollow = options?.preserveFollow ?? false
-    let remainingFrames = Math.max(1, options?.frameCount ?? 2)
-    const flushScroll = () => {
-      const viewport = terminalViewportRef.current
-      if (!viewport) {
+  const scrollTerminalToBottom = useCallback(
+    (options?: { preserveFollow?: boolean; frameCount?: number }) => {
+      if (typeof window === 'undefined') {
+        return
+      }
+      cancelScheduledTerminalScroll()
+      const preserveFollow = options?.preserveFollow ?? false
+      let remainingFrames = Math.max(1, options?.frameCount ?? 2)
+      const flushScroll = () => {
+        const viewport = terminalViewportRef.current
+        if (!viewport) {
+          terminalScrollFrameRef.current = null
+          return
+        }
+        viewport.scrollTop = viewport.scrollHeight
+        remainingFrames -= 1
+        if (remainingFrames > 0) {
+          terminalScrollFrameRef.current = window.requestAnimationFrame(flushScroll)
+          return
+        }
         terminalScrollFrameRef.current = null
+      }
+      terminalScrollFrameRef.current = window.requestAnimationFrame(flushScroll)
+      if (!preserveFollow) {
+        setFollowTerminalOutputState(true)
+      }
+      setPendingTerminalOutput(false)
+    },
+    [cancelScheduledTerminalScroll, setFollowTerminalOutputState]
+  )
+
+  const setSocketInputPendingRequest = useCallback(
+    (
+      requestID: string,
+      line: string,
+      action: 'terminal_line' | 'runtime_eval' | 'runtime_inspect'
+    ) => {
+      pendingTerminalRequestIDRef.current = requestID
+      pendingTerminalLineRef.current = line
+      pendingTerminalActionRef.current = action
+      setSocketInputPending(true)
+    },
+    []
+  )
+
+  const setSocketSignalPendingRequest = useCallback(
+    (requestID: string, signal: 'interrupt' | 'terminate') => {
+      pendingSignalRequestRef.current = { id: requestID, signal }
+      setSocketSignalPending(signal)
+    },
+    []
+  )
+
+  const handleWorkspaceSocketAck = useCallback(
+    (ack: AdminPluginWorkspaceWebSocketAck | undefined) => {
+      if (!ack) {
         return
       }
-      viewport.scrollTop = viewport.scrollHeight
-      remainingFrames -= 1
-      if (remainingFrames > 0) {
-        terminalScrollFrameRef.current = window.requestAnimationFrame(flushScroll)
-        return
+      if (ack.workspace) {
+        setLiveWorkspace((current) => preferNewerWorkspaceSnapshot(current, ack.workspace || null))
       }
-      terminalScrollFrameRef.current = null
-    }
-    terminalScrollFrameRef.current = window.requestAnimationFrame(flushScroll)
-    if (!preserveFollow) {
-      setFollowTerminalOutputState(true)
-    }
-    setPendingTerminalOutput(false)
-  }
-
-  const setSocketInputPendingRequest = (
-    requestID: string,
-    line: string,
-    action: 'terminal_line' | 'runtime_eval' | 'runtime_inspect'
-  ) => {
-    pendingTerminalRequestIDRef.current = requestID
-    pendingTerminalLineRef.current = line
-    pendingTerminalActionRef.current = action
-    setSocketInputPending(true)
-  }
-
-  const setSocketSignalPendingRequest = (requestID: string, signal: 'interrupt' | 'terminate') => {
-    pendingSignalRequestRef.current = { id: requestID, signal }
-    setSocketSignalPending(signal)
-  }
-
-  const handleWorkspaceSocketAck = (ack: AdminPluginWorkspaceWebSocketAck | undefined) => {
-    if (!ack) {
-      return
-    }
-    if (ack.workspace) {
-      setLiveWorkspace((current) => preferNewerWorkspaceSnapshot(current, ack.workspace || null))
-    }
-    const action = String(ack.action || '')
-      .trim()
-      .toLowerCase()
-    if (action === 'terminal_line' || action === 'runtime_eval' || action === 'runtime_inspect') {
-      const nextRuntimeState = extractWorkspaceRuntimeState(ack)
-      if (nextRuntimeState) {
-        setRuntimeState(nextRuntimeState)
-        setRuntimeStateError('')
-      }
-      if (
-        pendingTerminalRequestIDRef.current &&
-        workspaceRequestIDMatches(pendingTerminalRequestIDRef.current, ack.request_id) &&
-        action === pendingTerminalActionRef.current
-      ) {
-        const wasRuntimeSignalPending = Boolean(runtimeSignalPendingRef.current)
-        const submittedLine = pendingTerminalLineRef.current
-        clearSocketInputPending()
-        if (action === 'runtime_eval' || action === 'runtime_inspect') {
-          clearPendingRuntimeTask()
-          setRuntimeSignalPendingState(null)
+      const action = String(ack.action || '')
+        .trim()
+        .toLowerCase()
+      if (action === 'terminal_line' || action === 'runtime_eval' || action === 'runtime_inspect') {
+        const nextRuntimeState = extractWorkspaceRuntimeState(ack)
+        if (nextRuntimeState) {
+          setRuntimeState(nextRuntimeState)
+          setRuntimeStateError('')
         }
-        if (!ack.success) {
-          if (submittedLine) {
-            setCommandLineText((current) => (current ? current : submittedLine))
+        if (
+          pendingTerminalRequestIDRef.current &&
+          workspaceRequestIDMatches(pendingTerminalRequestIDRef.current, ack.request_id) &&
+          action === pendingTerminalActionRef.current
+        ) {
+          const wasRuntimeSignalPending = Boolean(runtimeSignalPendingRef.current)
+          const submittedLine = pendingTerminalLineRef.current
+          clearSocketInputPending()
+          if (action === 'runtime_eval' || action === 'runtime_inspect') {
+            clearPendingRuntimeTask()
+            setRuntimeSignalPendingState(null)
           }
-          const errorText = String(ack.error || t.admin.pluginWorkspaceStreamError)
-          setStreamError(errorText)
-          if (!(wasRuntimeSignalPending && isWorkspaceCancellationErrorText(errorText))) {
+          if (!ack.success) {
+            if (submittedLine) {
+              setCommandLineText((current) => (current ? current : submittedLine))
+            }
+            const errorText = String(ack.error || t.admin.pluginWorkspaceStreamError)
+            setStreamError(errorText)
+            if (!(wasRuntimeSignalPending && isWorkspaceCancellationErrorText(errorText))) {
+              toast.error(errorText)
+            }
+            return
+          }
+          setStreamError('')
+        }
+        return
+      }
+      if (action === 'signal') {
+        const pendingSignal = pendingSignalRequestRef.current
+        if (pendingSignal && workspaceRequestIDMatches(pendingSignal.id, ack.request_id)) {
+          clearSocketSignalPending()
+          if (!ack.success) {
+            const errorText = String(ack.error || t.admin.pluginWorkspaceStreamError)
+            setStreamError(errorText)
             toast.error(errorText)
+            return
           }
-          return
+          setStreamError('')
         }
-        setStreamError('')
       }
-      return
-    }
-    if (action === 'signal') {
-      const pendingSignal = pendingSignalRequestRef.current
-      if (pendingSignal && workspaceRequestIDMatches(pendingSignal.id, ack.request_id)) {
-        clearSocketSignalPending()
-        if (!ack.success) {
-          const errorText = String(ack.error || t.admin.pluginWorkspaceStreamError)
-          setStreamError(errorText)
-          toast.error(errorText)
-          return
-        }
-        setStreamError('')
-      }
-    }
-  }
+    },
+    [
+      clearPendingRuntimeTask,
+      clearSocketInputPending,
+      clearSocketSignalPending,
+      setRuntimeSignalPendingState,
+      t.admin.pluginWorkspaceStreamError,
+      toast,
+    ]
+  )
 
-  const sendWorkspaceSocketFrame = (frame: AdminPluginWorkspaceWebSocketClientFrame): boolean => {
-    const socket = workspaceSocketRef.current
-    if (!socket || socket.readyState !== WebSocket.OPEN) {
-      return false
-    }
-    try {
-      socket.send(JSON.stringify(frame))
-      return true
-    } catch (error: any) {
-      setStreamError(String(error?.message || t.admin.pluginWorkspaceStreamError))
-      return false
-    }
-  }
+  const sendWorkspaceSocketFrame = useCallback(
+    (frame: AdminPluginWorkspaceWebSocketClientFrame): boolean => {
+      const socket = workspaceSocketRef.current
+      if (!socket || socket.readyState !== WebSocket.OPEN) {
+        return false
+      }
+      try {
+        socket.send(JSON.stringify(frame))
+        return true
+      } catch (error: any) {
+        setStreamError(String(error?.message || t.admin.pluginWorkspaceStreamError))
+        return false
+      }
+    },
+    [t.admin.pluginWorkspaceStreamError]
+  )
 
   useEffect(() => {
     if (open) {
@@ -1113,7 +1131,7 @@ export function PluginWorkspaceDialog({
       terminalUserScrollIntentRef.current = 0
       terminalLastSeqRef.current = 0
     }
-  }, [open])
+  }, [open, setFollowTerminalOutputState, setRuntimeCommandPendingState])
 
   useEffect(() => {
     if (!open) {
@@ -1130,7 +1148,14 @@ export function PluginWorkspaceDialog({
     clearSocketSignalPending()
     clearPendingRuntimeTask()
     setRuntimeSignalPendingState(null)
-  }, [open, plugin?.id])
+  }, [
+    clearPendingRuntimeTask,
+    clearSocketInputPending,
+    clearSocketSignalPending,
+    open,
+    plugin?.id,
+    setRuntimeSignalPendingState,
+  ])
 
   useEffect(() => {
     setCompletionSelectedIndex(0)
@@ -1206,7 +1231,15 @@ export function PluginWorkspaceDialog({
       return
     }
     setLiveWorkspace(workspace || null)
-  }, [open, plugin?.id])
+  }, [
+    cancelScheduledTerminalScroll,
+    clearSocketInputPending,
+    clearSocketSignalPending,
+    open,
+    plugin?.id,
+    setRuntimeCommandPendingState,
+    workspace,
+  ])
 
   useEffect(() => {
     if (!open || !workspace) return
@@ -1380,7 +1413,16 @@ export function PluginWorkspaceDialog({
       clearSocketSignalPending()
       controller.abort()
     }
-  }, [open, plugin?.id, locale, t.admin.pluginWorkspaceStreamError])
+  }, [
+    cancelScheduledTerminalScroll,
+    clearSocketInputPending,
+    clearSocketSignalPending,
+    handleWorkspaceSocketAck,
+    locale,
+    open,
+    plugin?.id,
+    t.admin.pluginWorkspaceStreamError,
+  ])
 
   const normalizedSearchText = searchText.trim().toLowerCase()
   const effectiveWorkspace = liveWorkspace || workspace || null
@@ -1538,10 +1580,7 @@ export function PluginWorkspaceDialog({
   const completionVisibleStart =
     completionSuggestions.length <= 8
       ? 0
-      : Math.max(
-          0,
-          Math.min(completionSelectedIndex - 3, completionSuggestions.length - 8)
-        )
+      : Math.max(0, Math.min(completionSelectedIndex - 3, completionSuggestions.length - 8))
   const completionVisibleSuggestions = completionSuggestions.slice(
     completionVisibleStart,
     completionVisibleStart + 8
@@ -1549,8 +1588,7 @@ export function PluginWorkspaceDialog({
   const completionHiddenBefore = completionVisibleStart
   const completionHiddenAfter = Math.max(
     0,
-    completionSuggestions.length -
-      (completionVisibleStart + completionVisibleSuggestions.length)
+    completionSuggestions.length - (completionVisibleStart + completionVisibleSuggestions.length)
   )
 
   const copyAll = async () => {
@@ -1627,7 +1665,7 @@ export function PluginWorkspaceDialog({
     }
   }
 
-  const focusShellInput = () => {
+  const focusShellInput = useCallback(() => {
     if (typeof window === 'undefined') {
       return
     }
@@ -1641,7 +1679,7 @@ export function PluginWorkspaceDialog({
       const length = input.value.length
       input.setSelectionRange(length, length)
     })
-  }
+  }, [])
 
   const replaceCommandLineText = (
     value: string,
@@ -1704,7 +1742,8 @@ export function PluginWorkspaceDialog({
     const selectionEnd = input?.selectionEnd ?? selectionStart
     const token = String(completionOverlay?.resolvedToken || completionOverlay?.token || '').trim()
     const tokenLength = token.length
-    const replaceStart = tokenLength > 0 ? Math.max(0, selectionStart - tokenLength) : selectionStart
+    const replaceStart =
+      tokenLength > 0 ? Math.max(0, selectionStart - tokenLength) : selectionStart
     const nextValue = `${commandLineText.slice(0, replaceStart)}${normalizedSuggestion}${commandLineText.slice(selectionEnd)}`
     setCompletionStatus('')
     setCompletionOverlay(null)
@@ -1730,32 +1769,35 @@ export function PluginWorkspaceDialog({
     })
   }
 
-  const fetchRuntimeState = async (options?: { silent?: boolean }) => {
-    const pluginID = plugin?.id
-    if (!pluginID) {
-      return
-    }
-    const shouldShowLoading = !options?.silent || !runtimeState
-    if (shouldShowLoading) {
-      setRuntimeStateLoading(true)
-    }
-    try {
-      const response = await getAdminPluginWorkspaceRuntimeState(pluginID)
-      const nextState = extractWorkspaceRuntimeState(response)
-      setRuntimeState(nextState)
-      setRuntimeStateError('')
-    } catch (error: any) {
-      const message = String(error?.message || t.admin.pluginWorkspaceStreamError)
-      setRuntimeStateError(message)
-      if (!options?.silent) {
-        toast.error(message)
+  const fetchRuntimeState = useCallback(
+    async (options?: { silent?: boolean }) => {
+      const pluginID = plugin?.id
+      if (!pluginID) {
+        return
       }
-    } finally {
+      const shouldShowLoading = !options?.silent || !runtimeStateRef.current
       if (shouldShowLoading) {
-        setRuntimeStateLoading(false)
+        setRuntimeStateLoading(true)
       }
-    }
-  }
+      try {
+        const response = await getAdminPluginWorkspaceRuntimeState(pluginID)
+        const nextState = extractWorkspaceRuntimeState(response)
+        setRuntimeState(nextState)
+        setRuntimeStateError('')
+      } catch (error: any) {
+        const message = String(error?.message || t.admin.pluginWorkspaceStreamError)
+        setRuntimeStateError(message)
+        if (!options?.silent) {
+          toast.error(message)
+        }
+      } finally {
+        if (shouldShowLoading) {
+          setRuntimeStateLoading(false)
+        }
+      }
+    },
+    [plugin?.id, t.admin.pluginWorkspaceStreamError, toast]
+  )
 
   const rebuildRuntime = async () => {
     const pluginID = plugin?.id
@@ -1913,47 +1955,63 @@ export function PluginWorkspaceDialog({
     }
   }
 
-  const signalWorkspace = async (signal: 'interrupt' | 'terminate') => {
-    if (effectiveSignaling) return
-    if (!controlGranted) {
-      toast.error(controlStatusMessage)
-      return
-    }
-    if (!hasCancelableTask) return
-    if (!activeTaskId) {
-      const pluginID = plugin?.id
-      const runtimeTaskID = pendingRuntimeTaskIdRef.current.trim()
-      if (!pluginID || !runtimeTaskID) {
+  const signalWorkspace = useCallback(
+    async (signal: 'interrupt' | 'terminate') => {
+      if (effectiveSignaling) return
+      if (!controlGranted) {
+        toast.error(controlStatusMessage)
         return
       }
-      setRuntimeSignalPendingState(signal)
-      try {
-        await cancelAdminPluginExecutionTask(pluginID, runtimeTaskID)
-        setStreamError('')
-      } catch (error: any) {
-        const errorText = String(error?.message || t.admin.pluginWorkspaceStreamError)
-        setRuntimeSignalPendingState(null)
-        setStreamError(errorText)
-        toast.error(errorText)
+      if (!hasCancelableTask) return
+      if (!activeTaskId) {
+        const pluginID = plugin?.id
+        const runtimeTaskID = pendingRuntimeTaskIdRef.current.trim()
+        if (!pluginID || !runtimeTaskID) {
+          return
+        }
+        setRuntimeSignalPendingState(signal)
+        try {
+          await cancelAdminPluginExecutionTask(pluginID, runtimeTaskID)
+          setStreamError('')
+        } catch (error: any) {
+          const errorText = String(error?.message || t.admin.pluginWorkspaceStreamError)
+          setRuntimeSignalPendingState(null)
+          setStreamError(errorText)
+          toast.error(errorText)
+        }
+        return
       }
-      return
-    }
-    const requestID = createWorkspaceRequestID()
-    if (
-      sendWorkspaceSocketFrame({
-        type: 'signal',
-        request_id: requestID,
+      const requestID = createWorkspaceRequestID()
+      if (
+        sendWorkspaceSocketFrame({
+          type: 'signal',
+          request_id: requestID,
+          signal,
+        })
+      ) {
+        setSocketSignalPendingRequest(requestID, signal)
+        setStreamError('')
+        return
+      }
+      onSignal({
         signal,
       })
-    ) {
-      setSocketSignalPendingRequest(requestID, signal)
-      setStreamError('')
-      return
-    }
-    onSignal({
-      signal,
-    })
-  }
+    },
+    [
+      activeTaskId,
+      controlGranted,
+      controlStatusMessage,
+      effectiveSignaling,
+      hasCancelableTask,
+      onSignal,
+      plugin?.id,
+      sendWorkspaceSocketFrame,
+      setRuntimeSignalPendingState,
+      setSocketSignalPendingRequest,
+      t.admin.pluginWorkspaceStreamError,
+      toast,
+    ]
+  )
 
   const handleTerminalInputKeyDown = (event: ReactKeyboardEvent<HTMLTextAreaElement>) => {
     if (
@@ -2174,7 +2232,7 @@ export function PluginWorkspaceDialog({
     return () => {
       window.removeEventListener('keydown', onKeyDown)
     }
-  }, [open, hasCancelableTask, controlGranted, effectiveSignaling])
+  }, [controlGranted, hasCancelableTask, open, signalWorkspace])
 
   useEffect(() => {
     if (!open) {
@@ -2225,7 +2283,7 @@ export function PluginWorkspaceDialog({
     return () => {
       window.removeEventListener('keydown', onKeyDown)
     }
-  }, [open, searchText, showTerminalSearch])
+  }, [focusShellInput, open, scrollTerminalToBottom, searchText, showTerminalSearch])
 
   useEffect(() => {
     if (!open || !controlGranted) {
@@ -2259,7 +2317,7 @@ export function PluginWorkspaceDialog({
       return
     }
     void fetchRuntimeState({ silent: true })
-  }, [open, plugin?.id, showRuntimePanel])
+  }, [fetchRuntimeState, open, plugin?.id, showRuntimePanel])
 
   useLayoutEffect(() => {
     if (!open) {
@@ -2281,11 +2339,12 @@ export function PluginWorkspaceDialog({
       setPendingTerminalOutput(true)
     }
   }, [
-    open,
-    normalizedSearchText,
-    terminalDisplayItems.length,
     effectiveWorkspace?.last_seq,
     followTerminalOutput,
+    normalizedSearchText,
+    open,
+    scrollTerminalToBottom,
+    terminalDisplayItems.length,
   ])
 
   useEffect(() => {
@@ -2308,10 +2367,16 @@ export function PluginWorkspaceDialog({
     return () => {
       observer.disconnect()
     }
-  }, [open, normalizedSearchText, followTerminalOutput, terminalDisplayItems.length])
+  }, [
+    followTerminalOutput,
+    normalizedSearchText,
+    open,
+    scrollTerminalToBottom,
+    terminalDisplayItems.length,
+  ])
 
   return (
-      <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="flex h-[88vh] max-w-6xl flex-col overflow-hidden border border-neutral-800 bg-neutral-950 p-0 text-neutral-100 shadow-2xl">
         <div className="flex min-h-0 flex-1 flex-col">
           <DialogHeader className="border-b border-white/10 px-4 py-3 text-left">
@@ -2894,7 +2959,6 @@ export function PluginWorkspaceDialog({
                   </Button>
                 ) : null}
               </div>
-
             </div>
           </div>
         </div>

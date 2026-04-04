@@ -90,7 +90,10 @@ func (h *APIKeyHandler) CreateAPIKey(c *gin.Context) {
 		return
 	}
 
-	currentUserID := middleware.MustGetUserID(c)
+	currentUserID, currentUserIDOK := middleware.RequireUserID(c)
+	if !currentUserIDOK {
+		return
+	}
 	if h.pluginManager != nil {
 		originalReq := req
 		hookPayload, payloadErr := adminHookStructToPayload(req)
