@@ -497,7 +497,10 @@ type CreateProductRequest struct {
 
 // CreateProduct CreateProduct
 func (h *ProductHandler) CreateProduct(c *gin.Context) {
-	adminID := middleware.MustGetUserID(c)
+	adminID, adminIDOK := middleware.RequireUserID(c)
+	if !adminIDOK {
+		return
+	}
 	if adminID == 0 {
 		return
 	}
@@ -644,7 +647,10 @@ type UpdateProductRequest struct {
 
 // UpdateProduct UpdateProduct
 func (h *ProductHandler) UpdateProduct(c *gin.Context) {
-	adminID := middleware.MustGetUserID(c)
+	adminID, adminIDOK := middleware.RequireUserID(c)
+	if !adminIDOK {
+		return
+	}
 	if adminID == 0 {
 		return
 	}
@@ -791,7 +797,10 @@ func (h *ProductHandler) UpdateProduct(c *gin.Context) {
 
 // DeleteProduct DeleteProduct
 func (h *ProductHandler) DeleteProduct(c *gin.Context) {
-	adminID := middleware.MustGetUserID(c)
+	adminID, adminIDOK := middleware.RequireUserID(c)
+	if !adminIDOK {
+		return
+	}
 	if adminID == 0 {
 		return
 	}
@@ -1013,7 +1022,10 @@ type UpdateStatusRequest struct {
 
 // UpdateProductStatus UpdateProduct状态
 func (h *ProductHandler) UpdateProductStatus(c *gin.Context) {
-	adminID := middleware.MustGetUserID(c)
+	adminID, adminIDOK := middleware.RequireUserID(c)
+	if !adminIDOK {
+		return
+	}
 	if adminID == 0 {
 		return
 	}
@@ -1180,7 +1192,10 @@ type UpdateInventoryModeRequest struct {
 
 // UpdateInventoryMode UpdateProductInventory模式
 func (h *ProductHandler) UpdateInventoryMode(c *gin.Context) {
-	adminID := middleware.MustGetUserID(c)
+	adminID, adminIDOK := middleware.RequireUserID(c)
+	if !adminIDOK {
+		return
+	}
 	if adminID == 0 {
 		return
 	}

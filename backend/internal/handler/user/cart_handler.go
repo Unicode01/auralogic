@@ -27,7 +27,10 @@ func NewCartHandler(cartService *service.CartService, pluginManager *service.Plu
 
 // GetCart 获取购物车
 func (h *CartHandler) GetCart(c *gin.Context) {
-	userID := middleware.MustGetUserID(c)
+	userID, userIDOK := middleware.RequireUserID(c)
+	if !userIDOK {
+		return
+	}
 
 	items, err := h.cartService.GetCart(userID)
 	if err != nil {
@@ -62,7 +65,10 @@ type AddToCartRequest struct {
 
 // AddToCart 添加商品到购物车
 func (h *CartHandler) AddToCart(c *gin.Context) {
-	userID := middleware.MustGetUserID(c)
+	userID, userIDOK := middleware.RequireUserID(c)
+	if !userIDOK {
+		return
+	}
 
 	var req AddToCartRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -159,7 +165,10 @@ type UpdateQuantityRequest struct {
 
 // UpdateQuantity 更新购物车项数量
 func (h *CartHandler) UpdateQuantity(c *gin.Context) {
-	userID := middleware.MustGetUserID(c)
+	userID, userIDOK := middleware.RequireUserID(c)
+	if !userIDOK {
+		return
+	}
 
 	itemID, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
@@ -259,7 +268,10 @@ func (h *CartHandler) UpdateQuantity(c *gin.Context) {
 
 // RemoveFromCart 从购物车移除商品
 func (h *CartHandler) RemoveFromCart(c *gin.Context) {
-	userID := middleware.MustGetUserID(c)
+	userID, userIDOK := middleware.RequireUserID(c)
+	if !userIDOK {
+		return
+	}
 
 	itemID, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
@@ -322,7 +334,10 @@ func (h *CartHandler) RemoveFromCart(c *gin.Context) {
 
 // ClearCart 清空购物车
 func (h *CartHandler) ClearCart(c *gin.Context) {
-	userID := middleware.MustGetUserID(c)
+	userID, userIDOK := middleware.RequireUserID(c)
+	if !userIDOK {
+		return
+	}
 	clearedCount := 0
 	clearedQuantity := 0
 	if h.pluginManager != nil {
@@ -367,7 +382,10 @@ func (h *CartHandler) ClearCart(c *gin.Context) {
 
 // GetCartCount 获取购物车商品数量
 func (h *CartHandler) GetCartCount(c *gin.Context) {
-	userID := middleware.MustGetUserID(c)
+	userID, userIDOK := middleware.RequireUserID(c)
+	if !userIDOK {
+		return
+	}
 
 	count, err := h.cartService.GetCartCount(userID)
 	if err != nil {

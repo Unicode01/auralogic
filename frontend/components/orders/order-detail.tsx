@@ -1,7 +1,7 @@
 'use client'
 /* eslint-disable @next/next/no-img-element */
 
-import { useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useMemo, useState, type ReactNode } from 'react'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
 import { OrderStatusBadge } from './order-status-badge'
@@ -111,13 +111,18 @@ export function OrderDetail({
   const externalUserId = String(order.externalUserId || order.external_user_id || '').trim()
   const externalOrderId = String(order.externalOrderId || order.external_order_id || '').trim()
   const source = String(order.source || '').trim()
-  const sourcePlatform = String(order.sourcePlatform || order.source_platform || order.platform || '').trim()
+  const sourcePlatform = String(
+    order.sourcePlatform || order.source_platform || order.platform || ''
+  ).trim()
   const adminRemark = String(order.adminRemark || order.admin_remark || '').trim()
-  const buildSectionPluginContext = (section: string, extra?: Record<string, any>) => ({
-    ...(pluginSlotContext || {}),
-    section,
-    ...(extra || {}),
-  })
+  const buildSectionPluginContext = useCallback(
+    (section: string, extra?: Record<string, any>) => ({
+      ...(pluginSlotContext || {}),
+      section,
+      ...(extra || {}),
+    }),
+    [pluginSlotContext]
+  )
   const renderSectionPluginSlot = (
     slotSuffix: string,
     section: string,
@@ -182,7 +187,8 @@ export function OrderDetail({
         return null
     }
   }, [serialGenerationStatus, t.admin])
-  const showSerialGenerationState = Boolean(serialGenerationMeta) && (!serials || serials.length === 0)
+  const showSerialGenerationState =
+    Boolean(serialGenerationMeta) && (!serials || serials.length === 0)
   const SerialGenerationIcon = serialGenerationMeta?.icon
 
   const renderCopyButton = (value: string, label: string) => {
@@ -358,6 +364,7 @@ export function OrderDetail({
 
     return items
   }, [
+    buildSectionPluginContext,
     isDraft,
     isNeedResubmit,
     isVirtualOnly,
@@ -963,7 +970,10 @@ export function OrderDetail({
                   <ShieldCheck className="h-5 w-5 shrink-0" />
                   <span className="truncate">{t.admin.antiCounterfeitSerial}</span>
                 </CardTitle>
-                <Badge variant="outline" className={`shrink-0 ${serialGenerationMeta.badgeClassName}`}>
+                <Badge
+                  variant="outline"
+                  className={`shrink-0 ${serialGenerationMeta.badgeClassName}`}
+                >
                   {serialGenerationMeta.title}
                 </Badge>
               </div>
@@ -972,12 +982,14 @@ export function OrderDetail({
           <CardContent>
             <div className="rounded-lg border border-dashed border-border/70 bg-muted/30 p-4">
               <div className="flex items-start gap-3">
-                  {SerialGenerationIcon ? (
-                    <SerialGenerationIcon className="mt-0.5 h-5 w-5 text-muted-foreground" />
-                  ) : null}
+                {SerialGenerationIcon ? (
+                  <SerialGenerationIcon className="mt-0.5 h-5 w-5 text-muted-foreground" />
+                ) : null}
                 <div className="space-y-1">
                   <p className="text-sm font-medium">{serialGenerationMeta.title}</p>
-                  <p className="text-sm text-muted-foreground">{serialGenerationMeta.description}</p>
+                  <p className="text-sm text-muted-foreground">
+                    {serialGenerationMeta.description}
+                  </p>
                   {serialGenerationError ? (
                     <p className="text-xs text-destructive">
                       {t.admin.serialGenerationErrorLabel}: {serialGenerationError}
