@@ -192,14 +192,20 @@ func GetUserRole(c *gin.Context) (string, bool) {
 	return r, ok
 }
 
-// MustGetUserID 从上下文getUserID，does not exist则返回0并中止请求
-func MustGetUserID(c *gin.Context) uint {
+// RequireUserID 从上下文获取用户 ID；不存在则返回未授权并中止请求
+func RequireUserID(c *gin.Context) (uint, bool) {
 	userID, exists := GetUserID(c)
 	if !exists {
 		response.Unauthorized(c, "Authentication required")
 		c.Abort()
-		return 0
+		return 0, false
 	}
+	return userID, true
+}
+
+// MustGetUserID 从上下文获取用户 ID；不存在则返回 0 并中止请求
+func MustGetUserID(c *gin.Context) uint {
+	userID, _ := RequireUserID(c)
 	return userID
 }
 

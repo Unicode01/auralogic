@@ -103,34 +103,37 @@ function ProfilePageContent() {
   const accountId = user?.id ?? null
   const registeredAt = user?.createdAt || user?.created_at
   const roleLabel = roleLabels[user?.role || ''] || user?.role || t.profile.unknown
-  const userProfilePluginContext = {
-    view: 'user_profile',
-    user: {
-      id: user?.id,
-      role: user?.role,
-      email: user?.email || undefined,
-      name: user?.name || undefined,
-      total_order_count: user?.total_order_count ?? 0,
-      total_spent_minor: user?.total_spent_minor ?? 0,
-      email_verified: user?.email_verified,
-    },
-    summary: {
-      has_admin_access: hasAdminAccess,
-      quick_action_count: pluginQuickActions.length,
-      ticket_enabled: ticketEnabled,
-      is_mobile: isMobile,
-    },
-    state: {
-      has_email: Boolean(user?.email),
-      has_registered_at: Boolean(registeredAt),
-      has_total_orders: (user?.total_order_count ?? 0) > 0,
-      has_total_spent: (user?.total_spent_minor ?? 0) > 0,
-      has_plugin_quick_actions: pluginQuickActions.length > 0,
-      can_open_tickets: ticketEnabled,
-      has_admin_access: hasAdminAccess,
-      email_verified: Boolean(user?.email_verified),
-    },
-  }
+  const userProfilePluginContext = useMemo(
+    () => ({
+      view: 'user_profile',
+      user: {
+        id: user?.id,
+        role: user?.role,
+        email: user?.email || undefined,
+        name: user?.name || undefined,
+        total_order_count: user?.total_order_count ?? 0,
+        total_spent_minor: user?.total_spent_minor ?? 0,
+        email_verified: user?.email_verified,
+      },
+      summary: {
+        has_admin_access: hasAdminAccess,
+        quick_action_count: pluginQuickActions.length,
+        ticket_enabled: ticketEnabled,
+        is_mobile: isMobile,
+      },
+      state: {
+        has_email: Boolean(user?.email),
+        has_registered_at: Boolean(registeredAt),
+        has_total_orders: (user?.total_order_count ?? 0) > 0,
+        has_total_spent: (user?.total_spent_minor ?? 0) > 0,
+        has_plugin_quick_actions: pluginQuickActions.length > 0,
+        can_open_tickets: ticketEnabled,
+        has_admin_access: hasAdminAccess,
+        email_verified: Boolean(user?.email_verified),
+      },
+    }),
+    [hasAdminAccess, isMobile, pluginQuickActions.length, registeredAt, ticketEnabled, user]
+  )
   const profileBatchItems = useMemo(
     () => [
       {

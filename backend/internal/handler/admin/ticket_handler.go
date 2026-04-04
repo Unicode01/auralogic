@@ -56,7 +56,10 @@ func (h *TicketHandler) ListTickets(c *gin.Context) {
 		query = query.Where("ticket_no LIKE ? OR subject LIKE ?", "%"+search+"%", "%"+search+"%")
 	}
 	if assignedTo == "me" {
-		adminID := middleware.MustGetUserID(c)
+		adminID, adminIDOK := middleware.RequireUserID(c)
+		if !adminIDOK {
+			return
+		}
 		query = query.Where("assigned_to = ?", adminID)
 	} else if assignedTo == "unassigned" {
 		query = query.Where("assigned_to IS NULL")
@@ -86,7 +89,10 @@ func (h *TicketHandler) ListTickets(c *gin.Context) {
 
 // GetTicket 获取工单详情
 func (h *TicketHandler) GetTicket(c *gin.Context) {
-	adminID := middleware.MustGetUserID(c)
+	adminID, adminIDOK := middleware.RequireUserID(c)
+	if !adminIDOK {
+		return
+	}
 	if adminID == 0 {
 		return
 	}
@@ -131,7 +137,10 @@ func (h *TicketHandler) GetTicket(c *gin.Context) {
 
 // GetTicketMessages 获取工单消息
 func (h *TicketHandler) GetTicketMessages(c *gin.Context) {
-	adminID := middleware.MustGetUserID(c)
+	adminID, adminIDOK := middleware.RequireUserID(c)
+	if !adminIDOK {
+		return
+	}
 	if adminID == 0 {
 		return
 	}
@@ -377,7 +386,10 @@ type AdminSendMessageRequest struct {
 
 // SendMessage 管理员发送消息
 func (h *TicketHandler) SendMessage(c *gin.Context) {
-	adminID := middleware.MustGetUserID(c)
+	adminID, adminIDOK := middleware.RequireUserID(c)
+	if !adminIDOK {
+		return
+	}
 	ticketID, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		response.BadRequest(c, "Invalid ticket ID")
@@ -536,7 +548,10 @@ type UpdateTicketRequest struct {
 
 // UpdateTicket 更新工单
 func (h *TicketHandler) UpdateTicket(c *gin.Context) {
-	adminID := middleware.MustGetUserID(c)
+	adminID, adminIDOK := middleware.RequireUserID(c)
+	if !adminIDOK {
+		return
+	}
 	ticketID, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		response.BadRequest(c, "Invalid ticket ID")
@@ -809,7 +824,10 @@ func (h *TicketHandler) GetTicketStats(c *gin.Context) {
 
 // UploadFile 管理员上传工单附件
 func (h *TicketHandler) UploadFile(c *gin.Context) {
-	adminID := middleware.MustGetUserID(c)
+	adminID, adminIDOK := middleware.RequireUserID(c)
+	if !adminIDOK {
+		return
+	}
 	if adminID == 0 {
 		return
 	}

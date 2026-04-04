@@ -426,7 +426,10 @@ func (h *PluginHandler) GetPluginWorkspace(c *gin.Context) {
 		h.respondPluginError(c, http.StatusServiceUnavailable, "Plugin manager is unavailable")
 		return
 	}
-	adminID := middleware.MustGetUserID(c)
+	adminID, adminIDOK := middleware.RequireUserID(c)
+	if !adminIDOK {
+		return
+	}
 	if c.IsAborted() {
 		return
 	}
@@ -492,7 +495,10 @@ func (h *PluginHandler) ExecutePluginWorkspaceCommand(c *gin.Context) {
 		h.respondPluginError(c, http.StatusServiceUnavailable, "Plugin manager is unavailable")
 		return
 	}
-	adminID := middleware.MustGetUserID(c)
+	adminID, adminIDOK := middleware.RequireUserID(c)
+	if !adminIDOK {
+		return
+	}
 	if c.IsAborted() {
 		return
 	}
@@ -763,7 +769,10 @@ func (h *PluginHandler) EnterPluginWorkspaceTerminalLine(c *gin.Context) {
 		h.respondPluginError(c, http.StatusServiceUnavailable, "Plugin manager is unavailable")
 		return
 	}
-	adminID := middleware.MustGetUserID(c)
+	adminID, adminIDOK := middleware.RequireUserID(c)
+	if !adminIDOK {
+		return
+	}
 	if c.IsAborted() {
 		return
 	}
@@ -855,7 +864,10 @@ func (h *PluginHandler) EvaluatePluginWorkspaceRuntime(c *gin.Context) {
 		h.respondPluginError(c, http.StatusServiceUnavailable, "Plugin manager is unavailable")
 		return
 	}
-	adminID := middleware.MustGetUserID(c)
+	adminID, adminIDOK := middleware.RequireUserID(c)
+	if !adminIDOK {
+		return
+	}
 	if c.IsAborted() {
 		return
 	}
@@ -953,7 +965,10 @@ func (h *PluginHandler) InspectPluginWorkspaceRuntime(c *gin.Context) {
 		h.respondPluginError(c, http.StatusServiceUnavailable, "Plugin manager is unavailable")
 		return
 	}
-	adminID := middleware.MustGetUserID(c)
+	adminID, adminIDOK := middleware.RequireUserID(c)
+	if !adminIDOK {
+		return
+	}
 	if c.IsAborted() {
 		return
 	}
@@ -1053,7 +1068,10 @@ func (h *PluginHandler) StreamPluginWorkspace(c *gin.Context) {
 		h.respondPluginError(c, http.StatusServiceUnavailable, "Plugin manager is unavailable")
 		return
 	}
-	adminID := middleware.MustGetUserID(c)
+	adminID, adminIDOK := middleware.RequireUserID(c)
+	if !adminIDOK {
+		return
+	}
 	if c.IsAborted() {
 		return
 	}
@@ -1153,7 +1171,10 @@ func (h *PluginHandler) WebSocketPluginWorkspace(c *gin.Context) {
 		h.respondPluginError(c, http.StatusServiceUnavailable, "Plugin manager is unavailable")
 		return
 	}
-	adminID := middleware.MustGetUserID(c)
+	adminID, adminIDOK := middleware.RequireUserID(c)
+	if !adminIDOK {
+		return
+	}
 	if c.IsAborted() {
 		return
 	}
@@ -1557,7 +1578,10 @@ func (h *PluginHandler) SubmitPluginWorkspaceInput(c *gin.Context) {
 		h.respondPluginError(c, http.StatusServiceUnavailable, "Plugin manager is unavailable")
 		return
 	}
-	adminID := middleware.MustGetUserID(c)
+	adminID, adminIDOK := middleware.RequireUserID(c)
+	if !adminIDOK {
+		return
+	}
 	if c.IsAborted() {
 		return
 	}
@@ -1611,7 +1635,10 @@ func (h *PluginHandler) SignalPluginWorkspace(c *gin.Context) {
 		h.respondPluginError(c, http.StatusServiceUnavailable, "Plugin manager is unavailable")
 		return
 	}
-	adminID := middleware.MustGetUserID(c)
+	adminID, adminIDOK := middleware.RequireUserID(c)
+	if !adminIDOK {
+		return
+	}
 	if c.IsAborted() {
 		return
 	}
@@ -1671,7 +1698,10 @@ func (h *PluginHandler) ClearPluginWorkspace(c *gin.Context) {
 		h.respondPluginError(c, http.StatusServiceUnavailable, "Plugin manager is unavailable")
 		return
 	}
-	adminID := middleware.MustGetUserID(c)
+	adminID, adminIDOK := middleware.RequireUserID(c)
+	if !adminIDOK {
+		return
+	}
 	if c.IsAborted() {
 		return
 	}
@@ -1714,7 +1744,10 @@ func (h *PluginHandler) ResetPluginWorkspace(c *gin.Context) {
 		h.respondPluginError(c, http.StatusServiceUnavailable, "Plugin manager is unavailable")
 		return
 	}
-	adminID := middleware.MustGetUserID(c)
+	adminID, adminIDOK := middleware.RequireUserID(c)
+	if !adminIDOK {
+		return
+	}
 	if c.IsAborted() {
 		return
 	}
@@ -1757,7 +1790,10 @@ func (h *PluginHandler) ResetPluginWorkspaceRuntime(c *gin.Context) {
 		h.respondPluginError(c, http.StatusServiceUnavailable, "Plugin manager is unavailable")
 		return
 	}
-	adminID := middleware.MustGetUserID(c)
+	adminID, adminIDOK := middleware.RequireUserID(c)
+	if !adminIDOK {
+		return
+	}
 	if c.IsAborted() {
 		return
 	}
@@ -1801,7 +1837,10 @@ func (h *PluginHandler) ClaimPluginWorkspaceControl(c *gin.Context) {
 		h.respondPluginError(c, http.StatusServiceUnavailable, "Plugin manager is unavailable")
 		return
 	}
-	adminID := middleware.MustGetUserID(c)
+	adminID, adminIDOK := middleware.RequireUserID(c)
+	if !adminIDOK {
+		return
+	}
 	if c.IsAborted() {
 		return
 	}
