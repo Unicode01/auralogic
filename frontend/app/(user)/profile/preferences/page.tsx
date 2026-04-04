@@ -195,24 +195,36 @@ export default function PreferencesPage() {
   }, [saveNotificationPrefsMutation, notificationPrefs])
 
   const backHref = isGuest ? '/products' : '/profile'
-  const userProfilePreferencesPluginContext = {
-    view: 'user_profile_preferences',
-    summary: {
-      is_guest: isGuest,
+  const userProfilePreferencesPluginContext = useMemo(
+    () => ({
+      view: 'user_profile_preferences',
+      summary: {
+        is_guest: isGuest,
+        locale,
+        theme,
+        smtp_enabled: smtpEnabled,
+        sms_enabled: smsEnabled,
+      },
+      notifications: notificationPrefs,
+      state: {
+        is_guest: isGuest,
+        notification_saving: saveNotificationPrefsMutation.isPending,
+        notification_dirty: notificationPrefsDirty,
+        smtp_available: smtpEnabled,
+        sms_available: smsEnabled,
+      },
+    }),
+    [
+      isGuest,
       locale,
+      notificationPrefs,
+      notificationPrefsDirty,
+      saveNotificationPrefsMutation.isPending,
+      smtpEnabled,
+      smsEnabled,
       theme,
-      smtp_enabled: smtpEnabled,
-      sms_enabled: smsEnabled,
-    },
-    notifications: notificationPrefs,
-    state: {
-      is_guest: isGuest,
-      notification_saving: saveNotificationPrefsMutation.isPending,
-      notification_dirty: notificationPrefsDirty,
-      smtp_available: smtpEnabled,
-      sms_available: smsEnabled,
-    },
-  }
+    ]
+  )
   const preferenceBatchItems = useMemo(
     () => [
       {

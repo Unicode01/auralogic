@@ -381,7 +381,10 @@ func (h *PaymentMethodHandler) GetPaymentCard(c *gin.Context) {
 // SelectPaymentMethod 选择付款方式
 func (h *PaymentMethodHandler) SelectPaymentMethod(c *gin.Context) {
 	orderNo := c.Param("order_no")
-	userID := middleware.MustGetUserID(c)
+	userID, userIDOK := middleware.RequireUserID(c)
+	if !userIDOK {
+		return
+	}
 	if userID == 0 {
 		return
 	}

@@ -479,7 +479,10 @@ func authHookValueToOptionalString(value interface{}) (string, error) {
 
 // GetMe getcurrentUserInfo
 func (h *AuthHandler) GetMe(c *gin.Context) {
-	userID := middleware.MustGetUserID(c)
+	userID, userIDOK := middleware.RequireUserID(c)
+	if !userIDOK {
+		return
+	}
 
 	user, err := h.authService.GetUserByID(userID)
 	if err != nil {
@@ -536,7 +539,10 @@ type ChangePasswordRequest struct {
 
 // ChangePassword 修改Password
 func (h *AuthHandler) ChangePassword(c *gin.Context) {
-	userID := middleware.MustGetUserID(c)
+	userID, userIDOK := middleware.RequireUserID(c)
+	if !userIDOK {
+		return
+	}
 
 	var req ChangePasswordRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -610,7 +616,10 @@ type UpdatePreferencesRequest struct {
 
 // UpdatePreferences 更新用户偏好设置
 func (h *AuthHandler) UpdatePreferences(c *gin.Context) {
-	userID := middleware.MustGetUserID(c)
+	userID, userIDOK := middleware.RequireUserID(c)
+	if !userIDOK {
+		return
+	}
 
 	var req UpdatePreferencesRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -1765,7 +1774,10 @@ func (h *AuthHandler) PhoneResetPassword(c *gin.Context) {
 
 // SendBindEmailCode 发送绑定邮箱验证码
 func (h *AuthHandler) SendBindEmailCode(c *gin.Context) {
-	userID := middleware.MustGetUserID(c)
+	userID, userIDOK := middleware.RequireUserID(c)
+	if !userIDOK {
+		return
+	}
 	var req struct {
 		Email        string `json:"email" binding:"required,email"`
 		CaptchaToken string `json:"captcha_token"`
@@ -1876,7 +1888,10 @@ func (h *AuthHandler) SendBindEmailCode(c *gin.Context) {
 
 // BindEmail 绑定邮箱
 func (h *AuthHandler) BindEmail(c *gin.Context) {
-	userID := middleware.MustGetUserID(c)
+	userID, userIDOK := middleware.RequireUserID(c)
+	if !userIDOK {
+		return
+	}
 	var req struct {
 		Email string `json:"email" binding:"required,email"`
 		Code  string `json:"code" binding:"required,len=6"`
@@ -1952,7 +1967,10 @@ func (h *AuthHandler) BindEmail(c *gin.Context) {
 
 // SendBindPhoneCode 发送绑定手机验证码
 func (h *AuthHandler) SendBindPhoneCode(c *gin.Context) {
-	userID := middleware.MustGetUserID(c)
+	userID, userIDOK := middleware.RequireUserID(c)
+	if !userIDOK {
+		return
+	}
 	var req struct {
 		Phone        string `json:"phone" binding:"required"`
 		PhoneCode    string `json:"phone_code"`
@@ -2074,7 +2092,10 @@ func (h *AuthHandler) SendBindPhoneCode(c *gin.Context) {
 
 // BindPhone 绑定手机号
 func (h *AuthHandler) BindPhone(c *gin.Context) {
-	userID := middleware.MustGetUserID(c)
+	userID, userIDOK := middleware.RequireUserID(c)
+	if !userIDOK {
+		return
+	}
 	var req struct {
 		Phone string `json:"phone" binding:"required"`
 		Code  string `json:"code" binding:"required,len=6"`

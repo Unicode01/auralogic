@@ -216,48 +216,74 @@ function TicketsPageContent() {
   const contentLength = draftContent.length
   const normalizedSearchText = normalizeQueryString(searchText)
   const hasActiveFilters = Boolean(status || normalizedSearchText)
-  const userTicketsPluginContext = {
-    view: 'user_tickets',
-    filters: {
-      status: status || undefined,
-      search: normalizedSearchText || undefined,
-      search_input: searchText || undefined,
-      page,
-      has_active_filters: hasActiveFilters,
-    },
-    pagination: {
-      page,
+  const userTicketsPluginContext = useMemo(
+    () => ({
+      view: 'user_tickets',
+      filters: {
+        status: status || undefined,
+        search: normalizedSearchText || undefined,
+        search_input: searchText || undefined,
+        page,
+        has_active_filters: hasActiveFilters,
+      },
+      pagination: {
+        page,
+        limit,
+        total,
+        total_pages: totalPages,
+      },
+      summary: {
+        current_page_count: tickets.length,
+        highlighted_ticket_id: highlightedTicketId || undefined,
+        create_dialog_open: openCreate,
+        ticket_enabled: ticketEnabled,
+        active_filter_count: Number(Boolean(status)) + Number(Boolean(normalizedSearchText)),
+      },
+      draft: {
+        related_order_id: selectedOrderId || undefined,
+        content_length: contentLength,
+        max_content_length: maxContentLength || undefined,
+        selectable_order_count: orders.length,
+      },
+      state: {
+        disabled: !configLoading && !ticketEnabled,
+        load_failed: ticketsLoadFailed,
+        empty: !ticketsLoading && !ticketsLoadFailed && tickets.length === 0,
+        has_results: tickets.length > 0,
+        has_pagination: totalPages > 1,
+        has_related_orders: orders.length > 0,
+        has_active_filters: hasActiveFilters,
+        create_open: openCreate,
+        create_submitting: createMutation.isPending,
+        related_orders_loading: openCreate && isOrdersLoading,
+        related_orders_load_failed: openCreate && isOrdersError,
+      },
+    }),
+    [
+      configLoading,
+      contentLength,
+      createMutation.isPending,
+      hasActiveFilters,
+      highlightedTicketId,
+      isOrdersError,
+      isOrdersLoading,
       limit,
+      maxContentLength,
+      normalizedSearchText,
+      openCreate,
+      orders.length,
+      page,
+      searchText,
+      selectedOrderId,
+      status,
+      ticketEnabled,
+      tickets.length,
+      ticketsLoadFailed,
+      ticketsLoading,
       total,
-      total_pages: totalPages,
-    },
-    summary: {
-      current_page_count: tickets.length,
-      highlighted_ticket_id: highlightedTicketId || undefined,
-      create_dialog_open: openCreate,
-      ticket_enabled: ticketEnabled,
-      active_filter_count: Number(Boolean(status)) + Number(Boolean(normalizedSearchText)),
-    },
-    draft: {
-      related_order_id: selectedOrderId || undefined,
-      content_length: contentLength,
-      max_content_length: maxContentLength || undefined,
-      selectable_order_count: orders.length,
-    },
-    state: {
-      disabled: !configLoading && !ticketEnabled,
-      load_failed: ticketsLoadFailed,
-      empty: !ticketsLoading && !ticketsLoadFailed && tickets.length === 0,
-      has_results: tickets.length > 0,
-      has_pagination: totalPages > 1,
-      has_related_orders: orders.length > 0,
-      has_active_filters: hasActiveFilters,
-      create_open: openCreate,
-      create_submitting: createMutation.isPending,
-      related_orders_loading: openCreate && isOrdersLoading,
-      related_orders_load_failed: openCreate && isOrdersError,
-    },
-  }
+      totalPages,
+    ]
+  )
   const ticketBatchItems = useMemo(
     () => [
       {
@@ -502,7 +528,7 @@ function TicketsPageContent() {
             <DialogTrigger asChild>
               <Button
                 size="sm"
-                className="gap-2 shrink-0"
+                className="shrink-0 gap-2"
                 aria-label={t.ticket.createTicket}
                 title={t.ticket.createTicket}
               >

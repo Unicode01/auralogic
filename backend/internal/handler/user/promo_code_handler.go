@@ -103,7 +103,10 @@ func promoHookValueToInt64(value interface{}) (int64, error) {
 
 // ValidatePromoCode 验证优惠码
 func (h *PromoCodeHandler) ValidatePromoCode(c *gin.Context) {
-	userID := middleware.MustGetUserID(c)
+	userID, userIDOK := middleware.RequireUserID(c)
+	if !userIDOK {
+		return
+	}
 	if userID == 0 {
 		return
 	}

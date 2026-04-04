@@ -297,30 +297,45 @@ export default function ForgotPasswordPage() {
     }
   }
 
-  const authForgotPasswordPluginContext = {
-    view: 'auth_forgot_password',
-    auth: {
-      mode: resetMode,
-    },
-    capabilities: {
-      email_reset_enabled: Boolean(allowPasswordReset),
-      phone_reset_enabled: Boolean(phoneResetAvailable),
-      captcha_required: Boolean(needCaptcha),
-    },
-    state: {
-      mode: resetMode,
-      email_sent: sent,
-      email_countdown: countdown,
-      email_countdown_active: countdown > 0,
-      phone_code_sent: phoneCodeSent,
-      phone_code_countdown: phoneCountdown,
-      phone_countdown_active: phoneCountdown > 0,
-      is_submitting: isSubmitting,
-      is_resetting_phone: isResettingPhone,
-      sending_phone_code: isSendingPhoneCode,
-      mode_switcher_visible: Boolean(allowPasswordReset && phoneResetAvailable),
-    },
-  }
+  const authForgotPasswordPluginContext = useMemo(
+    () => ({
+      view: 'auth_forgot_password',
+      auth: {
+        mode: resetMode,
+      },
+      capabilities: {
+        email_reset_enabled: Boolean(allowPasswordReset),
+        phone_reset_enabled: Boolean(phoneResetAvailable),
+        captcha_required: Boolean(needCaptcha),
+      },
+      state: {
+        mode: resetMode,
+        email_sent: sent,
+        email_countdown: countdown,
+        email_countdown_active: countdown > 0,
+        phone_code_sent: phoneCodeSent,
+        phone_code_countdown: phoneCountdown,
+        phone_countdown_active: phoneCountdown > 0,
+        is_submitting: isSubmitting,
+        is_resetting_phone: isResettingPhone,
+        sending_phone_code: isSendingPhoneCode,
+        mode_switcher_visible: Boolean(allowPasswordReset && phoneResetAvailable),
+      },
+    }),
+    [
+      allowPasswordReset,
+      countdown,
+      isResettingPhone,
+      isSendingPhoneCode,
+      isSubmitting,
+      needCaptcha,
+      phoneCodeSent,
+      phoneCountdown,
+      phoneResetAvailable,
+      resetMode,
+      sent,
+    ]
+  )
   const forgotPasswordBatchItems = useMemo(
     () => [
       {
