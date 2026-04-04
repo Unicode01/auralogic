@@ -696,7 +696,10 @@ func (h *SettingsHandler) UpdateSettings(c *gin.Context) {
 		response.BadRequest(c, "Invalid request parameters")
 		return
 	}
-	adminID := middleware.MustGetUserID(c)
+	adminID, adminIDOK := middleware.RequireUserID(c)
+	if !adminIDOK {
+		return
+	}
 	if h.pluginManager != nil {
 		originalReq := req
 		hookPayload, payloadErr := adminHookStructToPayload(req)
@@ -1853,7 +1856,10 @@ func (h *SettingsHandler) UpdateEmailTemplate(c *gin.Context) {
 		response.BadRequest(c, "Invalid request parameters")
 		return
 	}
-	adminID := middleware.MustGetUserID(c)
+	adminID, adminIDOK := middleware.RequireUserID(c)
+	if !adminIDOK {
+		return
+	}
 	if h.pluginManager != nil {
 		hookPayload := map[string]interface{}{
 			"filename": filename,
@@ -1963,7 +1969,10 @@ func (h *SettingsHandler) ImportTemplatePackage(c *gin.Context) {
 		return
 	}
 
-	adminID := middleware.MustGetUserID(c)
+	adminID, adminIDOK := middleware.RequireUserID(c)
+	if !adminIDOK {
+		return
+	}
 	file, err := fileHeader.Open()
 	if err != nil {
 		response.InternalError(c, "Failed to open template package")

@@ -176,7 +176,10 @@ func (h *LandingPageHandler) UpdateLandingPage(c *gin.Context) {
 		response.BadRequest(c, "html_content is required")
 		return
 	}
-	adminID := middleware.MustGetUserID(c)
+	adminID, adminIDOK := middleware.RequireUserID(c)
+	if !adminIDOK {
+		return
+	}
 	if h.pluginManager != nil {
 		hookPayload := map[string]interface{}{
 			"slug":         "home",
@@ -291,7 +294,10 @@ func (h *LandingPageHandler) UpdateLandingPage(c *gin.Context) {
 func (h *LandingPageHandler) ResetLandingPage(c *gin.Context) {
 	defaultHTML := DefaultLandingPageHTML
 
-	adminID := middleware.MustGetUserID(c)
+	adminID, adminIDOK := middleware.RequireUserID(c)
+	if !adminIDOK {
+		return
+	}
 	if h.pluginManager != nil {
 		hookPayload := map[string]interface{}{
 			"slug":         "home",

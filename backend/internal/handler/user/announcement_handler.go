@@ -46,7 +46,10 @@ func buildUserAnnouncementHookPayload(announcement *models.Announcement) map[str
 
 // ListAnnouncements 公告列表（带已读状态）
 func (h *AnnouncementHandler) ListAnnouncements(c *gin.Context) {
-	userID := middleware.MustGetUserID(c)
+	userID, userIDOK := middleware.RequireUserID(c)
+	if !userIDOK {
+		return
+	}
 	page, limit := response.GetPagination(c)
 
 	query := h.db.Model(&models.Announcement{})
@@ -97,7 +100,10 @@ func (h *AnnouncementHandler) ListAnnouncements(c *gin.Context) {
 
 // GetAnnouncement 公告详情（带已读状态）
 func (h *AnnouncementHandler) GetAnnouncement(c *gin.Context) {
-	userID := middleware.MustGetUserID(c)
+	userID, userIDOK := middleware.RequireUserID(c)
+	if !userIDOK {
+		return
+	}
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		response.BadRequest(c, "Invalid ID")
@@ -147,7 +153,10 @@ func (h *AnnouncementHandler) GetAnnouncement(c *gin.Context) {
 
 // GetUnreadMandatory 获取未读的强制公告
 func (h *AnnouncementHandler) GetUnreadMandatory(c *gin.Context) {
-	userID := middleware.MustGetUserID(c)
+	userID, userIDOK := middleware.RequireUserID(c)
+	if !userIDOK {
+		return
+	}
 
 	var announcements []models.Announcement
 	if err := h.db.Where("is_mandatory = ?", true).
@@ -167,7 +176,10 @@ func (h *AnnouncementHandler) GetUnreadMandatory(c *gin.Context) {
 
 // MarkAsRead 标记公告为已读
 func (h *AnnouncementHandler) MarkAsRead(c *gin.Context) {
-	userID := middleware.MustGetUserID(c)
+	userID, userIDOK := middleware.RequireUserID(c)
+	if !userIDOK {
+		return
+	}
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		response.BadRequest(c, "Invalid ID")

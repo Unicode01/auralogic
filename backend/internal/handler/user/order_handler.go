@@ -58,7 +58,10 @@ type CreateOrderRequest struct {
 
 // CreateOrder CreateOrder
 func (h *OrderHandler) CreateOrder(c *gin.Context) {
-	userID := middleware.MustGetUserID(c)
+	userID, userIDOK := middleware.RequireUserID(c)
+	if !userIDOK {
+		return
+	}
 
 	var req CreateOrderRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -289,7 +292,10 @@ func valueToOptionalString(value interface{}) (string, error) {
 
 // ListOrders - Get my order list
 func (h *OrderHandler) ListOrders(c *gin.Context) {
-	userID := middleware.MustGetUserID(c)
+	userID, userIDOK := middleware.RequireUserID(c)
+	if !userIDOK {
+		return
+	}
 
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
@@ -340,7 +346,10 @@ func (h *OrderHandler) ListOrders(c *gin.Context) {
 
 // GetOrder - Get order details
 func (h *OrderHandler) GetOrder(c *gin.Context) {
-	userID := middleware.MustGetUserID(c)
+	userID, userIDOK := middleware.RequireUserID(c)
+	if !userIDOK {
+		return
+	}
 	orderNo := c.Param("order_no")
 
 	if orderNo == "" {
@@ -431,7 +440,10 @@ type CompleteOrderRequest struct {
 
 // CompleteOrder - User confirms order completion
 func (h *OrderHandler) CompleteOrder(c *gin.Context) {
-	userID := middleware.MustGetUserID(c)
+	userID, userIDOK := middleware.RequireUserID(c)
+	if !userIDOK {
+		return
+	}
 	orderNo := c.Param("order_no")
 
 	if orderNo == "" {
@@ -554,7 +566,10 @@ func applyCompleteOrderHookPayload(req *CompleteOrderRequest, payload map[string
 
 // GetOrRefreshFormToken - Get or refresh form token
 func (h *OrderHandler) GetOrRefreshFormToken(c *gin.Context) {
-	userID := middleware.MustGetUserID(c)
+	userID, userIDOK := middleware.RequireUserID(c)
+	if !userIDOK {
+		return
+	}
 	orderNo := c.Param("order_no")
 
 	if orderNo == "" {
@@ -598,7 +613,10 @@ func (h *OrderHandler) GetOrRefreshFormToken(c *gin.Context) {
 
 // GetVirtualProducts - Get virtual product content for an order
 func (h *OrderHandler) GetVirtualProducts(c *gin.Context) {
-	userID := middleware.MustGetUserID(c)
+	userID, userIDOK := middleware.RequireUserID(c)
+	if !userIDOK {
+		return
+	}
 	orderNo := c.Param("order_no")
 
 	if orderNo == "" {
@@ -719,7 +737,10 @@ type invoiceData struct {
 
 // DownloadInvoice 生成并返回订单账单 HTML
 func (h *OrderHandler) DownloadInvoice(c *gin.Context) {
-	userID := middleware.MustGetUserID(c)
+	userID, userIDOK := middleware.RequireUserID(c)
+	if !userIDOK {
+		return
+	}
 	orderNo := c.Param("order_no")
 
 	if orderNo == "" {
@@ -868,7 +889,10 @@ func (h *OrderHandler) buildInvoiceData(order *models.Order, invoiceCfg *config.
 
 // GetInvoiceToken 生成一次性账单下载令牌（60秒有效，单次使用）
 func (h *OrderHandler) GetInvoiceToken(c *gin.Context) {
-	userID := middleware.MustGetUserID(c)
+	userID, userIDOK := middleware.RequireUserID(c)
+	if !userIDOK {
+		return
+	}
 	orderNo := c.Param("order_no")
 
 	if orderNo == "" {

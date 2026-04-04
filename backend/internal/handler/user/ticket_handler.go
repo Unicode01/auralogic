@@ -66,7 +66,10 @@ func (h *TicketHandler) CreateTicket(c *gin.Context) {
 		return
 	}
 
-	userID := middleware.MustGetUserID(c)
+	userID, userIDOK := middleware.RequireUserID(c)
+	if !userIDOK {
+		return
+	}
 
 	if h.pluginManager != nil {
 		originalReq := req
@@ -510,7 +513,10 @@ func (h *TicketHandler) applyTicketAutoReplyPayload(ticket *models.Ticket, paylo
 
 // ListTickets 获取用户工单列表
 func (h *TicketHandler) ListTickets(c *gin.Context) {
-	userID := middleware.MustGetUserID(c)
+	userID, userIDOK := middleware.RequireUserID(c)
+	if !userIDOK {
+		return
+	}
 	page, limit := response.GetPagination(c)
 	status := c.Query("status")
 	search := c.Query("search")
@@ -541,7 +547,10 @@ func (h *TicketHandler) ListTickets(c *gin.Context) {
 
 // GetTicket 获取工单详情
 func (h *TicketHandler) GetTicket(c *gin.Context) {
-	userID := middleware.MustGetUserID(c)
+	userID, userIDOK := middleware.RequireUserID(c)
+	if !userIDOK {
+		return
+	}
 	ticketID, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		response.BadRequest(c, "Invalid ticket ID")
@@ -587,7 +596,10 @@ func (h *TicketHandler) GetTicket(c *gin.Context) {
 
 // GetTicketMessages 获取工单消息列表
 func (h *TicketHandler) GetTicketMessages(c *gin.Context) {
-	userID := middleware.MustGetUserID(c)
+	userID, userIDOK := middleware.RequireUserID(c)
+	if !userIDOK {
+		return
+	}
 	ticketID, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		response.BadRequest(c, "Invalid ticket ID")
@@ -647,7 +659,10 @@ type SendMessageRequest struct {
 
 // SendMessage 发送消息
 func (h *TicketHandler) SendMessage(c *gin.Context) {
-	userID := middleware.MustGetUserID(c)
+	userID, userIDOK := middleware.RequireUserID(c)
+	if !userIDOK {
+		return
+	}
 	ticketID, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		response.BadRequest(c, "Invalid ticket ID")
@@ -816,7 +831,10 @@ type UpdateTicketStatusRequest struct {
 
 // UpdateTicketStatus 更新工单状态（用户只能关闭或重新打开）
 func (h *TicketHandler) UpdateTicketStatus(c *gin.Context) {
-	userID := middleware.MustGetUserID(c)
+	userID, userIDOK := middleware.RequireUserID(c)
+	if !userIDOK {
+		return
+	}
 	ticketID, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		response.BadRequest(c, "Invalid ticket ID")
@@ -940,7 +958,10 @@ type ShareOrderRequest struct {
 
 // ShareOrder 分享订单给客服
 func (h *TicketHandler) ShareOrder(c *gin.Context) {
-	userID := middleware.MustGetUserID(c)
+	userID, userIDOK := middleware.RequireUserID(c)
+	if !userIDOK {
+		return
+	}
 	ticketID, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		response.BadRequest(c, "Invalid ticket ID")
@@ -1050,7 +1071,10 @@ func (h *TicketHandler) ShareOrder(c *gin.Context) {
 
 // GetSharedOrders 获取工单中分享的订单
 func (h *TicketHandler) GetSharedOrders(c *gin.Context) {
-	userID := middleware.MustGetUserID(c)
+	userID, userIDOK := middleware.RequireUserID(c)
+	if !userIDOK {
+		return
+	}
 	ticketID, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		response.BadRequest(c, "Invalid ticket ID")
@@ -1079,7 +1103,10 @@ func (h *TicketHandler) GetSharedOrders(c *gin.Context) {
 
 // RevokeOrderAccess 撤销订单授权
 func (h *TicketHandler) RevokeOrderAccess(c *gin.Context) {
-	userID := middleware.MustGetUserID(c)
+	userID, userIDOK := middleware.RequireUserID(c)
+	if !userIDOK {
+		return
+	}
 	ticketID, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		response.BadRequest(c, "Invalid ticket ID")
@@ -1113,7 +1140,10 @@ func (h *TicketHandler) RevokeOrderAccess(c *gin.Context) {
 
 // UploadFile 用户上传工单附件
 func (h *TicketHandler) UploadFile(c *gin.Context) {
-	userID := middleware.MustGetUserID(c)
+	userID, userIDOK := middleware.RequireUserID(c)
+	if !userIDOK {
+		return
+	}
 	ticketID, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		response.BadRequest(c, "Invalid ticket ID")

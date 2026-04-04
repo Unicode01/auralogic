@@ -175,7 +175,10 @@ func (h *AdminHandler) CreateAdmin(c *gin.Context) {
 	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
 	req.Name = strings.TrimSpace(req.Name)
 
-	currentUserID := middleware.MustGetUserID(c)
+	currentUserID, currentUserIDOK := middleware.RequireUserID(c)
+	if !currentUserIDOK {
+		return
+	}
 
 	// Check if email already exists
 	if _, err := h.userRepo.FindByEmail(req.Email); err == nil {
@@ -306,7 +309,10 @@ func (h *AdminHandler) UpdateAdmin(c *gin.Context) {
 	}
 
 	// 不能修改自己的角色和状态
-	currentUserID := middleware.MustGetUserID(c)
+	currentUserID, currentUserIDOK := middleware.RequireUserID(c)
+	if !currentUserIDOK {
+		return
+	}
 	if admin.ID == currentUserID {
 		if req.Role != "" || req.IsActive != nil {
 			respondAdminBizError(c, newAdminCannotModifySelfRoleOrStatusError())
@@ -423,7 +429,10 @@ func (h *AdminHandler) DeleteAdmin(c *gin.Context) {
 		return
 	}
 
-	currentUserID := middleware.MustGetUserID(c)
+	currentUserID, currentUserIDOK := middleware.RequireUserID(c)
+	if !currentUserIDOK {
+		return
+	}
 
 	// Cannot delete yourself
 	if uint(adminID) == currentUserID {
