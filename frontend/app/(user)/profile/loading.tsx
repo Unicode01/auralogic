@@ -1,12 +1,18 @@
+'use client'
+
 import { Skeleton } from '@/components/ui/page-loading'
+import { useIsMobile } from '@/hooks/use-mobile'
 
 export default function Loading() {
+  const { isMobile, mounted } = useIsMobile()
+  const isCompactLayout = mounted ? isMobile : false
+
   return (
     <div className="space-y-6">
       {/* 标题 */}
       <div className="flex items-center justify-between">
         <Skeleton className="h-8 w-32" />
-        <Skeleton className="h-10 w-20 hidden md:block" />
+        <Skeleton className={isCompactLayout ? 'h-10 w-10' : 'h-10 w-20'} />
       </div>
 
       {/* 基本信息卡片 */}

@@ -2,7 +2,15 @@
 
 import { useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { addToCart, getCurrentUser, login, loginWithCode, loginWithPhoneCode, logout, register, phoneRegister } from '@/lib/api'
+import {
+  addToCart,
+  getCurrentUser,
+  login,
+  loginWithCode,
+  loginWithPhoneCode,
+  register,
+  phoneRegister,
+} from '@/lib/api'
 import { getToken, setToken, clearToken, setUser } from '@/lib/auth'
 import { clearGuestCart, getGuestCart, setGuestCart } from '@/lib/guest-cart'
 import { clearAuthReturnState, readAuthReturnState } from '@/lib/auth-return-state'
@@ -57,6 +65,7 @@ export function useAuth() {
     }
 
     await queryClient.invalidateQueries({ queryKey: ['cart'] })
+    await queryClient.invalidateQueries({ queryKey: ['cartCount'] })
     return true
   }
 
@@ -155,16 +164,12 @@ export function useAuth() {
     },
   })
 
-  // 登出
-  const logoutMutation = useMutation({
-    mutationFn: logout,
-    onSuccess: () => {
-      clearToken()
-      clearAuthReturnState()
-      queryClient.clear()
-      router.push('/login')
-    },
-  })
+  const logoutUser = () => {
+    clearToken()
+    clearAuthReturnState()
+    queryClient.clear()
+    router.replace('/login')
+  }
 
   // 判断认证状态
   const hasToken = typeof window !== 'undefined' && !!getToken()
@@ -183,7 +188,7 @@ export function useAuth() {
     login: loginMutation.mutate,
     loginWithCode: loginWithCodeMutation.mutate,
     loginWithPhoneCode: loginWithPhoneCodeMutation.mutate,
-    logout: logoutMutation.mutate,
+    logout: logoutUser,
     isLoggingIn: loginMutation.isPending,
     isLoggingInWithCode: loginWithCodeMutation.isPending,
     isLoggingInWithPhoneCode: loginWithPhoneCodeMutation.isPending,

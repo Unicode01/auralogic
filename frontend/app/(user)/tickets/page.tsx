@@ -47,6 +47,7 @@ import { usePageTitle } from '@/hooks/use-page-title'
 import { getTranslations } from '@/lib/i18n'
 import { PluginSlot } from '@/components/plugins/plugin-slot'
 import { useDebounce } from '@/hooks/use-debounce'
+import { useIsMobile } from '@/hooks/use-mobile'
 import {
   buildUpdatedQueryString,
   normalizePositivePageQuery,
@@ -63,6 +64,7 @@ import {
 import { resolveApiErrorMessage } from '@/lib/api-error'
 import { readPluginSearchParams } from '@/lib/plugin-frontend-routing'
 import { PluginSlotBatchBoundary } from '@/lib/plugin-slot-batch'
+import { cn } from '@/lib/utils'
 
 function TicketsPageContent() {
   const router = useRouter()
@@ -100,8 +102,10 @@ function TicketsPageContent() {
   const queryClient = useQueryClient()
   const toast = useToast()
   const { locale } = useLocale()
+  const { isMobile, mounted } = useIsMobile()
   const t = getTranslations(locale)
   usePageTitle(t.pageTitle.tickets)
+  const isCompactLayout = mounted ? isMobile : false
   const limit = 10
   const debouncedSearch = useDebounce(searchText, 300)
   const currentListPath = initialListPath
@@ -512,7 +516,9 @@ function TicketsPageContent() {
 
         <div className="flex items-center justify-between gap-3">
           <div>
-            <h1 className="text-3xl font-bold">{t.ticket.supportCenter}</h1>
+            <h1 className={isCompactLayout ? 'text-2xl font-bold' : 'text-3xl font-bold'}>
+              {t.ticket.supportCenter}
+            </h1>
           </div>
           <Dialog
             open={openCreate}
@@ -533,8 +539,11 @@ function TicketsPageContent() {
                 title={t.ticket.createTicket}
               >
                 <Plus className="h-4 w-4" />
-                <span className="hidden md:inline">{t.ticket.createTicket}</span>
-                <span className="sr-only md:hidden">{t.ticket.createTicket}</span>
+                {isCompactLayout ? (
+                  <span className="sr-only">{t.ticket.createTicket}</span>
+                ) : (
+                  <span>{t.ticket.createTicket}</span>
+                )}
               </Button>
             </DialogTrigger>
             <DialogContent className="max-h-[90vh] max-w-lg overflow-y-auto">
@@ -700,7 +709,7 @@ function TicketsPageContent() {
           </Dialog>
         </div>
 
-        <div className="flex flex-col gap-2 md:flex-row">
+        <div className={isCompactLayout ? 'flex flex-col gap-2' : 'flex flex-col gap-2 md:flex-row'}>
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
@@ -723,7 +732,7 @@ function TicketsPageContent() {
             ) : null}
           </div>
           <Select value={status || 'all'} onValueChange={handleStatusChange}>
-            <SelectTrigger className="w-full md:w-40">
+            <SelectTrigger className={isCompactLayout ? 'w-full' : 'w-full md:w-40'}>
               <SelectValue placeholder={t.ticket.status} />
             </SelectTrigger>
             <SelectContent>
@@ -840,7 +849,12 @@ function TicketsPageContent() {
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0 flex-1">
                           <div className="flex flex-wrap items-start gap-2">
-                            <h3 className="min-w-0 flex-1 truncate text-sm font-medium md:text-base">
+                            <h3
+                              className={cn(
+                                'min-w-0 flex-1 truncate text-sm font-medium',
+                                !isCompactLayout && 'md:text-base'
+                              )}
+                            >
                               {ticket.subject}
                             </h3>
                             <div className="flex shrink-0 items-center gap-1.5">

@@ -44,7 +44,6 @@ import { extractBootstrapMenus } from '@/lib/plugin-bootstrap-cache'
 import { readPluginSearchParams } from '@/lib/plugin-frontend-routing'
 import { resolvePluginMenuIcon } from '@/lib/plugin-menu-icons'
 import { parseUserPluginMenuItems } from '@/lib/plugin-user-menu'
-import { clearToken } from '@/lib/auth'
 import { PluginPageLink } from '@/components/plugins/plugin-page-link'
 import { useToast } from '@/hooks/use-toast'
 import { useCurrency, formatPrice } from '@/contexts/currency-context'
@@ -59,7 +58,7 @@ type ProfilePluginQuickAction = {
 }
 
 function ProfilePageContent() {
-  const { user } = useAuth()
+  const { user, logout } = useAuth()
   const searchParams = useSearchParams()
   const { locale } = useLocale()
   const { isMobile } = useIsMobile()
@@ -187,10 +186,7 @@ function ProfilePageContent() {
   }
 
   const handleLogout = () => {
-    if (typeof window !== 'undefined') {
-      clearToken()
-      window.location.href = '/login'
-    }
+    logout()
   }
 
   return (
@@ -198,7 +194,9 @@ function ProfilePageContent() {
       <div className="space-y-6">
         <PluginSlot slot="user.profile.top" context={userProfilePluginContext} />
         <div className="flex items-center justify-between">
-          <h1 className="text-2xl font-bold md:text-3xl">{t.profile.profileCenter}</h1>
+          <h1 className={isMobile ? 'text-2xl font-bold' : 'text-2xl font-bold md:text-3xl'}>
+            {t.profile.profileCenter}
+          </h1>
           <Button
             asChild
             variant="outline"
@@ -207,8 +205,12 @@ function ProfilePageContent() {
             title={t.common.edit}
           >
             <Link href="/profile/settings">
-              <Settings className="h-4 w-4 md:mr-2" />
-              <span className="sr-only md:not-sr-only">{t.common.edit}</span>
+              <Settings className={`h-4 w-4 ${!isMobile ? 'md:mr-2' : ''}`} />
+              {isMobile ? (
+                <span className="sr-only">{t.common.edit}</span>
+              ) : (
+                <span>{t.common.edit}</span>
+              )}
             </Link>
           </Button>
         </div>
@@ -220,7 +222,13 @@ function ProfilePageContent() {
         <Card className="overflow-hidden">
           <CardContent className="p-0">
             <div className="border-b bg-gradient-to-r from-muted/60 via-background to-background p-6">
-              <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+              <div
+                className={
+                  isMobile
+                    ? 'flex flex-col gap-4'
+                    : 'flex flex-col gap-4 md:flex-row md:items-start md:justify-between'
+                }
+              >
                 <div className="space-y-3">
                   <div className="flex flex-wrap items-center gap-2">
                     <div className="text-2xl font-semibold">{user?.name || t.profile.notSet}</div>
@@ -271,7 +279,11 @@ function ProfilePageContent() {
                 </div>
               </div>
             </div>
-            <div className="grid gap-3 p-6 md:grid-cols-2 xl:grid-cols-4">
+            <div
+              className={
+                isMobile ? 'grid gap-3 p-6' : 'grid gap-3 p-6 md:grid-cols-2 xl:grid-cols-4'
+              }
+            >
               <div className="rounded-xl border bg-background p-4">
                 <div className="text-xs text-muted-foreground">{t.profile.accountId}</div>
                 <div className="mt-1 flex items-center gap-2">

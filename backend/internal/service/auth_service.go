@@ -379,6 +379,13 @@ func (s *AuthService) ResetPassword(token, newPassword string) error {
 
 // LoginWithCode 使用邮箱验证码登录
 func (s *AuthService) LoginWithCode(email, code string) (string, *models.User, error) {
+	if !s.cfg.SMTP.Enabled {
+		return "", nil, authbiz.EmailLoginUnavailable()
+	}
+	if !s.cfg.Security.Login.AllowEmailLogin {
+		return "", nil, authbiz.EmailLoginDisabled()
+	}
+
 	email = normalizeEmail(email)
 	key := "email_login_code:" + email
 
@@ -433,6 +440,13 @@ func (s *AuthService) SendPhoneLoginCode(phone string) (string, error) {
 
 // LoginWithPhoneCode 使用手机验证码登录
 func (s *AuthService) LoginWithPhoneCode(phone, code string) (string, *models.User, error) {
+	if !s.cfg.SMS.Enabled {
+		return "", nil, authbiz.SMSServiceUnavailable()
+	}
+	if !s.cfg.Security.Login.AllowPhoneLogin {
+		return "", nil, authbiz.PhoneLoginDisabled()
+	}
+
 	key := "phone_login_code:" + phone
 	storedCode, err := cache.Get(key)
 	if err != nil {

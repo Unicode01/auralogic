@@ -47,6 +47,8 @@ import { buildProductListReturnPath, readProductBrowseState } from '@/lib/produc
 import { MarkdownMessage } from '@/components/ui/markdown-message'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { PluginSlot } from '@/components/plugins/plugin-slot'
+import { useIsMobile } from '@/hooks/use-mobile'
+import { cn } from '@/lib/utils'
 
 type GuestActionHint = 'cart_added' | 'login_for_checkout' | 'login_for_promo' | null
 
@@ -68,6 +70,7 @@ export default function ProductDetailPage() {
   const toast = useToast()
   const { user, isAuthenticated, isLoading: authLoading } = useAuth()
   const { currency } = useCurrency()
+  const { isMobile, mounted: mobileMounted } = useIsMobile()
 
   // Promo code state
   const [promoCodeInput, setPromoCodeInput] = useState('')
@@ -296,6 +299,7 @@ export default function ProductDetailPage() {
   const availableStock = stockData?.data?.available_stock ?? 0
   const isUnlimitedStock = !!stockData?.data?.is_unlimited
   const isAvailable = availableStock > 0
+  const isGuestMode = !authLoading && !isAuthenticated
   const productMaxPurchaseLimit = product?.max_purchase_limit ?? product?.maxPurchaseLimit ?? 0
   const maxSelectableQuantity = Math.min(
     availableStock,
@@ -421,14 +425,15 @@ export default function ProductDetailPage() {
     clearAuthReturnState()
   }, [authLoading, isAuthenticated, isLoading, productId, restoreProductScrollTop])
 
-  if (isLoading) {
+  if (isLoading || !mobileMounted) {
     return (
       <div className="pb-8">
         <div className="animate-pulse space-y-4">
           <div className="h-6 w-1/4 rounded bg-muted" />
-          <div className="flex gap-6">
-            <div className="h-[400px] w-[400px] shrink-0 rounded bg-muted" />
+          <div className={cn('gap-6', isMobile ? 'space-y-4' : 'flex')}>
+            {!isMobile ? <div className="h-[400px] w-[400px] shrink-0 rounded bg-muted" /> : null}
             <div className="flex-1 space-y-3">
+              {isMobile ? <div className="aspect-square w-full rounded bg-muted" /> : null}
               <div className="h-6 rounded bg-muted" />
               <div className="h-4 w-3/4 rounded bg-muted" />
               <div className="h-5 w-1/2 rounded bg-muted" />
@@ -508,7 +513,11 @@ export default function ProductDetailPage() {
   }
 
   const handleBuyNow = () => {
-    if (!user) {
+    if (authLoading) {
+      return
+    }
+
+    if (!isAuthenticated) {
       setGuestActionHint('login_for_checkout')
       return
     }
@@ -533,12 +542,16 @@ export default function ProductDetailPage() {
   }
 
   const handleAddToCart = async () => {
+    if (authLoading) {
+      return
+    }
+
     if (!allAttributesSelected) {
       toast.error(t.product.pleaseSelectAllAttributes)
       return
     }
 
-    if (!user) {
+    if (!isAuthenticated) {
       addToGuestCart(
         {
           product_id: productId,
@@ -578,7 +591,11 @@ export default function ProductDetailPage() {
 
   // 应用优惠码
   const handleApplyPromoCode = async () => {
-    if (!user) {
+    if (authLoading) {
+      return
+    }
+
+    if (!isAuthenticated) {
       setGuestActionHint('login_for_promo')
       return
     }
@@ -635,7 +652,7 @@ export default function ProductDetailPage() {
       : guestActionHint === 'login_for_promo'
         ? t.product.loginForPromoCode
         : t.product.pleaseLoginFirst
-  const showGuestPurchaseHint = !user && !guestActionHint
+  const showGuestPurchaseHint = isGuestMode && !guestActionHint
   const userProductDetailPluginContext = {
     view: 'user_product_detail',
     product: {
@@ -674,7 +691,7 @@ export default function ProductDetailPage() {
       show_guest_purchase_hint: showGuestPurchaseHint,
     },
     auth: {
-      is_authenticated: Boolean(user),
+      is_authenticated: isAuthenticated,
       guest_action_hint: guestActionHint || undefined,
     },
     state: {
@@ -688,7 +705,7 @@ export default function ProductDetailPage() {
       adding_to_cart: isAddingToCart,
       creating_order: createOrderMutation.isPending,
       guest_purchase_hint_visible: showGuestPurchaseHint,
-      guest_hint_visible: !user && Boolean(guestActionHint),
+      guest_hint_visible: isGuestMode && Boolean(guestActionHint),
     },
   }
 
@@ -699,18 +716,21 @@ export default function ProductDetailPage() {
       <div className="mb-6 flex items-center gap-3">
         <Button asChild variant="outline" size="sm">
           <Link href={productListBackHref}>
-            <ArrowLeft className="h-4 w-4 md:mr-1.5" />
-            <span className="hidden md:inline">{t.product.backToList}</span>
-            <span className="sr-only md:hidden">{t.product.backToList}</span>
+            <ArrowLeft className={cn('h-4 w-4', !isMobile && 'md:mr-1.5')} />
+            {isMobile ? (
+              <span className="sr-only">{t.product.backToList}</span>
+            ) : (
+              <span>{t.product.backToList}</span>
+            )}
           </Link>
         </Button>
-        <h1 className="line-clamp-1 text-lg font-bold md:text-xl">
+        <h1 className={cn('line-clamp-1 text-lg font-bold', !isMobile && 'md:text-xl')}>
           {t.product.productDetailTitle}
         </h1>
       </div>
 
       {/* Mobile image */}
-      <div className="mb-6 md:hidden">
+      {isMobile ? <div className="mb-6">
         <div className="space-y-3">
           <div
             className="relative aspect-square touch-pan-y overflow-hidden rounded-xl bg-muted"
@@ -811,11 +831,11 @@ export default function ProductDetailPage() {
             </div>
           )}
         </div>
-      </div>
+      </div> : null}
 
-      <div className="flex items-start gap-8">
+      <div className={cn(isMobile ? 'space-y-6' : 'flex items-start gap-8')}>
         {/* Left: Image gallery (sticky) */}
-        <div className="sticky top-4 hidden w-[520px] shrink-0 self-start md:block">
+        {!isMobile ? <div className="sticky top-4 w-[520px] shrink-0 self-start">
           <div className="space-y-3">
             <div
               className="relative aspect-square cursor-grab select-none overflow-hidden rounded-xl border border-border bg-muted active:cursor-grabbing"
@@ -908,14 +928,19 @@ export default function ProductDetailPage() {
               </div>
             )}
           </div>
-        </div>
+        </div> : null}
 
         {/* Right: Product info */}
         <div className="min-w-0 flex-1 self-start">
-          <div className="space-y-4 md:sticky md:top-2 md:space-y-5">
+          <div className={cn('space-y-4', !isMobile && 'md:sticky md:top-2 md:space-y-5')}>
             {/* Summary card */}
             <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
-              <div className="border-b border-border/70 bg-gradient-to-br from-muted/50 via-background to-background p-5 md:p-6">
+              <div
+                className={cn(
+                  'border-b border-border/70 bg-gradient-to-br from-muted/50 via-background to-background p-5',
+                  !isMobile && 'md:p-6'
+                )}
+              >
                 <h2 className="mb-3 text-2xl font-bold leading-tight">{product.name}</h2>
                 <p className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
                   <Eye className="h-3.5 w-3.5" />
@@ -923,7 +948,7 @@ export default function ProductDetailPage() {
                 </p>
               </div>
 
-              <div className="space-y-4 p-5 md:p-6">
+              <div className={cn('space-y-4 p-5', !isMobile && 'md:p-6')}>
                 {/* Price card */}
                 <div className="space-y-2 rounded-xl border border-border bg-muted/40 p-4">
                   <div className="flex flex-col gap-1 sm:flex-row sm:items-baseline sm:gap-3">
@@ -1018,7 +1043,7 @@ export default function ProductDetailPage() {
 
             {/* Purchase card */}
             <div className="rounded-2xl border border-border bg-card shadow-sm">
-              <div className="space-y-5 p-5 md:p-6">
+              <div className={cn('space-y-5 p-5', !isMobile && 'md:p-6')}>
                 {showGuestPurchaseHint && (
                   <Alert className="border-primary/20 bg-primary/5">
                     <Key className="h-4 w-4 text-primary" />
@@ -1196,13 +1221,13 @@ export default function ProductDetailPage() {
                         />
                         <Button
                           onClick={handleApplyPromoCode}
-                          disabled={!user || !promoCodeInput.trim() || isValidatingPromo}
+                          disabled={authLoading || !isAuthenticated || !promoCodeInput.trim() || isValidatingPromo}
                           size="default"
                         >
                           {isValidatingPromo ? t.promoCode.applying : t.promoCode.apply}
                         </Button>
                       </div>
-                      {!user && (
+                      {isGuestMode && (
                         <p className="text-xs text-muted-foreground">
                           {t.product.loginForPromoCode}
                         </p>
@@ -1241,7 +1266,7 @@ export default function ProductDetailPage() {
                   slot="user.product_detail.promo.after"
                   context={{ ...userProductDetailPluginContext, section: 'promo' }}
                 />
-                {!user && guestActionHint && (
+                {isGuestMode && guestActionHint && (
                   <Alert className="border-primary/20 bg-primary/5">
                     {guestActionHint === 'cart_added' ? (
                       <ShoppingCart className="h-4 w-4 text-primary" />
@@ -1281,7 +1306,7 @@ export default function ProductDetailPage() {
                   <Button
                     variant="outline"
                     className="h-11 min-w-0 flex-1"
-                    disabled={!isAvailable || !allAttributesSelected || isAddingToCart}
+                    disabled={authLoading || !isAvailable || !allAttributesSelected || isAddingToCart}
                     onClick={handleAddToCart}
                   >
                     <span className="inline-flex items-center truncate">
@@ -1301,7 +1326,10 @@ export default function ProductDetailPage() {
                   <Button
                     className="h-11 min-w-0 flex-1"
                     disabled={
-                      !isAvailable || !allAttributesSelected || createOrderMutation.isPending
+                      authLoading ||
+                      !isAvailable ||
+                      !allAttributesSelected ||
+                      createOrderMutation.isPending
                     }
                     onClick={handleBuyNow}
                   >
@@ -1331,7 +1359,7 @@ export default function ProductDetailPage() {
             {/* Product description */}
             {product.description && (
               <div className="rounded-2xl border border-border bg-card shadow-sm">
-                <div className="p-5 md:p-6">
+                <div className={cn('p-5', !isMobile && 'md:p-6')}>
                   <h3 className="mb-3 font-semibold">{t.product.productDescription}</h3>
                   <PluginSlot
                     slot="user.product_detail.description.before"

@@ -9,6 +9,7 @@ import {
 } from '@/lib/api'
 import { useAuth } from '@/hooks/use-auth'
 import { useLocale } from '@/hooks/use-locale'
+import { useIsMobile } from '@/hooks/use-mobile'
 import { getTranslations } from '@/lib/i18n'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
@@ -17,6 +18,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { MarkdownMessage } from '@/components/ui/markdown-message'
 import { PluginSlot } from '@/components/plugins/plugin-slot'
 import { ArrowLeft, List, Loader2, Megaphone, RefreshCw, ShieldAlert } from 'lucide-react'
+import { cn } from '@/lib/utils'
 import * as VisuallyHidden from '@radix-ui/react-visually-hidden'
 
 const EMPTY_ANNOUNCEMENTS: Announcement[] = []
@@ -24,8 +26,10 @@ const EMPTY_ANNOUNCEMENTS: Announcement[] = []
 export function AnnouncementPopup() {
   const { isAuthenticated } = useAuth()
   const { locale } = useLocale()
+  const { isMobile, mounted } = useIsMobile()
   const t = getTranslations(locale)
   const queryClient = useQueryClient()
+  const isCompactLayout = mounted ? isMobile : false
 
   const contentRef = useRef<HTMLDivElement>(null)
   const [selectedId, setSelectedId] = useState<number | null>(null)
@@ -154,7 +158,12 @@ export function AnnouncementPopup() {
           />
         </Suspense>
         {isError ? (
-          <div className="flex h-full flex-col items-center justify-center p-6 text-center md:p-10">
+          <div
+            className={cn(
+              'flex h-full flex-col items-center justify-center p-6 text-center',
+              !isCompactLayout && 'md:p-10'
+            )}
+          >
             <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-muted">
               <ShieldAlert className="h-7 w-7 text-muted-foreground" />
             </div>
@@ -174,9 +183,21 @@ export function AnnouncementPopup() {
             />
           </div>
         ) : (
-          <div className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[300px_1fr]">
+          <div
+            className={cn(
+              'grid min-h-0 flex-1 grid-cols-1',
+              !isCompactLayout && 'md:grid-cols-[300px_1fr]'
+            )}
+          >
             <div
-              className={`flex min-h-0 flex-col border-b p-3 md:border-b-0 md:border-r md:p-4 ${mobilePane === 'list' ? '' : 'hidden md:flex'}`}
+              className={cn(
+                'min-h-0 flex-col',
+                isCompactLayout
+                  ? mobilePane === 'list'
+                    ? 'flex border-b p-3'
+                    : 'hidden'
+                  : 'flex border-b p-3 md:border-b-0 md:border-r md:p-4'
+              )}
             >
               <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
@@ -191,7 +212,7 @@ export function AnnouncementPopup() {
                     type="button"
                     variant="outline"
                     size="icon"
-                    className="md:hidden"
+                    className={cn(!isCompactLayout && 'hidden')}
                     onClick={() => setMobilePane('content')}
                     aria-label={t.common.back}
                     title={t.common.back}
@@ -246,7 +267,14 @@ export function AnnouncementPopup() {
             </div>
 
             <div
-              className={`flex min-h-0 flex-col p-3 md:p-4 ${mobilePane === 'list' ? 'hidden md:flex' : ''}`}
+              className={cn(
+                'min-h-0 flex-col',
+                isCompactLayout
+                  ? mobilePane === 'list'
+                    ? 'hidden'
+                    : 'flex p-3'
+                  : 'flex p-3 md:p-4'
+              )}
             >
               <div className="flex min-w-0 items-start justify-between gap-3">
                 <div className="min-w-0">
@@ -267,7 +295,7 @@ export function AnnouncementPopup() {
                       type="button"
                       variant="outline"
                       size="icon"
-                      className="md:hidden"
+                      className={cn(!isCompactLayout && 'hidden')}
                       onClick={() => setMobilePane('list')}
                       aria-label={t.announcement.announcements}
                       title={t.announcement.announcements}

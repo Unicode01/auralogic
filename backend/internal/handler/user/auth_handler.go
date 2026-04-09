@@ -1175,6 +1175,16 @@ type LoginWithCodeRequest struct {
 
 // LoginWithCode 使用邮箱验证码登录
 func (h *AuthHandler) LoginWithCode(c *gin.Context) {
+	cfg := config.GetConfig()
+	if !cfg.SMTP.Enabled {
+		respondAuthBizError(c, authbiz.EmailLoginUnavailable(), nil)
+		return
+	}
+	if !cfg.Security.Login.AllowEmailLogin {
+		respondAuthBizError(c, authbiz.EmailLoginDisabled(), nil)
+		return
+	}
+
 	var req LoginWithCodeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, "Invalid request parameters")
@@ -1344,6 +1354,16 @@ func (h *AuthHandler) SendPhoneLoginCode(c *gin.Context) {
 
 // LoginWithPhoneCode 使用手机验证码登录
 func (h *AuthHandler) LoginWithPhoneCode(c *gin.Context) {
+	cfg := config.GetConfig()
+	if !cfg.SMS.Enabled {
+		respondAuthBizError(c, authbiz.SMSServiceUnavailable(), nil)
+		return
+	}
+	if !cfg.Security.Login.AllowPhoneLogin {
+		respondAuthBizError(c, authbiz.PhoneLoginDisabled(), nil)
+		return
+	}
+
 	var req struct {
 		Phone     string `json:"phone" binding:"required"`
 		PhoneCode string `json:"phone_code"`

@@ -23,6 +23,7 @@ interface OrderListProps {
   }
   // 移动端无限滚动相关
   isMobile?: boolean
+  isPhone?: boolean
   isLoadingMore?: boolean
   hasMore?: boolean
   onLoadMore?: () => void
@@ -43,6 +44,7 @@ export function OrderList({
   onOpenOrder,
   pagination,
   isMobile,
+  isPhone = false,
   isLoadingMore,
   hasMore,
   onLoadMore,
@@ -59,6 +61,11 @@ export function OrderList({
   const t = getTranslations(locale)
   const resolvedEmptyDescription =
     emptyDescription !== undefined ? emptyDescription : t.order.noOrdersDesc
+  const orderGridClassName = isPhone
+    ? 'grid grid-cols-1 gap-4'
+    : isMobile
+      ? 'grid grid-cols-2 gap-4'
+      : 'grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3'
   const orderListPluginContext = useMemo(
     () => ({
       ...(pluginSlotContext || {}),
@@ -186,7 +193,7 @@ export function OrderList({
 
   if (isLoading) {
     return (
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+      <div className={orderGridClassName}>
         {[...Array(6)].map((_, i) => (
           <OrderCardSkeleton key={i} />
         ))}
@@ -221,7 +228,7 @@ export function OrderList({
       </div>
     ) : (
       <div className="space-y-4">
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+        <div className={orderGridClassName}>
           {orders.map((order, index) => (
             <OrderCard
               key={order.id}
