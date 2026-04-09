@@ -32,6 +32,7 @@ import { useToast } from '@/hooks/use-toast'
 import { Key, User, ArrowLeft, Mail, Phone } from 'lucide-react'
 import * as z from 'zod'
 import { useLocale } from '@/hooks/use-locale'
+import { useIsMobile } from '@/hooks/use-mobile'
 import { usePageTitle } from '@/hooks/use-page-title'
 import { getTranslations } from '@/lib/i18n'
 import Link from 'next/link'
@@ -43,8 +44,10 @@ import { PluginSlot } from '@/components/plugins/plugin-slot'
 export default function SettingsPage() {
   const { user } = useAuth()
   const { locale } = useLocale()
+  const { isMobile, mounted } = useIsMobile()
   const t = getTranslations(locale)
   usePageTitle(t.pageTitle.accountSettings)
+  const isCompactLayout = mounted ? isMobile : false
   const toast = useToast()
   const queryClient = useQueryClient()
   const [isChangingPassword, setIsChangingPassword] = useState(false)
@@ -347,13 +350,21 @@ export default function SettingsPage() {
       <PluginSlot slot="user.profile.settings.top" context={userProfileSettingsPluginContext} />
       <div className="flex flex-col gap-3">
         <div className="flex items-center gap-4">
-          <Button asChild variant="outline" size="icon" className="md:hidden">
-            <Link href="/profile">
-              <ArrowLeft className="h-5 w-5" />
-              <span className="sr-only">{t.profile.profileCenter}</span>
-            </Link>
-          </Button>
-          <h1 className="text-2xl font-bold md:text-3xl">{t.profile.accountSettings}</h1>
+          {isCompactLayout ? (
+            <Button asChild variant="outline" size="icon">
+              <Link href="/profile">
+                <ArrowLeft className="h-5 w-5" />
+                <span className="sr-only">{t.profile.profileCenter}</span>
+              </Link>
+            </Button>
+          ) : null}
+          <h1
+            className={
+              isCompactLayout ? 'text-2xl font-bold' : 'text-2xl font-bold md:text-3xl'
+            }
+          >
+            {t.profile.accountSettings}
+          </h1>
         </div>
       </div>
 

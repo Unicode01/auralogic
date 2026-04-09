@@ -16,6 +16,7 @@ import {
 } from 'lucide-react'
 import { useAuth } from '@/hooks/use-auth'
 import { useLocale } from '@/hooks/use-locale'
+import { useIsMobile } from '@/hooks/use-mobile'
 import { usePageTitle } from '@/hooks/use-page-title'
 import { useToast } from '@/hooks/use-toast'
 import { useTheme, type Theme } from '@/contexts/theme-context'
@@ -58,10 +59,12 @@ const defaultNotificationPrefs: NotificationPrefs = {
 export default function PreferencesPage() {
   const { user } = useAuth()
   const { locale, setLocale } = useLocale()
+  const { isMobile, mounted } = useIsMobile()
   const { theme, setTheme } = useTheme()
   const t = getTranslations(locale)
   usePageTitle(t.pageTitle.profilePreferences)
   const isGuest = !user
+  const isCompactLayout = mounted ? isMobile : false
 
   const toast = useToast()
   const queryClient = useQueryClient()
@@ -258,18 +261,32 @@ export default function PreferencesPage() {
           slot="user.profile.preferences.top"
           context={userProfilePreferencesPluginContext}
         />
-        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+        <div
+          className={
+            isCompactLayout
+              ? 'flex flex-col gap-3'
+              : 'flex flex-col gap-3 md:flex-row md:items-start md:justify-between'
+          }
+        >
           <div className="space-y-2">
             <div className="flex items-center gap-4">
-              <Button asChild variant="outline" size="icon" className="md:hidden">
-                <Link href={backHref}>
-                  <ArrowLeft className="h-5 w-5" />
-                  <span className="sr-only">
-                    {isGuest ? t.sidebar.productCenter : t.profile.profileCenter}
-                  </span>
-                </Link>
-              </Button>
-              <h1 className="text-2xl font-bold md:text-3xl">{t.sidebar.preferences}</h1>
+              {isCompactLayout ? (
+                <Button asChild variant="outline" size="icon">
+                  <Link href={backHref}>
+                    <ArrowLeft className="h-5 w-5" />
+                    <span className="sr-only">
+                      {isGuest ? t.sidebar.productCenter : t.profile.profileCenter}
+                    </span>
+                  </Link>
+                </Button>
+              ) : null}
+              <h1
+                className={
+                  isCompactLayout ? 'text-2xl font-bold' : 'text-2xl font-bold md:text-3xl'
+                }
+              >
+                {t.sidebar.preferences}
+              </h1>
             </div>
             {isGuest ? (
               <p className="text-sm text-muted-foreground">{t.profile.notificationLoginHint}</p>
@@ -282,7 +299,9 @@ export default function PreferencesPage() {
           )}
         </div>
 
-        <div className={cn('grid gap-6', !isGuest && 'xl:grid-cols-[1fr_1.4fr]')}>
+        <div
+          className={cn('grid gap-6', !isGuest && !isCompactLayout && 'xl:grid-cols-[1fr_1.4fr]')}
+        >
           <Card className="h-fit">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">

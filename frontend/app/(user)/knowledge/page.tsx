@@ -23,14 +23,17 @@ import { format } from 'date-fns'
 import { zhCN } from 'date-fns/locale'
 import { cn } from '@/lib/utils'
 import { useLocale } from '@/hooks/use-locale'
+import { useIsMobile } from '@/hooks/use-mobile'
 import { usePageTitle } from '@/hooks/use-page-title'
 import { getTranslations } from '@/lib/i18n'
 import { PluginSlot } from '@/components/plugins/plugin-slot'
 
 export default function KnowledgePage() {
   const { locale } = useLocale()
+  const { isMobile, mounted } = useIsMobile()
   const t = getTranslations(locale)
   usePageTitle(t.pageTitle.knowledge)
+  const isCompactLayout = mounted ? isMobile : false
 
   const [page, setPage] = useState(1)
   const [categoryId, setCategoryId] = useState<string | undefined>()
@@ -213,7 +216,9 @@ export default function KnowledgePage() {
       <PluginSlot slot="user.knowledge.top" context={userKnowledgePluginContext} />
       {/* Header */}
       <div>
-        <h1 className="text-3xl font-bold">{t.knowledge.knowledgeBase}</h1>
+        <h1 className={isCompactLayout ? 'text-2xl font-bold' : 'text-3xl font-bold'}>
+          {t.knowledge.knowledgeBase}
+        </h1>
       </div>
 
       {/* Search */}
@@ -252,7 +257,7 @@ export default function KnowledgePage() {
       <PluginSlot slot="user.knowledge.filters.after" context={userKnowledgePluginContext} />
 
       {/* Mobile: horizontal scrollable category chips */}
-      <div className="md:hidden">
+      {isCompactLayout ? (
         <div className="scrollbar-hide flex gap-2 overflow-x-auto pb-2">
           <Button
             variant={!categoryId ? 'default' : 'outline'}
@@ -274,31 +279,33 @@ export default function KnowledgePage() {
             </Button>
           ))}
         </div>
-      </div>
+      ) : null}
 
       {/* Main content: sidebar + article list */}
-      <div className="flex gap-6">
+      <div className={isCompactLayout ? 'space-y-4' : 'flex gap-6'}>
         {/* Desktop: category sidebar */}
-        <div className="hidden w-56 shrink-0 md:block">
-          <Card>
-            <CardContent className="p-2">
-              <div className="space-y-0.5">
-                <div
-                  className={cn(
-                    'flex cursor-pointer items-center gap-1.5 rounded-md px-3 py-2 text-sm transition-colors',
-                    !categoryId ? 'bg-primary text-primary-foreground' : 'hover:bg-accent'
-                  )}
-                  onClick={() => handleCategoryClick(undefined)}
-                >
-                  <span className="w-[18px] shrink-0" />
-                  <BookOpen className="h-4 w-4 shrink-0" />
-                  <span>{t.knowledge.allCategories}</span>
+        {!isCompactLayout ? (
+          <div className="w-56 shrink-0">
+            <Card>
+              <CardContent className="p-2">
+                <div className="space-y-0.5">
+                  <div
+                    className={cn(
+                      'flex cursor-pointer items-center gap-1.5 rounded-md px-3 py-2 text-sm transition-colors',
+                      !categoryId ? 'bg-primary text-primary-foreground' : 'hover:bg-accent'
+                    )}
+                    onClick={() => handleCategoryClick(undefined)}
+                  >
+                    <span className="w-[18px] shrink-0" />
+                    <BookOpen className="h-4 w-4 shrink-0" />
+                    <span>{t.knowledge.allCategories}</span>
+                  </div>
+                  {categories.map((cat) => renderCategoryItem(cat))}
                 </div>
-                {categories.map((cat) => renderCategoryItem(cat))}
-              </div>
-            </CardContent>
-          </Card>
-        </div>
+              </CardContent>
+            </Card>
+          </div>
+        ) : null}
 
         {/* Article list */}
         <div className="min-w-0 flex-1">
@@ -362,7 +369,12 @@ export default function KnowledgePage() {
                       <CardContent className="p-4">
                         <div className="flex items-start justify-between gap-3">
                           <div className="min-w-0 flex-1">
-                            <h3 className="truncate text-sm font-medium md:text-base">
+                            <h3
+                              className={cn(
+                                'truncate text-sm font-medium',
+                                !isCompactLayout && 'md:text-base'
+                              )}
+                            >
                               {article.title}
                             </h3>
                             <div className="mt-2 flex flex-wrap items-center gap-2">

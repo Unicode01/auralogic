@@ -1,10 +1,16 @@
+'use client'
+
 import { Skeleton } from '@/components/ui/page-loading'
+import { useIsMobile } from '@/hooks/use-mobile'
 
 export default function Loading() {
+  const { isMobile, mounted } = useIsMobile()
+  const isCompactLayout = mounted ? isMobile : false
+
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-4">
-        <Skeleton className="h-9 w-9 md:hidden" />
+        {isCompactLayout ? <Skeleton className="h-9 w-9" /> : null}
         <Skeleton className="h-8 w-40" />
       </div>
 
@@ -15,7 +21,7 @@ export default function Loading() {
         </div>
       </div>
 
-      <div className="grid gap-6 xl:grid-cols-[1fr_1.4fr]">
+      <div className={isCompactLayout ? 'grid gap-6' : 'grid gap-6 xl:grid-cols-[1fr_1.4fr]'}>
         <div className="rounded-lg border bg-card">
           <div className="space-y-1.5 p-6">
             <Skeleton className="h-6 w-40" />
