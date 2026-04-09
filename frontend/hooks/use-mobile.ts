@@ -2,50 +2,82 @@
 
 import { useState, useEffect } from 'react'
 
-const MOBILE_BREAKPOINT = 768 // px
+const PHONE_BREAKPOINT = 768
+const TABLET_BREAKPOINT = 1024
+const TABLET_DEVICE_MAX_WIDTH = 1400
 
-export function useIsMobile() {
-  const [isMobile, setIsMobile] = useState(false)
-  const [mounted, setMounted] = useState(false)
+type ResponsiveLayoutState = {
+  width: number
+  isPhone: boolean
+  isTablet: boolean
+  isDesktop: boolean
+  isMobile: boolean
+  mounted: boolean
+}
+
+function isLikelyTabletDevice() {
+  if (typeof navigator === 'undefined' || typeof window === 'undefined') {
+    return false
+  }
+
+  const userAgent = navigator.userAgent || navigator.vendor || ''
+  const normalizedUserAgent = userAgent.toLowerCase()
+  const isAndroidTablet =
+    normalizedUserAgent.includes('android') && !normalizedUserAgent.includes('mobile')
+  const hasTabletKeyword = /ipad|tablet|playbook|silk|kindle/.test(normalizedUserAgent)
+  const isIpadDesktopMode = navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1
+
+  return isAndroidTablet || hasTabletKeyword || isIpadDesktopMode
+}
+
+function getResponsiveLayoutState(): Omit<ResponsiveLayoutState, 'mounted'> {
+  const width = window.innerWidth
+  const isPhone = width < PHONE_BREAKPOINT
+  const isTabletByWidth = width >= PHONE_BREAKPOINT && width < TABLET_BREAKPOINT
+  const isTabletByDevice = !isPhone && isLikelyTabletDevice() && width < TABLET_DEVICE_MAX_WIDTH
+  const isTablet = isTabletByWidth || isTabletByDevice
+
+  return {
+    width,
+    isPhone,
+    isTablet,
+    isDesktop: !isPhone && !isTablet,
+    isMobile: isPhone || isTablet,
+  }
+}
+
+const INITIAL_STATE: ResponsiveLayoutState = {
+  width: 0,
+  isPhone: false,
+  isTablet: false,
+  isDesktop: false,
+  isMobile: false,
+  mounted: false,
+}
+
+export function useResponsiveLayout() {
+  const [layoutState, setLayoutState] = useState<ResponsiveLayoutState>(INITIAL_STATE)
 
   useEffect(() => {
-    setMounted(true)
-
-    // 检测方法1: 通过视口宽度
-    const checkWidth = () => {
-      setIsMobile(window.innerWidth < MOBILE_BREAKPOINT)
+    const updateLayoutState = () => {
+      setLayoutState({
+        ...getResponsiveLayoutState(),
+        mounted: true,
+      })
     }
 
-    // 检测方法2: 通过 User Agent
-    const checkUA = () => {
-      const ua = navigator.userAgent || navigator.vendor || (window as any).opera
-      const mobileRegex = /android|webos|iphone|ipad|ipod|blackberry|iemobile|opera mini|mobile|tablet/i
-      return mobileRegex.test(ua.toLowerCase())
-    }
-
-    // 检测方法3: 通过触摸支持
-    const checkTouch = () => {
-      return 'ontouchstart' in window || navigator.maxTouchPoints > 0
-    }
-
-    // 综合判断: 视口宽度 OR (UA检测 AND 触摸支持)
-    const checkMobile = () => {
-      const isNarrowScreen = window.innerWidth < MOBILE_BREAKPOINT
-      const isMobileUA = checkUA()
-      const hasTouch = checkTouch()
-
-      setIsMobile(isNarrowScreen || (isMobileUA && hasTouch))
-    }
-
-    checkMobile()
-
-    // 监听窗口大小变化
-    window.addEventListener('resize', checkMobile)
+    updateLayoutState()
+    window.addEventListener('resize', updateLayoutState)
 
     return () => {
-      window.removeEventListener('resize', checkMobile)
+      window.removeEventListener('resize', updateLayoutState)
     }
   }, [])
 
+  return layoutState
+}
+
+export function useIsMobile() {
+  const { isMobile, mounted } = useResponsiveLayout()
   return { isMobile, mounted }
 }

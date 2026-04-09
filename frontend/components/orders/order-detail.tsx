@@ -23,7 +23,7 @@ import {
   EyeOff,
   Headphones,
 } from 'lucide-react'
-import { formatDate, formatCurrency } from '@/lib/utils'
+import { cn, formatDate, formatCurrency } from '@/lib/utils'
 import type { Order } from '@/types/order'
 import type { VirtualProductStock } from '@/types/product'
 import { useLocale } from '@/hooks/use-locale'
@@ -51,6 +51,7 @@ interface OrderDetailProps {
   serials?: ProductSerial[]
   virtualStocks?: VirtualProductStock[]
   isVirtualOnly?: boolean
+  compactLayout?: boolean
   paymentCard?: ReactNode
   shippingForm?: ReactNode
   shippingFormURL?: string
@@ -68,6 +69,7 @@ export function OrderDetail({
   serials,
   virtualStocks,
   isVirtualOnly = false,
+  compactLayout = false,
   paymentCard,
   shippingForm,
   shippingFormURL,
@@ -414,7 +416,12 @@ export function OrderDetail({
         </CardHeader>
 
         <CardContent>
-          <dl className="grid grid-cols-1 gap-4 text-sm md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          <dl
+            className={cn(
+              'grid grid-cols-1 gap-4 text-sm',
+              !compactLayout && 'md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4'
+            )}
+          >
             <div>
               <dt className="text-muted-foreground">{t.order.orderNo}</dt>
               <dd className="flex flex-wrap items-center gap-2 break-all font-mono font-medium">
@@ -542,9 +549,9 @@ export function OrderDetail({
       </Card>
 
       {/* 商品信息与收货物流信息/虚拟产品内容 - 在宽屏上并排显示 */}
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+      <div className={cn('grid grid-cols-1 gap-6', !compactLayout && 'lg:grid-cols-2')}>
         {/* 商品信息 */}
-        <Card className="lg:col-span-1">
+        <Card className={cn(!compactLayout && 'lg:col-span-1')}>
           <CardHeader>
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="flex min-w-0 items-center gap-2">
@@ -630,11 +637,11 @@ export function OrderDetail({
         </Card>
 
         {/* 付款方式卡片（待付款时显示在商品信息右侧） */}
-        {paymentCard && <div className="lg:col-span-1">{paymentCard}</div>}
+        {paymentCard && <div className={cn(!compactLayout && 'lg:col-span-1')}>{paymentCard}</div>}
 
         {/* 虚拟产品卡密 - 与商品信息并排显示 */}
         {virtualStocks && virtualStocks.length > 0 && (
-          <Card className="lg:col-span-1">
+          <Card className={cn(!compactLayout && 'lg:col-span-1')}>
             <CardHeader>
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="flex min-w-0 items-center gap-2">
@@ -667,10 +674,18 @@ export function OrderDetail({
                 </div>
 
                 {virtualStocks.map((stock) => (
-                  <div key={stock.id} className="space-y-2 rounded-lg border p-3 md:p-4">
+                  <div
+                    key={stock.id}
+                    className={cn('space-y-2 rounded-lg border p-3', !compactLayout && 'md:p-4')}
+                  >
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div className="flex min-w-0 flex-wrap items-center gap-1">
-                        <code className="break-all rounded bg-muted px-2 py-1 font-mono text-sm md:px-3 md:py-2 md:text-lg">
+                        <code
+                          className={cn(
+                            'break-all rounded bg-muted px-2 py-1 font-mono text-sm',
+                            !compactLayout && 'md:px-3 md:py-2 md:text-lg'
+                          )}
+                        >
                           {showContent[stock.id] ? stock.content : '************'}
                         </code>
                         <div className="flex shrink-0 items-center">
@@ -678,7 +693,7 @@ export function OrderDetail({
                             type="button"
                             variant="ghost"
                             size="sm"
-                            className="h-7 w-7 p-0 md:h-8 md:w-8"
+                            className={cn('h-7 w-7 p-0', !compactLayout && 'md:h-8 md:w-8')}
                             onClick={() => toggleContentVisibility(stock.id)}
                             aria-label={`${showContent[stock.id] ? t.common.collapse : t.common.expand} ${t.order.virtualProductContent}`}
                             title={`${showContent[stock.id] ? t.common.collapse : t.common.expand} ${t.order.virtualProductContent}`}
@@ -693,7 +708,7 @@ export function OrderDetail({
                             type="button"
                             variant="ghost"
                             size="sm"
-                            className="h-7 w-7 p-0 md:h-8 md:w-8"
+                            className={cn('h-7 w-7 p-0', !compactLayout && 'md:h-8 md:w-8')}
                             onClick={() => copyToClipboard(stock.content)}
                             aria-label={`${t.common.copy} ${t.order.virtualProductContent}`}
                             title={`${t.common.copy} ${t.order.virtualProductContent}`}
@@ -730,9 +745,14 @@ export function OrderDetail({
         {!isVirtualOnly &&
           order.status !== 'pending_payment' &&
           (order.receiverName || order.receiver_name || order.trackingNo || order.tracking_no ? (
-            <Card className="lg:col-span-1">
+            <Card className={cn(!compactLayout && 'lg:col-span-1')}>
               <CardHeader>
-                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <div
+                  className={cn(
+                    'flex flex-col gap-3',
+                    !compactLayout && 'md:flex-row md:items-center md:justify-between'
+                  )}
+                >
                   <CardTitle className="flex items-center gap-2">
                     <Truck className="h-5 w-5" />
                     {t.order.shippingInfo} & {t.order.trackingInfo}
@@ -849,9 +869,14 @@ export function OrderDetail({
               </CardContent>
             </Card>
           ) : shippingForm ? (
-            <Card className="lg:col-span-1">
+            <Card className={cn(!compactLayout && 'lg:col-span-1')}>
               <CardHeader>
-                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <div
+                  className={cn(
+                    'flex flex-col gap-3',
+                    !compactLayout && 'md:flex-row md:items-center md:justify-between'
+                  )}
+                >
                   <CardTitle className="flex items-center gap-2">
                     <MapPin className="h-5 w-5" />
                     {t.order.shippingInfo}
@@ -879,9 +904,14 @@ export function OrderDetail({
               </CardContent>
             </Card>
           ) : (
-            <Card className="border-dashed lg:col-span-1">
+            <Card className={cn('border-dashed', !compactLayout && 'lg:col-span-1')}>
               <CardHeader>
-                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <div
+                  className={cn(
+                    'flex flex-col gap-3',
+                    !compactLayout && 'md:flex-row md:items-center md:justify-between'
+                  )}
+                >
                   <CardTitle className="flex items-center gap-2">
                     <Truck className="h-5 w-5" />
                     {t.order.shippingInfo}

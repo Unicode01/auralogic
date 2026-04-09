@@ -1,6 +1,12 @@
+'use client'
+
 import { Skeleton } from '@/components/ui/page-loading'
+import { useIsMobile } from '@/hooks/use-mobile'
 
 export default function Loading() {
+  const { isMobile, mounted } = useIsMobile()
+  const isCompactLayout = mounted ? isMobile : false
+
   return (
     <div className="space-y-6">
       {/* 标题和刷新按钮 */}
@@ -10,9 +16,9 @@ export default function Loading() {
       </div>
 
       {/* 筛选栏 */}
-      <div className="flex flex-col md:flex-row gap-3">
+      <div className={isCompactLayout ? 'flex flex-col gap-3' : 'flex flex-col gap-3 md:flex-row'}>
         <Skeleton className="h-10 flex-1" />
-        <Skeleton className="h-10 w-full md:w-40" />
+        <Skeleton className={isCompactLayout ? 'h-10 w-full' : 'h-10 w-full md:w-40'} />
       </div>
 
       {/* 订单列表 */}

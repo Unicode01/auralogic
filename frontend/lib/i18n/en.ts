@@ -3451,7 +3451,7 @@ export const enTranslations = {
     allowRegistrationHint: 'Users can register on the login page when enabled',
     allowGuestProductBrowse: 'Allow Guest Product Browse',
     allowGuestProductBrowseHint:
-      'Guests can view product list and details without login when enabled',
+      'Guests can view product list, details, and the cart page without login when enabled',
     requireEmailVerification: 'Require Email Verification',
     requireEmailVerificationHint:
       'Users must verify email after registration to log in. Requires SMTP configured.',

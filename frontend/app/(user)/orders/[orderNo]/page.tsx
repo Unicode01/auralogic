@@ -20,6 +20,7 @@ import {
   getInvoiceToken,
 } from '@/lib/api'
 import { useLocale } from '@/hooks/use-locale'
+import { useIsMobile } from '@/hooks/use-mobile'
 import { usePageTitle } from '@/hooks/use-page-title'
 import { getTranslations } from '@/lib/i18n'
 import { buildListReturnPath, readListBrowseState } from '@/lib/list-browse-state'
@@ -63,8 +64,10 @@ function usePaymentCountdown(createdAt: string | undefined, autoCancelHours: num
 function OrderDetailContent({ orderNo }: { orderNo: string }) {
   const searchParams = useSearchParams()
   const { locale } = useLocale()
+  const { isMobile, mounted } = useIsMobile()
   const t = getTranslations(locale)
   usePageTitle(t.pageTitle.orderDetail)
+  const isCompactLayout = mounted ? isMobile : false
   const [shouldAutoRefresh, setShouldAutoRefresh] = useState(true)
   const [formToken, setFormToken] = useState<string | null>(null)
   const [formData, setFormData] = useState<any>(null)
@@ -340,45 +343,56 @@ function OrderDetailContent({ orderNo }: { orderNo: string }) {
       <PluginSlot slot="user.order_detail.top" context={userOrderDetailPluginContext} />
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-3">
-          <Button asChild variant="outline" size="sm">
+          <Button asChild variant="outline" size={isCompactLayout ? 'icon' : 'sm'}>
             <Link href={orderListBackHref}>
-              <ArrowLeft className="h-4 w-4 md:mr-1.5" />
-              <span className="hidden md:inline">{t.order.backToList}</span>
-              <span className="sr-only md:hidden">{t.order.backToList}</span>
+              <ArrowLeft className={isCompactLayout ? 'h-4 w-4' : 'h-4 w-4 md:mr-1.5'} />
+              {isCompactLayout ? (
+                <span className="sr-only">{t.order.backToList}</span>
+              ) : (
+                <span>{t.order.backToList}</span>
+              )}
             </Link>
           </Button>
           <div>
-            <h1 className="text-lg font-bold md:text-xl">{t.order.orderDetail}</h1>
+            <h1 className={isCompactLayout ? 'text-lg font-bold' : 'text-lg font-bold md:text-xl'}>
+              {t.order.orderDetail}
+            </h1>
           </div>
         </div>
 
         <div className="flex shrink-0 items-center gap-2">
           <Button
             variant="outline"
-            size="sm"
+            size={isCompactLayout ? 'icon' : 'sm'}
             onClick={() => refetch()}
             disabled={isFetching}
             aria-label={t.common.refresh}
             title={t.common.refresh}
           >
-            <RefreshCw className={`h-4 w-4 md:mr-1.5 ${isFetching ? 'animate-spin' : ''}`} />
-            <span className="hidden md:inline">{t.common.refresh}</span>
-            <span className="sr-only md:hidden">{t.common.refresh}</span>
+            <RefreshCw
+              className={`${isCompactLayout ? 'h-4 w-4' : 'h-4 w-4 md:mr-1.5'} ${isFetching ? 'animate-spin' : ''}`}
+            />
+            {isCompactLayout ? (
+              <span className="sr-only">{t.common.refresh}</span>
+            ) : (
+              <span>{t.common.refresh}</span>
+            )}
           </Button>
           {invoiceEnabled && order.status === 'completed' && (
             <Button
               variant="outline"
-              size="sm"
+              size={isCompactLayout ? 'icon' : 'sm'}
               onClick={handleDownloadInvoice}
               disabled={invoiceLoading}
             >
-              <FileText className="h-4 w-4 md:mr-1.5" />
-              <span className="hidden md:inline">
-                {invoiceLoading ? t.common.loading : t.order.downloadInvoice}
-              </span>
-              <span className="sr-only md:hidden">
-                {invoiceLoading ? t.common.loading : t.order.downloadInvoice}
-              </span>
+              <FileText className={isCompactLayout ? 'h-4 w-4' : 'h-4 w-4 md:mr-1.5'} />
+              {isCompactLayout ? (
+                <span className="sr-only">
+                  {invoiceLoading ? t.common.loading : t.order.downloadInvoice}
+                </span>
+              ) : (
+                <span>{invoiceLoading ? t.common.loading : t.order.downloadInvoice}</span>
+              )}
             </Button>
           )}
         </div>
@@ -433,6 +447,7 @@ function OrderDetailContent({ orderNo }: { orderNo: string }) {
         order={order}
         virtualStocks={virtualStocks}
         isVirtualOnly={isVirtualOnly}
+        compactLayout={isCompactLayout}
         showVirtualStockRemark={showVirtualStockRemark}
         pluginSlotNamespace="user.order_detail"
         pluginSlotContext={userOrderDetailPluginContext}

@@ -37,6 +37,8 @@ func newAuthServiceTestDB(t *testing.T) (*AuthService, *gorm.DB) {
 		Security: config.SecurityConfig{
 			Login: config.LoginConfig{
 				AllowPasswordLogin:       true,
+				AllowEmailLogin:          true,
+				AllowPhoneLogin:          true,
 				RequireEmailVerification: true,
 			},
 			PasswordPolicy: config.PasswordPolicyConfig{
@@ -46,6 +48,12 @@ func newAuthServiceTestDB(t *testing.T) (*AuthService, *gorm.DB) {
 				RequireNumber:    true,
 				RequireSpecial:   true,
 			},
+		},
+		SMTP: config.SMTPConfig{
+			Enabled: true,
+		},
+		SMS: config.SMSConfig{
+			Enabled: true,
 		},
 	}
 	jwt.InitJWT(&cfg.JWT)
@@ -194,4 +202,38 @@ func TestChangePasswordReturnsUserNotFoundBizError(t *testing.T) {
 	svc, _ := newAuthServiceTestDB(t)
 
 	requireAuthBizErr(t, svc.ChangePassword(9999, "Password1!", "Password2!"), "auth.userNotFound")
+}
+
+func TestLoginWithCodeRespectsEmailLoginConfig(t *testing.T) {
+	svc, _ := newAuthServiceTestDB(t)
+
+	svc.cfg.SMTP.Enabled = false
+	requireAuthBizErr(t, func() error {
+		_, _, err := svc.LoginWithCode("user@example.com", "123456")
+		return err
+	}(), "auth.emailLoginUnavailable")
+
+	svc.cfg.SMTP.Enabled = true
+	svc.cfg.Security.Login.AllowEmailLogin = false
+	requireAuthBizErr(t, func() error {
+		_, _, err := svc.LoginWithCode("user@example.com", "123456")
+		return err
+	}(), "auth.emailLoginDisabled")
+}
+
+func TestLoginWithPhoneCodeRespectsPhoneLoginConfig(t *testing.T) {
+	svc, _ := newAuthServiceTestDB(t)
+
+	svc.cfg.SMS.Enabled = false
+	requireAuthBizErr(t, func() error {
+		_, _, err := svc.LoginWithPhoneCode("13800138000", "123456")
+		return err
+	}(), "auth.smsServiceUnavailable")
+
+	svc.cfg.SMS.Enabled = true
+	svc.cfg.Security.Login.AllowPhoneLogin = false
+	requireAuthBizErr(t, func() error {
+		_, _, err := svc.LoginWithPhoneCode("13800138000", "123456")
+		return err
+	}(), "auth.phoneLoginDisabled")
 }

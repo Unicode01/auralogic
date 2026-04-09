@@ -109,6 +109,10 @@ body:has(.sidebar-layout) {
     pointer-events: auto !important;
 }
 
+.user-layout-shell {
+    --user-layout-sidebar-offset: 0px;
+}
+
 /* 确保 Dialog 和 Select 的 Portal 容器配置正确 */
 [data-radix-portal] {
     pointer-events: none;

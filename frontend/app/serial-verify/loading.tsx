@@ -1,14 +1,15 @@
 'use client'
 
 import { useAuth } from '@/hooks/use-auth'
-import { useIsMobile } from '@/hooks/use-mobile'
+import { useResponsiveLayout } from '@/hooks/use-mobile'
 import { UserSidebar } from '@/components/layout/user-sidebar'
 import { MobileBottomNav } from '@/components/layout/mobile-bottom-nav'
 import { Skeleton } from '@/components/ui/page-loading'
+import { cn } from '@/lib/utils'
 
 function SerialVerifyLoadingContent() {
   const { isAuthenticated } = useAuth()
-  const { isMobile } = useIsMobile()
+  const { isPhone, isTablet } = useResponsiveLayout()
 
   const content = (
     <div className="mx-auto max-w-2xl space-y-6 py-2">
@@ -33,16 +34,30 @@ function SerialVerifyLoadingContent() {
   )
 
   if (!isAuthenticated) {
-    return <div className="px-4 py-10 md:px-6 md:py-12">{content}</div>
+    return (
+      <div
+        className={cn(
+          'px-4',
+          isPhone ? 'py-10' : isTablet ? 'py-8' : 'px-6 py-12'
+        )}
+      >
+        {content}
+      </div>
+    )
   }
 
   return (
     <div className="sidebar-layout flex h-screen">
-      {!isMobile ? <UserSidebar /> : null}
-      <main className={`flex-1 overflow-y-auto p-4 md:p-8 ${isMobile ? 'pb-20' : ''}`}>
-        {content}
+      {!isPhone ? <UserSidebar compact={isTablet} /> : null}
+      <main
+        className={cn(
+          'flex-1 overflow-y-auto',
+          isPhone ? 'p-4 pb-20' : isTablet ? 'bg-muted/10 p-4' : 'p-6 xl:p-8'
+        )}
+      >
+        <div className={cn('w-full', isTablet && 'mx-auto max-w-[39rem]')}>{content}</div>
       </main>
-      {isMobile ? <MobileBottomNav /> : null}
+      {isPhone ? <MobileBottomNav /> : null}
     </div>
   )
 }

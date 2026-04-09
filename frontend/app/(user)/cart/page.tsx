@@ -42,6 +42,7 @@ import {
 import Link from 'next/link'
 import { useAuth } from '@/hooks/use-auth'
 import { useLocale } from '@/hooks/use-locale'
+import { useResponsiveLayout } from '@/hooks/use-mobile'
 import { usePageTitle } from '@/hooks/use-page-title'
 import { getTranslations } from '@/lib/i18n'
 import toast from 'react-hot-toast'
@@ -87,6 +88,7 @@ export default function CartPage() {
   const { locale } = useLocale()
   const t = getTranslations(locale)
   usePageTitle(t.pageTitle.cart)
+  const { isPhone, isTablet, isMobile } = useResponsiveLayout()
   const { currency } = useCurrency()
   const { isAuthenticated, isLoading: authLoading } = useAuth()
   const {
@@ -759,41 +761,45 @@ export default function CartPage() {
   }
 
   return (
-    <div className="space-y-6 pb-28 md:pb-24">
+    <div className={isPhone ? 'space-y-6 pb-28' : 'space-y-6 pb-24'}>
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold md:text-3xl">
+        <h1 className={isMobile ? 'text-2xl font-bold' : 'text-2xl font-bold md:text-3xl'}>
           {t.cart.title}
-          <span className="ml-2 hidden text-lg font-normal text-muted-foreground md:inline">
-            ({items.length} {t.cart.items})
-          </span>
+          {!isMobile ? (
+            <span className="ml-2 text-lg font-normal text-muted-foreground">
+              ({items.length} {t.cart.items})
+            </span>
+          ) : null}
         </h1>
         <div className="flex items-center gap-2">
-          <div className="hidden items-center rounded-lg border p-0.5 md:flex">
-            <Button
-              variant={viewMode === 'list' ? 'secondary' : 'ghost'}
-              size="sm"
-              className="h-7 px-2"
-              onClick={() => handleViewModeChange('list')}
-              aria-pressed={viewMode === 'list'}
-              aria-label={t.cart.listView}
-              title={t.cart.listView}
-            >
-              <LayoutList className="h-4 w-4" />
-              <span className="sr-only">{t.cart.listView}</span>
-            </Button>
-            <Button
-              variant={viewMode === 'card' ? 'secondary' : 'ghost'}
-              size="sm"
-              className="h-7 px-2"
-              onClick={() => handleViewModeChange('card')}
-              aria-pressed={viewMode === 'card'}
-              aria-label={t.cart.cardView}
-              title={t.cart.cardView}
-            >
-              <LayoutGrid className="h-4 w-4" />
-              <span className="sr-only">{t.cart.cardView}</span>
-            </Button>
-          </div>
+          {!isMobile ? (
+            <div className="hidden items-center rounded-lg border p-0.5 md:flex">
+              <Button
+                variant={viewMode === 'list' ? 'secondary' : 'ghost'}
+                size="sm"
+                className="h-7 px-2"
+                onClick={() => handleViewModeChange('list')}
+                aria-pressed={viewMode === 'list'}
+                aria-label={t.cart.listView}
+                title={t.cart.listView}
+              >
+                <LayoutList className="h-4 w-4" />
+                <span className="sr-only">{t.cart.listView}</span>
+              </Button>
+              <Button
+                variant={viewMode === 'card' ? 'secondary' : 'ghost'}
+                size="sm"
+                className="h-7 px-2"
+                onClick={() => handleViewModeChange('card')}
+                aria-pressed={viewMode === 'card'}
+                aria-label={t.cart.cardView}
+                title={t.cart.cardView}
+              >
+                <LayoutGrid className="h-4 w-4" />
+                <span className="sr-only">{t.cart.cardView}</span>
+              </Button>
+            </div>
+          ) : null}
           <Button
             variant="outline"
             size="sm"
@@ -802,9 +808,8 @@ export default function CartPage() {
             aria-label={t.cart.refresh}
             title={t.cart.refresh}
           >
-            <RefreshCw className={`h-4 w-4 md:mr-2 ${isGuestItemsLoading ? 'animate-spin' : ''}`} />
-            <span className="hidden md:inline">{t.cart.refresh}</span>
-            <span className="sr-only md:hidden">{t.cart.refresh}</span>
+            <RefreshCw className={`h-4 w-4 ${!isMobile ? 'md:mr-2' : ''} ${isGuestItemsLoading ? 'animate-spin' : ''}`} />
+            {isMobile ? <span className="sr-only">{t.cart.refresh}</span> : <span>{t.cart.refresh}</span>}
           </Button>
           <Button
             variant="outline"
@@ -814,9 +819,12 @@ export default function CartPage() {
             aria-label={clearSelectedLabel}
             title={clearSelectedLabel}
           >
-            <Trash2 className="h-4 w-4 md:mr-2" />
-            <span className="hidden md:inline">{clearSelectedLabel}</span>
-            <span className="sr-only md:hidden">{clearSelectedLabel}</span>
+            <Trash2 className={`h-4 w-4 ${!isMobile ? 'md:mr-2' : ''}`} />
+            {isMobile ? (
+              <span className="sr-only">{clearSelectedLabel}</span>
+            ) : (
+              <span>{clearSelectedLabel}</span>
+            )}
           </Button>
         </div>
       </div>
@@ -833,7 +841,13 @@ export default function CartPage() {
 
       {isGuestMode && guestRefreshWarning && (
         <Card className="border-amber-200 bg-amber-50/60 dark:border-amber-500/40 dark:bg-amber-950/30">
-          <CardContent className="flex flex-col gap-3 p-3 text-sm text-amber-800 dark:text-amber-200 md:flex-row md:items-start md:justify-between">
+          <CardContent
+            className={
+              isMobile
+                ? 'flex flex-col gap-3 p-3 text-sm text-amber-800 dark:text-amber-200'
+                : 'flex flex-col gap-3 p-3 text-sm text-amber-800 dark:text-amber-200 md:flex-row md:items-start md:justify-between'
+            }
+          >
             <div className="flex items-start gap-2">
               <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
               <span>{guestRefreshWarningMessage || t.cart.guestRefreshWarning}</span>
@@ -852,15 +866,133 @@ export default function CartPage() {
       )}
 
       {viewMode === 'list' && (
-        <div className="space-y-4">
+        <div
+          className={
+            isPhone ? 'space-y-4' : isTablet ? 'grid grid-cols-2 gap-4' : 'space-y-4'
+          }
+        >
           {items.map((item) => (
-            <Card key={item.id} className={!item.is_available ? 'opacity-60' : ''}>
-              <CardContent className="p-3 md:p-4">
-                {/* 移动端布局 */}
-                <div className="md:hidden">
-                  {/* 第一行：选择框 + 图片 + 商品信息 */}
-                  <div className="flex gap-3">
-                    <div className="flex items-start pt-1">
+            <Card
+              key={item.id}
+              className={`${isTablet ? 'h-full' : ''} ${!item.is_available ? 'opacity-60' : ''}`.trim()}
+            >
+              <CardContent className={isMobile ? 'p-3' : 'p-3 md:p-4'}>
+                {isMobile ? (
+                  <>
+                    {/* 第一行：选择框 + 图片 + 商品信息 */}
+                    <div className="flex gap-3">
+                      <div className="flex items-start pt-1">
+                        <Checkbox
+                          checked={selectedItems.has(item.id)}
+                          onCheckedChange={() => handleSelectItem(item.id)}
+                          disabled={!item.is_available}
+                        />
+                      </div>
+                      <Link href={`/products/${item.product_id}`} className="shrink-0">
+                        {item.image_url ? (
+                          <img
+                            src={item.image_url}
+                            alt={item.name}
+                            className="h-16 w-16 rounded object-cover"
+                            onError={(e) => {
+                              e.currentTarget.style.display = 'none'
+                              e.currentTarget.parentElement
+                                ?.querySelector('.img-fallback')
+                                ?.classList.remove('hidden')
+                            }}
+                          />
+                        ) : null}
+                        <div
+                          className={`img-fallback flex h-16 w-16 items-center justify-center rounded bg-muted ${item.image_url ? 'hidden' : ''}`}
+                        >
+                          <Package className="h-6 w-6 text-muted-foreground" />
+                        </div>
+                      </Link>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-start justify-between gap-2">
+                          <Link href={`/products/${item.product_id}`} className="min-w-0 flex-1">
+                            <h3 className="line-clamp-2 text-sm font-semibold hover:text-primary">
+                              {item.name}
+                            </h3>
+                          </Link>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="-mr-2 -mt-1 h-7 w-7 shrink-0 text-muted-foreground hover:text-red-500"
+                            onClick={() => requestRemoveItem(item.id)}
+                            aria-label={t.cart.removeItem}
+                            title={t.cart.removeItem}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                            <span className="sr-only">{t.cart.removeItem}</span>
+                          </Button>
+                        </div>
+                        {item.attributes && Object.keys(item.attributes).length > 0 && (
+                          <div className="mt-1 flex flex-wrap gap-1">
+                            {Object.entries(item.attributes).map(([key, value]) => (
+                              <span key={key} className="rounded bg-muted px-1.5 py-0.5 text-xs">
+                                {key}: {value}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                        {!item.is_available && (
+                          <div className="mt-1 flex items-center gap-1 text-xs text-red-500">
+                            <AlertCircle className="h-3 w-3" />
+                            {t.cart.outOfStock}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    {/* 第二行：价格 + 数量控制 */}
+                    <div className="mt-2 flex items-center justify-between pl-7">
+                      <span className="font-bold text-red-600">
+                        {formatPrice(item.price_minor, currency)}
+                      </span>
+                      <div className="flex items-center gap-1">
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          className="h-7 w-7"
+                          onClick={() => handleQuantityChange(item.id, item.quantity - 1)}
+                          disabled={item.quantity <= 1}
+                          aria-label={t.cart.decreaseQuantity}
+                          title={t.cart.decreaseQuantity}
+                        >
+                          <Minus className="h-3 w-3" />
+                          <span className="sr-only">{t.cart.decreaseQuantity}</span>
+                        </Button>
+                        <Input
+                          type="number"
+                          value={item.quantity}
+                          onChange={(e) => {
+                            const val = parseInt(e.target.value)
+                            if (!isNaN(val) && val >= 1 && val <= getItemMaxQuantity(item))
+                              handleQuantityChange(item.id, val)
+                          }}
+                          className="h-7 w-10 px-0 text-center text-sm"
+                          min={1}
+                          max={getItemMaxQuantity(item)}
+                          aria-label={t.cart.items}
+                        />
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          className="h-7 w-7"
+                          onClick={() => handleQuantityChange(item.id, item.quantity + 1)}
+                          disabled={item.quantity >= getItemMaxQuantity(item)}
+                          aria-label={t.cart.increaseQuantity}
+                          title={t.cart.increaseQuantity}
+                        >
+                          <Plus className="h-3 w-3" />
+                          <span className="sr-only">{t.cart.increaseQuantity}</span>
+                        </Button>
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <div className="flex gap-4">
+                    <div className="flex items-center">
                       <Checkbox
                         checked={selectedItems.has(item.id)}
                         onCheckedChange={() => handleSelectItem(item.id)}
@@ -872,7 +1004,7 @@ export default function CartPage() {
                         <img
                           src={item.image_url}
                           alt={item.name}
-                          className="h-16 w-16 rounded object-cover"
+                          className="h-20 w-20 rounded object-cover"
                           onError={(e) => {
                             e.currentTarget.style.display = 'none'
                             e.currentTarget.parentElement
@@ -882,34 +1014,21 @@ export default function CartPage() {
                         />
                       ) : null}
                       <div
-                        className={`img-fallback flex h-16 w-16 items-center justify-center rounded bg-muted ${item.image_url ? 'hidden' : ''}`}
+                        className={`img-fallback flex h-20 w-20 items-center justify-center rounded bg-muted ${item.image_url ? 'hidden' : ''}`}
                       >
-                        <Package className="h-6 w-6 text-muted-foreground" />
+                        <Package className="h-8 w-8 text-muted-foreground" />
                       </div>
                     </Link>
                     <div className="min-w-0 flex-1">
-                      <div className="flex items-start justify-between gap-2">
-                        <Link href={`/products/${item.product_id}`} className="min-w-0 flex-1">
-                          <h3 className="line-clamp-2 text-sm font-semibold hover:text-primary">
-                            {item.name}
-                          </h3>
-                        </Link>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="-mr-2 -mt-1 h-7 w-7 shrink-0 text-muted-foreground hover:text-red-500"
-                          onClick={() => requestRemoveItem(item.id)}
-                          aria-label={t.cart.removeItem}
-                          title={t.cart.removeItem}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                          <span className="sr-only">{t.cart.removeItem}</span>
-                        </Button>
-                      </div>
+                      <Link href={`/products/${item.product_id}`}>
+                        <h3 className="line-clamp-2 text-base font-semibold hover:text-primary">
+                          {item.name}
+                        </h3>
+                      </Link>
                       {item.attributes && Object.keys(item.attributes).length > 0 && (
                         <div className="mt-1 flex flex-wrap gap-1">
                           {Object.entries(item.attributes).map(([key, value]) => (
-                            <span key={key} className="rounded bg-muted px-1.5 py-0.5 text-xs">
+                            <span key={key} className="rounded bg-muted px-2 py-0.5 text-xs">
                               {key}: {value}
                             </span>
                           ))}
@@ -921,162 +1040,64 @@ export default function CartPage() {
                           {t.cart.outOfStock}
                         </div>
                       )}
+                      <div className="mt-2 flex items-center justify-between">
+                        <span className="font-bold text-red-600">
+                          {formatPrice(item.price_minor, currency)}
+                        </span>
+                        <div className="flex items-center gap-2">
+                          <Button
+                            variant="outline"
+                            size="icon"
+                            className="h-8 w-8"
+                            onClick={() => handleQuantityChange(item.id, item.quantity - 1)}
+                            disabled={item.quantity <= 1}
+                            aria-label={t.cart.decreaseQuantity}
+                            title={t.cart.decreaseQuantity}
+                          >
+                            <Minus className="h-4 w-4" />
+                            <span className="sr-only">{t.cart.decreaseQuantity}</span>
+                          </Button>
+                          <Input
+                            type="number"
+                            value={item.quantity}
+                            onChange={(e) => {
+                              const val = parseInt(e.target.value)
+                              if (!isNaN(val) && val >= 1 && val <= getItemMaxQuantity(item))
+                                handleQuantityChange(item.id, val)
+                            }}
+                            className="h-8 w-16 text-center"
+                            min={1}
+                            max={getItemMaxQuantity(item)}
+                            aria-label={t.cart.items}
+                          />
+                          <Button
+                            variant="outline"
+                            size="icon"
+                            className="h-8 w-8"
+                            onClick={() => handleQuantityChange(item.id, item.quantity + 1)}
+                            disabled={item.quantity >= getItemMaxQuantity(item)}
+                            aria-label={t.cart.increaseQuantity}
+                            title={t.cart.increaseQuantity}
+                          >
+                            <Plus className="h-4 w-4" />
+                            <span className="sr-only">{t.cart.increaseQuantity}</span>
+                          </Button>
+                        </div>
+                      </div>
                     </div>
-                  </div>
-                  {/* 第二行：价格 + 数量控制 */}
-                  <div className="mt-2 flex items-center justify-between pl-7">
-                    <span className="font-bold text-red-600">
-                      {formatPrice(item.price_minor, currency)}
-                    </span>
-                    <div className="flex items-center gap-1">
-                      <Button
-                        variant="outline"
-                        size="icon"
-                        className="h-7 w-7"
-                        onClick={() => handleQuantityChange(item.id, item.quantity - 1)}
-                        disabled={item.quantity <= 1}
-                        aria-label={t.cart.decreaseQuantity}
-                        title={t.cart.decreaseQuantity}
-                      >
-                        <Minus className="h-3 w-3" />
-                        <span className="sr-only">{t.cart.decreaseQuantity}</span>
-                      </Button>
-                      <Input
-                        type="number"
-                        value={item.quantity}
-                        onChange={(e) => {
-                          const val = parseInt(e.target.value)
-                          if (!isNaN(val) && val >= 1 && val <= getItemMaxQuantity(item))
-                            handleQuantityChange(item.id, val)
-                        }}
-                        className="h-7 w-10 px-0 text-center text-sm"
-                        min={1}
-                        max={getItemMaxQuantity(item)}
-                        aria-label={t.cart.items}
-                      />
-                      <Button
-                        variant="outline"
-                        size="icon"
-                        className="h-7 w-7"
-                        onClick={() => handleQuantityChange(item.id, item.quantity + 1)}
-                        disabled={item.quantity >= getItemMaxQuantity(item)}
-                        aria-label={t.cart.increaseQuantity}
-                        title={t.cart.increaseQuantity}
-                      >
-                        <Plus className="h-3 w-3" />
-                        <span className="sr-only">{t.cart.increaseQuantity}</span>
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-
-                {/* 桌面端布局 */}
-                <div className="hidden gap-4 md:flex">
-                  <div className="flex items-center">
-                    <Checkbox
-                      checked={selectedItems.has(item.id)}
-                      onCheckedChange={() => handleSelectItem(item.id)}
-                      disabled={!item.is_available}
-                    />
-                  </div>
-                  <Link href={`/products/${item.product_id}`} className="shrink-0">
-                    {item.image_url ? (
-                      <img
-                        src={item.image_url}
-                        alt={item.name}
-                        className="h-20 w-20 rounded object-cover"
-                        onError={(e) => {
-                          e.currentTarget.style.display = 'none'
-                          e.currentTarget.parentElement
-                            ?.querySelector('.img-fallback')
-                            ?.classList.remove('hidden')
-                        }}
-                      />
-                    ) : null}
-                    <div
-                      className={`img-fallback flex h-20 w-20 items-center justify-center rounded bg-muted ${item.image_url ? 'hidden' : ''}`}
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="shrink-0 text-muted-foreground hover:text-red-500"
+                      onClick={() => requestRemoveItem(item.id)}
+                      aria-label={t.cart.removeItem}
+                      title={t.cart.removeItem}
                     >
-                      <Package className="h-8 w-8 text-muted-foreground" />
-                    </div>
-                  </Link>
-                  <div className="min-w-0 flex-1">
-                    <Link href={`/products/${item.product_id}`}>
-                      <h3 className="line-clamp-2 text-base font-semibold hover:text-primary">
-                        {item.name}
-                      </h3>
-                    </Link>
-                    {item.attributes && Object.keys(item.attributes).length > 0 && (
-                      <div className="mt-1 flex flex-wrap gap-1">
-                        {Object.entries(item.attributes).map(([key, value]) => (
-                          <span key={key} className="rounded bg-muted px-2 py-0.5 text-xs">
-                            {key}: {value}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                    {!item.is_available && (
-                      <div className="mt-1 flex items-center gap-1 text-xs text-red-500">
-                        <AlertCircle className="h-3 w-3" />
-                        {t.cart.outOfStock}
-                      </div>
-                    )}
-                    <div className="mt-2 flex items-center justify-between">
-                      <span className="font-bold text-red-600">
-                        {formatPrice(item.price_minor, currency)}
-                      </span>
-                      <div className="flex items-center gap-2">
-                        <Button
-                          variant="outline"
-                          size="icon"
-                          className="h-8 w-8"
-                          onClick={() => handleQuantityChange(item.id, item.quantity - 1)}
-                          disabled={item.quantity <= 1}
-                          aria-label={t.cart.decreaseQuantity}
-                          title={t.cart.decreaseQuantity}
-                        >
-                          <Minus className="h-4 w-4" />
-                          <span className="sr-only">{t.cart.decreaseQuantity}</span>
-                        </Button>
-                        <Input
-                          type="number"
-                          value={item.quantity}
-                          onChange={(e) => {
-                            const val = parseInt(e.target.value)
-                            if (!isNaN(val) && val >= 1 && val <= getItemMaxQuantity(item))
-                              handleQuantityChange(item.id, val)
-                          }}
-                          className="h-8 w-16 text-center"
-                          min={1}
-                          max={getItemMaxQuantity(item)}
-                          aria-label={t.cart.items}
-                        />
-                        <Button
-                          variant="outline"
-                          size="icon"
-                          className="h-8 w-8"
-                          onClick={() => handleQuantityChange(item.id, item.quantity + 1)}
-                          disabled={item.quantity >= getItemMaxQuantity(item)}
-                          aria-label={t.cart.increaseQuantity}
-                          title={t.cart.increaseQuantity}
-                        >
-                          <Plus className="h-4 w-4" />
-                          <span className="sr-only">{t.cart.increaseQuantity}</span>
-                        </Button>
-                      </div>
-                    </div>
+                      <Trash2 className="h-4 w-4" />
+                      <span className="sr-only">{t.cart.removeItem}</span>
+                    </Button>
                   </div>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="shrink-0 text-muted-foreground hover:text-red-500"
-                    onClick={() => requestRemoveItem(item.id)}
-                    aria-label={t.cart.removeItem}
-                    title={t.cart.removeItem}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                    <span className="sr-only">{t.cart.removeItem}</span>
-                  </Button>
-                </div>
+                )}
               </CardContent>
             </Card>
           ))}
@@ -1085,7 +1106,15 @@ export default function CartPage() {
 
       {/* 购物车列表 - 卡片视图 */}
       {viewMode === 'card' && (
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+        <div
+          className={
+            isPhone
+              ? 'grid grid-cols-1 gap-4'
+              : isTablet
+                ? 'grid grid-cols-2 gap-4'
+              : 'grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3'
+          }
+        >
           {items.map((item) => (
             <Card
               key={item.id}
@@ -1241,16 +1270,24 @@ export default function CartPage() {
       <PluginSlot slot="user.cart.before_checkout" context={userCartPluginContext} />
 
       {/* 结算栏 - 悬浮卡片固定在底部 */}
-      <div className="fixed bottom-16 left-0 right-0 z-40 px-0 md:bottom-6 md:left-64 md:px-6">
-        <Card className="rounded-none border-x-0 shadow-lg md:rounded-lg md:border md:shadow-xl">
-          <CardContent className="p-3 md:p-4">
+      <div
+        className={`fixed left-[var(--user-layout-sidebar-offset,0px)] right-0 z-40 transition-[left] ${isPhone ? 'bottom-16 px-0' : 'bottom-6 px-6'}`}
+      >
+        <Card
+          className={
+            isPhone
+              ? 'rounded-none border-x-0 shadow-lg'
+              : 'rounded-lg border shadow-xl'
+          }
+        >
+          <CardContent className={isMobile ? 'p-3' : 'p-3 md:p-4'}>
             <PluginSlot
               slot="user.cart.checkout.top"
               context={{ ...userCartPluginContext, section: 'checkout' }}
             />
             {/* 移动端：优惠码输入行（展开时显示在上方） */}
-            {promoCodeExpanded && !appliedPromo && (
-              <div className="mb-2 flex items-center gap-2 md:hidden">
+            {promoCodeExpanded && !appliedPromo && isMobile && (
+              <div className="mb-2 flex items-center gap-2">
                 <div className="relative flex-1">
                   <Input
                     value={promoCodeInput}
@@ -1288,8 +1325,8 @@ export default function CartPage() {
               </div>
             )}
             {/* 移动端：已应用优惠码信息 */}
-            {appliedPromo && (
-              <div className="mb-2 flex items-center gap-2 md:hidden">
+            {appliedPromo && isMobile && (
+              <div className="mb-2 flex items-center gap-2">
                 <span className="text-xs font-medium text-green-600 dark:text-green-400">
                   {appliedPromo.code}: -{formatPrice(promoDiscount, currency)}
                 </span>
@@ -1309,24 +1346,28 @@ export default function CartPage() {
               slot="user.cart.checkout.submit.before"
               context={{ ...userCartPluginContext, section: 'checkout_submit' }}
             />
-            <div className="flex items-center justify-between gap-2 md:gap-4">
+            <div className={isMobile ? 'flex items-center justify-between gap-2' : 'flex items-center justify-between gap-2 md:gap-4'}>
               {/* 左侧：全选 + 优惠码 */}
-              <div className="flex min-w-0 items-center gap-2 md:gap-3">
+              <div className={isMobile ? 'flex min-w-0 items-center gap-2' : 'flex min-w-0 items-center gap-2 md:gap-3'}>
                 <label className="flex shrink-0 cursor-pointer items-center gap-2">
                   <Checkbox checked={allAvailableItemsSelected} onCheckedChange={handleSelectAll} />
-                  <span className="text-xs md:text-sm">{t.cart.selectAll}</span>
+                  <span className={isMobile ? 'text-xs' : 'text-xs md:text-sm'}>{t.cart.selectAll}</span>
                 </label>
                 {/* 优惠码触发文字（未展开且未应用时显示） */}
                 {!promoCodeExpanded && !appliedPromo && (
                   <button
-                    className="truncate whitespace-nowrap text-xs font-medium text-primary hover:text-primary/80 md:text-sm"
+                    className={
+                      isMobile
+                        ? 'truncate whitespace-nowrap text-xs font-medium text-primary hover:text-primary/80'
+                        : 'truncate whitespace-nowrap text-xs font-medium text-primary hover:text-primary/80 md:text-sm'
+                    }
                     onClick={() => setPromoCodeExpanded(true)}
                   >
                     {t.cart.havePromoCode}
                   </button>
                 )}
                 {/* PC端：优惠码输入框内联显示 */}
-                {promoCodeExpanded && !appliedPromo && (
+                {promoCodeExpanded && !appliedPromo && !isMobile && (
                   <div className="hidden items-center gap-2 md:flex">
                     <div className="relative">
                       <Input
@@ -1365,7 +1406,7 @@ export default function CartPage() {
                   </div>
                 )}
                 {/* PC端：已应用优惠码内联显示 */}
-                {appliedPromo && (
+                {appliedPromo && !isMobile && (
                   <div className="hidden items-center gap-2 md:flex">
                     <span className="text-sm font-medium text-green-600 dark:text-green-400">
                       {appliedPromo.code}: -{formatPrice(promoDiscount, currency)}
@@ -1381,13 +1422,19 @@ export default function CartPage() {
               </div>
 
               {/* 右侧：合计和结算按钮 */}
-              <div className="flex items-center gap-2 md:gap-4">
+              <div className={isMobile ? 'flex items-center gap-2' : 'flex items-center gap-2 md:gap-4'}>
                 <div className="min-w-0 text-right">
                   <span className="hidden text-xs text-muted-foreground sm:inline">
                     {t.cart.selected}: {selectedItems.size}/{items.length}({selectedTotalQuantity}{' '}
                     {t.cart.pcs})
                   </span>
-                  <div className="whitespace-nowrap text-sm font-bold md:text-lg">
+                  <div
+                    className={
+                      isMobile
+                        ? 'whitespace-nowrap text-sm font-bold'
+                        : 'whitespace-nowrap text-sm font-bold md:text-lg'
+                    }
+                  >
                     <span className="hidden sm:inline">{t.cart.total}:</span>
                     {appliedPromo ? (
                       <>
