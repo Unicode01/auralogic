@@ -1,6 +1,12 @@
+'use client'
+
 import { Skeleton } from '@/components/ui/page-loading'
+import { useIsMobile } from '@/hooks/use-mobile'
 
 export default function Loading() {
+  const { isMobile, mounted } = useIsMobile()
+  const isCompactLayout = mounted ? isMobile : false
+
   return (
     <div className="space-y-6">
       {/* 返回按钮和标题 */}
@@ -13,9 +19,9 @@ export default function Loading() {
       </div>
 
       {/* 订单详情卡片 */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className={isCompactLayout ? 'grid grid-cols-1 gap-6' : 'grid grid-cols-1 gap-6 lg:grid-cols-3'}>
         {/* 左侧订单信息 */}
-        <div className="lg:col-span-2 space-y-6">
+        <div className={isCompactLayout ? 'space-y-6' : 'space-y-6 lg:col-span-2'}>
           {/* 订单状态卡片 */}
           <div className="rounded-lg border bg-card p-6 space-y-4">
             <div className="flex items-center justify-between">

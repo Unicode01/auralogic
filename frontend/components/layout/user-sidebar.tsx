@@ -45,7 +45,6 @@ import {
 } from '@/lib/plugin-bootstrap-cache'
 import { PluginPageLink } from '@/components/plugins/plugin-page-link'
 import { LanguageSwitcher } from './language-switcher'
-import { clearToken } from '@/lib/auth'
 import { PluginSlot } from '@/components/plugins/plugin-slot'
 import { resolvePluginPlatformEnabled } from '@/lib/plugin-slot-behavior'
 
@@ -71,6 +70,7 @@ const getGuestMenuItems = (t: any) => [
 interface UserSidebarProps {
   className?: string
   guestMode?: boolean
+  compact?: boolean
 }
 
 type UserSidebarMenuItem = {
@@ -81,10 +81,52 @@ type UserSidebarMenuItem = {
   pluginRuntime?: boolean
 }
 
-export function UserSidebar({ className, guestMode = false }: UserSidebarProps) {
+function getSidebarContainerClass(compact: boolean, className?: string) {
+  return cn(
+    'hidden flex-col border-r bg-card md:flex',
+    compact ? 'w-[4.25rem]' : 'w-64',
+    className
+  )
+}
+
+function getSidebarHeaderClass(compact: boolean) {
+  return compact
+    ? 'hidden'
+    : 'border-b p-6'
+}
+
+function getSidebarNavClass(compact: boolean) {
+  return compact
+    ? 'flex-1 space-y-1 overflow-y-auto px-1 py-3'
+    : 'flex-1 space-y-1 overflow-y-auto px-3 py-3'
+}
+
+function getSidebarLinkClass(isActive: boolean, compact: boolean) {
+  return cn(
+    'rounded-lg text-sm font-medium transition-all',
+    compact
+      ? 'mx-auto flex h-11 w-11 items-center justify-center rounded-xl px-0'
+      : 'flex items-center gap-3 px-3 py-2',
+    isActive
+      ? 'bg-primary text-primary-foreground shadow-sm'
+      : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+  )
+}
+
+function getSidebarFooterClass(compact: boolean) {
+  return compact
+    ? 'flex flex-col items-center space-y-2 border-t p-2'
+    : 'space-y-2 border-t p-3'
+}
+
+function getSidebarActionClass(compact: boolean) {
+  return compact ? 'mx-auto h-9 w-9 justify-center rounded-lg px-0' : 'w-full justify-start'
+}
+
+export function UserSidebar({ className, guestMode = false, compact = false }: UserSidebarProps) {
   const pathname = usePathname()
   const searchParams = useSearchParams()
-  const { user } = useAuth()
+  const { user, logout } = useAuth()
   const { goToAuth } = useAuthEntry()
   const { locale, mounted } = useLocale()
   const t = getTranslations(locale)
@@ -258,6 +300,8 @@ export function UserSidebar({ className, guestMode = false }: UserSidebarProps) 
         current_path: pathname || '/',
         locale,
         guest_mode: guestMode,
+        compact_mode: compact,
+        navigation_mode: compact ? 'compact' : 'expanded',
       },
       user: guestMode
         ? null
@@ -272,11 +316,13 @@ export function UserSidebar({ className, guestMode = false }: UserSidebarProps) 
         visible_builtin_count: visibleBaseMenuItems.length,
         visible_runtime_count: visibleRuntimeMenuItems.length,
         visible_item_count: menuItems.length,
+        compact_mode: compact,
         serial_enabled: serialEnabled,
         ticket_enabled: ticketEnabled,
       },
       state: {
         guest_mode: guestMode,
+        compact_mode: compact,
         has_runtime_items: visibleRuntimeMenuItems.length > 0,
         has_admin_entry: !guestMode && isAdmin,
         bootstrap_loading: pluginBootstrapQuery.isLoading,
@@ -286,6 +332,7 @@ export function UserSidebar({ className, guestMode = false }: UserSidebarProps) 
     }),
     [
       authActionsContext,
+      compact,
       guestMode,
       isAdmin,
       locale,
@@ -303,6 +350,13 @@ export function UserSidebar({ className, guestMode = false }: UserSidebarProps) 
       visibleRuntimeMenuItems.length,
     ]
   )
+  const sidebarTopSlot = (
+    <div className={cn('empty:hidden', compact ? 'border-b px-1 py-2' : 'mt-4')}>
+      <Suspense fallback={null}>
+        <PluginSlot slot="user.layout.sidebar.top" context={userSidebarPluginContext} />
+      </Suspense>
+    </div>
+  )
 
   if (!mounted) {
     const defaultT = getTranslations('zh')
@@ -319,17 +373,19 @@ export function UserSidebar({ className, guestMode = false }: UserSidebarProps) 
       })
 
     return (
-      <div className={cn('hidden w-64 flex-col border-r bg-card md:flex', className)}>
-        <div className="p-6">
-          <h2 className="text-lg font-bold">AuraLogic</h2>
-          <p className="text-sm text-muted-foreground">
-            {guestMode
-              ? `${defaultT.auth.login} / ${defaultT.auth.register}`
-              : defaultT.sidebar.welcome}
-          </p>
-        </div>
+      <div className={getSidebarContainerClass(compact, className)}>
+        {!compact ? (
+          <div className={getSidebarHeaderClass(compact)}>
+            <h2 className="text-lg font-bold">AuraLogic</h2>
+            <p className="text-sm text-muted-foreground">
+              {guestMode
+                ? `${defaultT.auth.login} / ${defaultT.auth.register}`
+                : defaultT.sidebar.welcome}
+            </p>
+          </div>
+        ) : null}
 
-        <nav className="flex-1 space-y-1 overflow-y-auto px-3">
+        <nav className={getSidebarNavClass(compact)}>
           {defaultMenuItems.map((item) => {
             const Icon = item.icon
             const isActive = item.matchDescendants
@@ -340,57 +396,59 @@ export function UserSidebar({ className, guestMode = false }: UserSidebarProps) 
               <Link
                 key={item.href}
                 href={item.href}
-                className={cn(
-                  'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-all',
-                  isActive
-                    ? 'bg-primary text-primary-foreground shadow-sm'
-                    : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
-                )}
+                className={getSidebarLinkClass(isActive, compact)}
+                aria-label={item.title}
+                title={item.title}
               >
-                <Icon className="h-4 w-4" />
-                {item.title}
+                <Icon className={cn('h-4 w-4 shrink-0', compact && 'h-5 w-5')} />
+                {compact ? <span className="sr-only">{item.title}</span> : item.title}
               </Link>
             )
           })}
         </nav>
 
-        <div className="space-y-2 border-t p-3">
-          <LanguageSwitcher />
+        <div className={getSidebarFooterClass(compact)}>
+          <LanguageSwitcher compact={compact} />
           {guestMode ? (
             <>
               <Button
                 variant="outline"
-                className="w-full justify-start"
+                className={getSidebarActionClass(compact)}
                 size="sm"
                 onClick={() => goToAuth('/login')}
+                aria-label={defaultT.auth.login}
+                title={defaultT.auth.login}
               >
-                <LogIn className="mr-2 h-4 w-4" />
-                {defaultT.auth.login}
+                <LogIn className={cn('h-4 w-4', !compact && 'mr-2')} />
+                {compact ? <span className="sr-only">{defaultT.auth.login}</span> : defaultT.auth.login}
               </Button>
               <Button
                 variant="outline"
-                className="w-full justify-start"
+                className={getSidebarActionClass(compact)}
                 size="sm"
                 onClick={() => goToAuth('/register')}
+                aria-label={defaultT.auth.register}
+                title={defaultT.auth.register}
               >
-                <UserPlus className="mr-2 h-4 w-4" />
-                {defaultT.auth.register}
+                <UserPlus className={cn('h-4 w-4', !compact && 'mr-2')} />
+                {compact ? (
+                  <span className="sr-only">{defaultT.auth.register}</span>
+                ) : (
+                  defaultT.auth.register
+                )}
               </Button>
             </>
           ) : (
             <Button
               variant="outline"
-              className="w-full justify-start"
+              className={getSidebarActionClass(compact)}
               size="sm"
-              onClick={() => {
-                if (typeof window !== 'undefined') {
-                  clearToken()
-                  window.location.href = '/login'
-                }
-              }}
+              onClick={logout}
+              aria-label={defaultT.auth.logout}
+              title={defaultT.auth.logout}
             >
-              <LogOut className="mr-2 h-4 w-4" />
-              {defaultT.auth.logout}
+              <LogOut className={cn('h-4 w-4', !compact && 'mr-2')} />
+              {compact ? <span className="sr-only">{defaultT.auth.logout}</span> : defaultT.auth.logout}
             </Button>
           )}
         </div>
@@ -399,40 +457,48 @@ export function UserSidebar({ className, guestMode = false }: UserSidebarProps) 
   }
 
   return (
-    <div className={cn('hidden w-64 flex-col border-r bg-card md:flex', className)}>
-      <div className="p-6">
-        <h2 className="text-lg font-bold">AuraLogic</h2>
-        <p className="text-sm text-muted-foreground">
-          {guestMode ? `${t.auth.login} / ${t.auth.register}` : t.sidebar.welcome}
-        </p>
-        <Suspense fallback={null}>
-          <PluginSlot slot="user.layout.sidebar.top" context={userSidebarPluginContext} />
-        </Suspense>
-      </div>
+    <div className={getSidebarContainerClass(compact, className)}>
+      {!compact ? (
+        <div className={getSidebarHeaderClass(compact)}>
+          <h2 className="text-lg font-bold">AuraLogic</h2>
+          <p className="text-sm text-muted-foreground">
+            {guestMode ? `${t.auth.login} / ${t.auth.register}` : t.sidebar.welcome}
+          </p>
+          {sidebarTopSlot}
+        </div>
+      ) : null}
+      {compact ? sidebarTopSlot : null}
 
-      <nav className="flex-1 space-y-1 overflow-y-auto px-3">
+      <nav className={getSidebarNavClass(compact)}>
         {visibleBaseMenuItems.map((item) => {
           const Icon = item.icon
           const isActive = item.matchDescendants
             ? isPluginMenuPathActive(pathname || '/', item.href)
             : pathname === item.href
 
-          const linkClassName = cn(
-            'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-all',
-            isActive
-              ? 'bg-primary text-primary-foreground shadow-sm'
-              : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
-          )
+          const linkClassName = getSidebarLinkClass(isActive, compact)
 
           return item.pluginRuntime ? (
-            <PluginPageLink key={item.href} href={item.href} className={linkClassName}>
-              <Icon className="h-4 w-4" />
-              {item.title}
+            <PluginPageLink
+              key={item.href}
+              href={item.href}
+              className={linkClassName}
+              aria-label={item.title}
+              title={item.title}
+            >
+              <Icon className={cn('h-4 w-4 shrink-0', compact && 'h-5 w-5')} />
+              {compact ? <span className="sr-only">{item.title}</span> : item.title}
             </PluginPageLink>
           ) : (
-            <Link key={item.href} href={item.href} className={linkClassName}>
-              <Icon className="h-4 w-4" />
-              {item.title}
+            <Link
+              key={item.href}
+              href={item.href}
+              className={linkClassName}
+              aria-label={item.title}
+              title={item.title}
+            >
+              <Icon className={cn('h-4 w-4 shrink-0', compact && 'h-5 w-5')} />
+              {compact ? <span className="sr-only">{item.title}</span> : item.title}
             </Link>
           )
         })}
@@ -445,17 +511,18 @@ export function UserSidebar({ className, guestMode = false }: UserSidebarProps) 
             ? isPluginMenuPathActive(pathname || '/', item.href)
             : pathname === item.href
 
-          const linkClassName = cn(
-            'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-all',
-            isActive
-              ? 'bg-primary text-primary-foreground shadow-sm'
-              : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
-          )
+          const linkClassName = getSidebarLinkClass(isActive, compact)
 
           return (
-            <PluginPageLink key={item.href} href={item.href} className={linkClassName}>
-              <Icon className="h-4 w-4" />
-              {item.title}
+            <PluginPageLink
+              key={item.href}
+              href={item.href}
+              className={linkClassName}
+              aria-label={item.title}
+              title={item.title}
+            >
+              <Icon className={cn('h-4 w-4 shrink-0', compact && 'h-5 w-5')} />
+              {compact ? <span className="sr-only">{item.title}</span> : item.title}
             </PluginPageLink>
           )
         })}
@@ -467,7 +534,7 @@ export function UserSidebar({ className, guestMode = false }: UserSidebarProps) 
         </Suspense>
       </nav>
 
-      <div className="space-y-2 border-t p-3">
+      <div className={getSidebarFooterClass(compact)}>
         <Suspense fallback={null}>
           <PluginSlot slot="user.layout.sidebar.bottom" context={userSidebarPluginContext} />
         </Suspense>
@@ -486,50 +553,60 @@ export function UserSidebar({ className, guestMode = false }: UserSidebarProps) 
             />
           </Suspense>
         )}
-        {!guestMode && isAdmin && (
-          <Button asChild variant="outline" className="w-full justify-start" size="sm">
-            <Link href="/admin/dashboard">
-              <Shield className="mr-2 h-4 w-4" />
-              {t.sidebar.adminPanel}
+        {!guestMode && isAdmin ? (
+          <Button
+            asChild
+            variant="outline"
+            className={getSidebarActionClass(compact)}
+            size="sm"
+          >
+            <Link
+              href="/admin/dashboard"
+              aria-label={t.sidebar.adminPanel}
+              title={t.sidebar.adminPanel}
+            >
+              <Shield className={cn('h-4 w-4', !compact && 'mr-2')} />
+              {compact ? <span className="sr-only">{t.sidebar.adminPanel}</span> : t.sidebar.adminPanel}
             </Link>
           </Button>
-        )}
-        <LanguageSwitcher />
+        ) : null}
+        <LanguageSwitcher compact={compact} />
         {guestMode ? (
           <>
             <Button
               variant="outline"
-              className="w-full justify-start"
+              className={getSidebarActionClass(compact)}
               size="sm"
               onClick={() => goToAuth('/login')}
+              aria-label={t.auth.login}
+              title={t.auth.login}
             >
-              <LogIn className="mr-2 h-4 w-4" />
-              {t.auth.login}
+              <LogIn className={cn('h-4 w-4', !compact && 'mr-2')} />
+              {compact ? <span className="sr-only">{t.auth.login}</span> : t.auth.login}
             </Button>
             <Button
               variant="outline"
-              className="w-full justify-start"
+              className={getSidebarActionClass(compact)}
               size="sm"
               onClick={() => goToAuth('/register')}
+              aria-label={t.auth.register}
+              title={t.auth.register}
             >
-              <UserPlus className="mr-2 h-4 w-4" />
-              {t.auth.register}
+              <UserPlus className={cn('h-4 w-4', !compact && 'mr-2')} />
+              {compact ? <span className="sr-only">{t.auth.register}</span> : t.auth.register}
             </Button>
           </>
         ) : (
           <Button
             variant="outline"
-            className="w-full justify-start"
+            className={getSidebarActionClass(compact)}
             size="sm"
-            onClick={() => {
-              if (typeof window !== 'undefined') {
-                clearToken()
-                window.location.href = '/login'
-              }
-            }}
+            onClick={logout}
+            aria-label={t.auth.logout}
+            title={t.auth.logout}
           >
-            <LogOut className="mr-2 h-4 w-4" />
-            {t.auth.logout}
+            <LogOut className={cn('h-4 w-4', !compact && 'mr-2')} />
+            {compact ? <span className="sr-only">{t.auth.logout}</span> : t.auth.logout}
           </Button>
         )}
       </div>

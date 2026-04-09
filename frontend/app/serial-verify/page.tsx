@@ -24,13 +24,14 @@ import { formatDate } from '@/lib/utils'
 import { useTheme } from '@/contexts/theme-context'
 import { useLocale } from '@/hooks/use-locale'
 import { useAuth } from '@/hooks/use-auth'
-import { useIsMobile } from '@/hooks/use-mobile'
+import { useResponsiveLayout } from '@/hooks/use-mobile'
 import { getTranslations } from '@/lib/i18n'
 import { usePageTitle } from '@/hooks/use-page-title'
 import { UserSidebar } from '@/components/layout/user-sidebar'
 import { MobileBottomNav } from '@/components/layout/mobile-bottom-nav'
 import { FullPageLoading } from '@/components/ui/page-loading'
 import { PluginSlot } from '@/components/plugins/plugin-slot'
+import { cn } from '@/lib/utils'
 import toast from 'react-hot-toast'
 
 interface SerialInfo {
@@ -66,7 +67,12 @@ function SerialVerifyContent() {
   const { locale } = useLocale()
   const { resolvedTheme } = useTheme()
   const { isAuthenticated, isLoading: authLoading } = useAuth()
-  const { isMobile, mounted: mobileMounted } = useIsMobile()
+  const {
+    isPhone,
+    isTablet,
+    isMobile,
+    mounted: responsiveMounted,
+  } = useResponsiveLayout()
   usePageTitle(getTranslations(locale).pageTitle.serialVerify)
   const [lang, setLang] = useState('zh')
   const [serialNumber, setSerialNumber] = useState('')
@@ -352,7 +358,7 @@ function SerialVerifyContent() {
     }
   }
 
-  if (!mobileMounted || authLoading) {
+  if (!responsiveMounted || authLoading) {
     return <FullPageLoading text={i18n.common.loading} />
   }
 
@@ -771,16 +777,30 @@ function SerialVerifyContent() {
   )
 
   if (!isAuthenticated) {
-    return <div className="px-4 py-10 md:px-6 md:py-12">{content}</div>
+    return (
+      <div
+        className={cn(
+          'px-4',
+          isPhone ? 'py-10' : isTablet ? 'py-8' : 'px-6 py-12'
+        )}
+      >
+        {content}
+      </div>
+    )
   }
 
   return (
     <div className="sidebar-layout flex h-screen">
-      {!isMobile ? <UserSidebar /> : null}
-      <main className={`flex-1 overflow-y-auto p-4 md:p-8 ${isMobile ? 'pb-20' : ''}`}>
-        {content}
+      {!isPhone ? <UserSidebar compact={isTablet} /> : null}
+      <main
+        className={cn(
+          'flex-1 overflow-y-auto',
+          isPhone ? 'p-4 pb-20' : isTablet ? 'bg-muted/10 p-4' : 'p-6 xl:p-8'
+        )}
+      >
+        <div className={cn('w-full', isTablet && 'mx-auto max-w-[39rem]')}>{content}</div>
       </main>
-      {isMobile ? <MobileBottomNav /> : null}
+      {isPhone ? <MobileBottomNav /> : null}
     </div>
   )
 }

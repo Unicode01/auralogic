@@ -458,15 +458,17 @@ function ProductsPageContent() {
       <PluginSlot slot="user.products.top" context={userProductsPluginContext} />
       {/* 页面标题 */}
       <div>
-        <h1 className="text-2xl font-bold md:text-3xl">{t.sidebar.productCenter}</h1>
+        <h1 className={isMobile ? 'text-2xl font-bold' : 'text-2xl font-bold md:text-3xl'}>
+          {t.sidebar.productCenter}
+        </h1>
       </div>
 
       {/* 搜索和筛选 */}
       <div className="space-y-4">
         {/* 移动端：搜索栏和分类栏分两行显示 */}
-        <div className="flex flex-col gap-3 md:flex-row md:gap-4">
+        <div className={isMobile ? 'flex flex-col gap-3' : 'flex flex-col gap-3 md:flex-row md:gap-4'}>
           {/* 搜索栏 */}
-          <div className="flex w-full gap-2 md:flex-1">
+          <div className={isMobile ? 'flex w-full gap-2' : 'flex w-full gap-2 md:flex-1'}>
             <div className="relative flex-1">
               <Input
                 placeholder={t.product.searchPlaceholder}
@@ -491,14 +493,18 @@ function ProductsPageContent() {
               )}
             </div>
             <Button onClick={handleSearch} className="shrink-0">
-              <Search className="h-4 w-4 md:mr-2" />
-              <span className="hidden md:inline">{t.common.search}</span>
+              <Search className={`h-4 w-4 ${!isMobile ? 'md:mr-2' : ''}`} />
+              {isMobile ? (
+                <span className="sr-only">{t.common.search}</span>
+              ) : (
+                <span>{t.common.search}</span>
+              )}
             </Button>
           </div>
           {/* 分类选择器 */}
           {categories.length > 0 && (
             <Select value={category || 'all'} onValueChange={handleCategoryChange}>
-              <SelectTrigger className="w-full md:w-[200px]">
+              <SelectTrigger className={isMobile ? 'w-full' : 'w-full md:w-[200px]'}>
                 <SelectValue placeholder={t.product.selectCategory} />
               </SelectTrigger>
               <SelectContent>
@@ -528,11 +534,17 @@ function ProductsPageContent() {
 
       {/* 商品网格 */}
       {initialLoading ? (
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-2 md:gap-4 lg:grid-cols-3 xl:grid-cols-4">
+        <div
+          className={
+            isMobile
+              ? 'grid grid-cols-2 gap-3'
+              : 'grid grid-cols-2 gap-3 md:gap-4 lg:grid-cols-3 xl:grid-cols-4'
+          }
+        >
           {[...Array(8)].map((_, i) => (
             <Card key={i} className="animate-pulse">
               <div className="aspect-square bg-muted" />
-              <CardContent className="space-y-2 p-2 md:p-3">
+              <CardContent className={isMobile ? 'space-y-2 p-2' : 'space-y-2 p-2 md:p-3'}>
                 <div className="h-4 rounded bg-muted" />
                 <div className="h-4 w-2/3 rounded bg-muted" />
               </CardContent>
@@ -565,7 +577,13 @@ function ProductsPageContent() {
         </Card>
       ) : displayProducts.length > 0 ? (
         <>
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-2 md:gap-4 lg:grid-cols-3 xl:grid-cols-4">
+          <div
+            className={
+              isMobile
+                ? 'grid grid-cols-2 gap-3'
+                : 'grid grid-cols-2 gap-3 md:gap-4 lg:grid-cols-3 xl:grid-cols-4'
+            }
+          >
             {displayProducts.map((product: Product) => {
               const primaryImage = product.images?.find(
                 (img) => img.is_primary || img.isPrimary
@@ -615,7 +633,13 @@ function ProductsPageContent() {
                       {/* 售罄遮罩 */}
                       {isSoldOut && (
                         <div className="absolute inset-0 flex items-center justify-center bg-black/50">
-                          <span className="rounded bg-black/60 px-3 py-1 text-sm font-bold text-white md:text-base">
+                          <span
+                            className={
+                              isMobile
+                                ? 'rounded bg-black/60 px-3 py-1 text-sm font-bold text-white'
+                                : 'rounded bg-black/60 px-3 py-1 text-sm font-bold text-white md:text-base'
+                            }
+                          >
                             {t.product.soldOut}
                           </span>
                         </div>
@@ -639,28 +663,50 @@ function ProductsPageContent() {
                         )}
                       </div>
                     </div>
-                    <CardContent className="space-y-1 p-2 md:space-y-1.5 md:p-3">
-                      <h3 className="line-clamp-2 min-h-[2.5rem] text-sm font-semibold md:min-h-[2.8rem] md:text-base">
+                    <CardContent
+                      className={
+                        isMobile ? 'space-y-1 p-2' : 'space-y-1 p-2 md:space-y-1.5 md:p-3'
+                      }
+                    >
+                      <h3
+                        className={
+                          isMobile
+                            ? 'line-clamp-2 min-h-[2.5rem] text-sm font-semibold'
+                            : 'line-clamp-2 min-h-[2.5rem] text-sm font-semibold md:min-h-[2.8rem] md:text-base'
+                        }
+                      >
                         {product.name}
                       </h3>
-                      {product.short_description && (
-                        <p className="line-clamp-1 hidden text-xs text-muted-foreground md:block">
+                      {!isMobile && product.short_description && (
+                        <p className="line-clamp-1 text-xs text-muted-foreground">
                           {product.short_description}
                         </p>
                       )}
-                      <div className="flex flex-wrap items-baseline gap-1 pt-1 md:gap-2">
-                        <span className="text-base font-bold text-red-600 md:text-xl">
+                      <div
+                        className={
+                          isMobile
+                            ? 'flex flex-wrap items-baseline gap-1 pt-1'
+                            : 'flex flex-wrap items-baseline gap-1 pt-1 md:gap-2'
+                        }
+                      >
+                        <span
+                          className={
+                            isMobile
+                              ? 'text-base font-bold text-red-600'
+                              : 'text-base font-bold text-red-600 md:text-xl'
+                          }
+                        >
                           {formatPrice(product.price_minor, currency)}
                         </span>
                         {/* 原价：移动端隐藏，桌面端显示 */}
-                        {hasDiscount && (
-                          <span className="hidden text-xs text-muted-foreground line-through md:inline">
+                        {!isMobile && hasDiscount && (
+                          <span className="text-xs text-muted-foreground line-through">
                             {formatPrice(product.original_price_minor, currency)}
                           </span>
                         )}
                       </div>
-                      {product.category ? (
-                        <p className="hidden pt-1 text-xs text-muted-foreground md:block">
+                      {!isMobile && product.category ? (
+                        <p className="pt-1 text-xs text-muted-foreground">
                           {product.category}
                         </p>
                       ) : null}

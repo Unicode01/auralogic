@@ -46,6 +46,7 @@ interface MessageToolbarProps {
   onChange: (value: string) => void
   onSend: () => void
   onUploadFile: (file: File) => Promise<string>
+  compactLayout?: boolean
   isSending?: boolean
   disabled?: boolean
   placeholder?: string
@@ -64,6 +65,7 @@ export function MessageToolbar({
   onChange,
   onSend,
   onUploadFile,
+  compactLayout = false,
   isSending = false,
   disabled = false,
   placeholder,
@@ -370,32 +372,36 @@ export function MessageToolbar({
           </span>
         )}
 
-        {(enableImage || enableVoice) && (
-          <div className="mx-0.5 hidden h-4 w-px bg-border md:block" />
-        )}
+        {!compactLayout ? (
+          <>
+            {(enableImage || enableVoice) && (
+              <div className="mx-0.5 hidden h-4 w-px bg-border md:block" />
+            )}
 
-        {/* Markdown 快捷操作 - 移动端隐藏 */}
-        {mdActions.map((action) => (
-          <ToolbarButton
-            key={action.label}
-            icon={action.icon}
-            label={action.label}
-            onClick={action.action}
-            btnDisabled={isPreview}
-            className="hidden md:inline-flex"
-          />
-        ))}
+            {/* Markdown 快捷操作 - 移动端隐藏 */}
+            {mdActions.map((action) => (
+              <ToolbarButton
+                key={action.label}
+                icon={action.icon}
+                label={action.label}
+                onClick={action.action}
+                btnDisabled={isPreview}
+                className="hidden md:inline-flex"
+              />
+            ))}
 
-        <div className="mx-0.5 hidden h-4 w-px bg-border md:block" />
+            <div className="mx-0.5 hidden h-4 w-px bg-border md:block" />
 
-        {/* 预览切换 - 移动端隐藏 */}
-        <ToolbarButton
-          icon={isPreview ? EyeOff : Eye}
-          label={isPreview ? tt.editMode : tt.preview}
-          onClick={() => setIsPreview(!isPreview)}
-          active={isPreview}
-          className="hidden md:inline-flex"
-        />
+            {/* 预览切换 - 移动端隐藏 */}
+            <ToolbarButton
+              icon={isPreview ? EyeOff : Eye}
+              label={isPreview ? tt.editMode : tt.preview}
+              onClick={() => setIsPreview(!isPreview)}
+              active={isPreview}
+              className="hidden md:inline-flex"
+            />
+          </>
+        ) : null}
         {renderPluginSlot('toolbar.after', 'toolbar', undefined, 'inline')}
 
         {/* 发送按钮 */}
