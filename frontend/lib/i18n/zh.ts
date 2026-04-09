@@ -3254,7 +3254,7 @@ export const zhTranslations = {
     allowRegistration: '允许账号注册',
     allowRegistrationHint: '开启后用户可以在登录页自行注册账号',
     allowGuestProductBrowse: '允许游客浏览商品',
-    allowGuestProductBrowseHint: '开启后未登录用户可浏览商品列表与详情页',
+    allowGuestProductBrowseHint: '开启后未登录用户可浏览商品列表、详情页与购物车页',
     requireEmailVerification: '注册邮箱验证',
     requireEmailVerificationHint: '开启后用户注册需要验证邮箱才能登录，需先配置SMTP',
     allowEmailLogin: '允许邮件验证码登录',

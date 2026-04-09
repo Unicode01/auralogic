@@ -11,6 +11,7 @@ import Link from 'next/link'
 import { format } from 'date-fns'
 import { zhCN } from 'date-fns/locale'
 import { useLocale } from '@/hooks/use-locale'
+import { useIsMobile } from '@/hooks/use-mobile'
 import { usePageTitle } from '@/hooks/use-page-title'
 import { getTranslations } from '@/lib/i18n'
 import { MarkdownMessage } from '@/components/ui/markdown-message'
@@ -20,8 +21,10 @@ export default function KnowledgeArticlePage() {
   const params = useParams()
   const articleId = Number(params.id)
   const { locale } = useLocale()
+  const { isMobile, mounted } = useIsMobile()
   const t = getTranslations(locale)
   usePageTitle(t.pageTitle.knowledgeArticle)
+  const isCompactLayout = mounted ? isMobile : false
 
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ['knowledgeArticle', articleId],
@@ -62,7 +65,9 @@ export default function KnowledgeArticlePage() {
           <Skeleton className="h-7 w-64" />
         </div>
         <Card>
-          <CardContent className="space-y-3 p-4 md:p-6">
+          <CardContent
+            className={isCompactLayout ? 'space-y-3 p-4' : 'space-y-3 p-4 md:p-6'}
+          >
             <Skeleton className="h-4 w-full" />
             <Skeleton className="h-4 w-full" />
             <Skeleton className="h-4 w-5/6" />
@@ -123,19 +128,30 @@ export default function KnowledgeArticlePage() {
       <PluginSlot slot="user.knowledge_detail.top" context={userKnowledgeDetailPluginContext} />
       {/* Back button + title */}
       <div className="flex items-center gap-3">
-        <Button asChild variant="outline" size="sm">
+        <Button asChild variant="outline" size={isCompactLayout ? 'icon' : 'sm'}>
           <Link href="/knowledge">
-            <ArrowLeft className="h-4 w-4 md:mr-1.5" />
-            <span className="hidden md:inline">{t.knowledge.backToList}</span>
-            <span className="sr-only md:hidden">{t.knowledge.backToList}</span>
+            <ArrowLeft className={isCompactLayout ? 'h-4 w-4' : 'h-4 w-4 md:mr-1.5'} />
+            {isCompactLayout ? (
+              <span className="sr-only">{t.knowledge.backToList}</span>
+            ) : (
+              <span>{t.knowledge.backToList}</span>
+            )}
           </Link>
         </Button>
-        <h1 className="line-clamp-1 text-lg font-bold md:text-xl">{article.title}</h1>
+        <h1
+          className={
+            isCompactLayout
+              ? 'line-clamp-1 text-lg font-bold'
+              : 'line-clamp-1 text-lg font-bold md:text-xl'
+          }
+        >
+          {article.title}
+        </h1>
       </div>
 
       {/* Article content */}
       <Card>
-        <CardContent className="p-4 md:p-6">
+        <CardContent className={isCompactLayout ? 'p-4' : 'p-4 md:p-6'}>
           <div className="mb-4 flex flex-wrap items-center gap-2">
             <span className="text-sm text-muted-foreground">
               {article.category?.name || t.knowledge.uncategorized}

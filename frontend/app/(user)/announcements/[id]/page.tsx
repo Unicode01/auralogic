@@ -12,6 +12,7 @@ import Link from 'next/link'
 import { format } from 'date-fns'
 import { zhCN } from 'date-fns/locale'
 import { useLocale } from '@/hooks/use-locale'
+import { useIsMobile } from '@/hooks/use-mobile'
 import { usePageTitle } from '@/hooks/use-page-title'
 import { getTranslations } from '@/lib/i18n'
 import { MarkdownMessage } from '@/components/ui/markdown-message'
@@ -23,8 +24,10 @@ export default function AnnouncementDetailPage() {
   const id = Number(params.id)
   const queryClient = useQueryClient()
   const { locale } = useLocale()
+  const { isMobile, mounted } = useIsMobile()
   const t = getTranslations(locale)
   usePageTitle(t.pageTitle.announcementDetail)
+  const isCompactLayout = mounted ? isMobile : false
 
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ['announcement', id],
@@ -83,7 +86,9 @@ export default function AnnouncementDetailPage() {
           <Skeleton className="h-7 w-64" />
         </div>
         <Card>
-          <CardContent className="space-y-4 p-4 md:p-6">
+          <CardContent
+            className={isCompactLayout ? 'space-y-4 p-4' : 'space-y-4 p-4 md:p-6'}
+          >
             <div className="flex flex-wrap gap-2">
               <Skeleton className="h-6 w-16 rounded-full" />
               <Skeleton className="h-6 w-20 rounded-full" />
@@ -151,18 +156,29 @@ export default function AnnouncementDetailPage() {
         context={userAnnouncementDetailPluginContext}
       />
       <div className="flex items-center gap-3">
-        <Button asChild variant="outline" size="sm">
+        <Button asChild variant="outline" size={isCompactLayout ? 'icon' : 'sm'}>
           <Link href="/announcements">
-            <ArrowLeft className="h-4 w-4 md:mr-1.5" />
-            <span className="hidden md:inline">{t.announcement.backToList}</span>
-            <span className="sr-only md:hidden">{t.announcement.backToList}</span>
+            <ArrowLeft className={isCompactLayout ? 'h-4 w-4' : 'h-4 w-4 md:mr-1.5'} />
+            {isCompactLayout ? (
+              <span className="sr-only">{t.announcement.backToList}</span>
+            ) : (
+              <span>{t.announcement.backToList}</span>
+            )}
           </Link>
         </Button>
-        <h1 className="line-clamp-1 text-lg font-bold md:text-xl">{announcement.title}</h1>
+        <h1
+          className={
+            isCompactLayout
+              ? 'line-clamp-1 text-lg font-bold'
+              : 'line-clamp-1 text-lg font-bold md:text-xl'
+          }
+        >
+          {announcement.title}
+        </h1>
       </div>
 
       <Card>
-        <CardContent className="p-4 md:p-6">
+        <CardContent className={isCompactLayout ? 'p-4' : 'p-4 md:p-6'}>
           <div className="space-y-4">
             <div className="flex flex-wrap items-center gap-2">
               {announcement.is_mandatory && (

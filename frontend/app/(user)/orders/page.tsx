@@ -12,7 +12,7 @@ import { RefreshCw } from 'lucide-react'
 import { useLocale } from '@/hooks/use-locale'
 import { usePageTitle } from '@/hooks/use-page-title'
 import { getTranslations } from '@/lib/i18n'
-import { useIsMobile } from '@/hooks/use-mobile'
+import { useResponsiveLayout } from '@/hooks/use-mobile'
 import { Order } from '@/types/order'
 import { PluginSlot } from '@/components/plugins/plugin-slot'
 import { useDebounce } from '@/hooks/use-debounce'
@@ -42,7 +42,7 @@ function OrdersPageContent() {
   const { locale } = useLocale()
   const t = getTranslations(locale)
   usePageTitle(t.pageTitle.orders)
-  const { isMobile, mounted } = useIsMobile()
+  const { isPhone, isMobile, mounted } = useResponsiveLayout()
   const searchParamsKey = searchParams.toString()
   const initialSearch = normalizeQueryString(searchParams.get('search'))
   const initialStatus = normalizeQueryString(searchParams.get('status')) || undefined
@@ -445,9 +445,12 @@ function OrdersPageContent() {
           title={t.common.refresh}
           className="shrink-0"
         >
-          <RefreshCw className={`h-4 w-4 md:mr-2 ${isFetching ? 'animate-spin' : ''}`} />
-          <span className="hidden md:inline">{t.common.refresh}</span>
-          <span className="sr-only md:hidden">{t.common.refresh}</span>
+          <RefreshCw className={`h-4 w-4 ${!isMobile ? 'mr-2' : ''} ${isFetching ? 'animate-spin' : ''}`} />
+          {isMobile ? (
+            <span className="sr-only">{t.common.refresh}</span>
+          ) : (
+            <span>{t.common.refresh}</span>
+          )}
         </Button>
       </div>
 
@@ -513,6 +516,7 @@ function OrdersPageContent() {
             }
             // 移动端无限滚动相关 props
             isMobile={isMobile && mounted}
+            isPhone={isPhone}
             isLoadingMore={isLoadingMore || isFetching || isRestoringPages}
             hasMore={hasMore}
             onLoadMore={loadMore}

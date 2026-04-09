@@ -59,6 +59,7 @@ import { format } from 'date-fns'
 import { zhCN } from 'date-fns/locale'
 import { cn } from '@/lib/utils'
 import { useLocale } from '@/hooks/use-locale'
+import { useIsMobile } from '@/hooks/use-mobile'
 import { usePageTitle } from '@/hooks/use-page-title'
 import { getTranslations } from '@/lib/i18n'
 import { buildListReturnPath, readListBrowseState } from '@/lib/list-browse-state'
@@ -105,8 +106,10 @@ export default function TicketDetailPage() {
   const queryClient = useQueryClient()
   const toast = useToast()
   const { locale } = useLocale()
+  const { isMobile, mounted } = useIsMobile()
   const t = getTranslations(locale)
   usePageTitle(t.pageTitle.ticketDetail)
+  const isCompactLayout = mounted ? isMobile : false
 
   const {
     data: ticketData,
@@ -309,8 +312,18 @@ export default function TicketDetailPage() {
 
   if (ticketLoading) {
     return (
-      <div className="flex h-[calc(100vh-6rem)] flex-col space-y-2 md:h-[calc(100vh-4rem)]">
-        <div className="flex shrink-0 items-center justify-between border-b px-2 py-1.5 md:px-3 md:py-2">
+      <div
+        className={cn(
+          'flex flex-col space-y-2',
+          isCompactLayout ? 'h-[calc(100vh-6rem)]' : 'h-[calc(100vh-4rem)]'
+        )}
+      >
+        <div
+          className={cn(
+            'flex shrink-0 items-center justify-between border-b',
+            isCompactLayout ? 'px-2 py-1.5' : 'px-3 py-2'
+          )}
+        >
           <div className="flex min-w-0 items-center gap-2">
             <Skeleton className="h-8 w-8 rounded-md" />
             <div className="space-y-1">
@@ -320,7 +333,12 @@ export default function TicketDetailPage() {
           </div>
           <Skeleton className="h-8 w-8 rounded-md" />
         </div>
-        <div className="grid shrink-0 gap-2 border-b bg-muted/15 px-3 py-2 md:grid-cols-4">
+        <div
+          className={cn(
+            'grid shrink-0 gap-2 border-b bg-muted/15 px-3 py-2',
+            !isCompactLayout && 'md:grid-cols-4'
+          )}
+        >
           {[...Array(4)].map((_, index) => (
             <div key={index} className="rounded-lg border bg-background px-3 py-2 text-sm">
               <Skeleton className="h-3 w-20" />
@@ -342,7 +360,12 @@ export default function TicketDetailPage() {
             </div>
           ))}
         </div>
-        <div className="shrink-0 border-t px-2 py-1.5 md:px-3 md:py-2">
+        <div
+          className={cn(
+            'shrink-0 border-t',
+            isCompactLayout ? 'px-2 py-1.5' : 'px-3 py-2'
+          )}
+        >
           <Skeleton className="h-24 w-full rounded-lg" />
         </div>
       </div>
@@ -398,10 +421,20 @@ export default function TicketDetailPage() {
   }
 
   return (
-    <div className="flex h-[calc(100vh-6rem)] flex-col md:h-[calc(100vh-4rem)]">
+    <div
+      className={cn(
+        'flex flex-col',
+        isCompactLayout ? 'h-[calc(100vh-6rem)]' : 'h-[calc(100vh-4rem)]'
+      )}
+    >
       <PluginSlot slot="user.ticket_detail.top" context={userTicketDetailPluginContext} />
       {/* 头部 - 更紧凑 */}
-      <div className="flex shrink-0 items-center justify-between border-b px-2 py-1.5 md:px-3 md:py-2">
+      <div
+        className={cn(
+          'flex shrink-0 items-center justify-between border-b',
+          isCompactLayout ? 'px-2 py-1.5' : 'px-3 py-2'
+        )}
+      >
         <div className="flex min-w-0 items-center gap-2">
           <Button variant="outline" size="icon" asChild className="h-8 w-8 shrink-0">
             <Link href={ticketListBackHref}>
@@ -646,7 +679,12 @@ export default function TicketDetailPage() {
 
       {/* 输入框 */}
       {!isClosed ? (
-        <div className="shrink-0 border-t px-2 py-1.5 md:px-3 md:py-2">
+        <div
+          className={cn(
+            'shrink-0 border-t',
+            isCompactLayout ? 'px-2 py-1.5' : 'px-3 py-2'
+          )}
+        >
           <PluginSlot
             slot="user.ticket_detail.composer.top"
             context={{ ...userTicketDetailPluginContext, section: 'composer' }}
@@ -656,6 +694,7 @@ export default function TicketDetailPage() {
             onChange={setMessage}
             onSend={handleSend}
             onUploadFile={handleUploadFile}
+            compactLayout={isCompactLayout}
             isSending={sendMessageMutation.isPending}
             enableImage={ticketAttachment?.enable_image ?? true}
             enableVoice={ticketAttachment?.enable_voice ?? true}
@@ -684,7 +723,12 @@ export default function TicketDetailPage() {
           />
         </div>
       ) : (
-        <div className="shrink-0 border-t px-2 py-1.5 text-center text-sm text-muted-foreground md:px-3 md:py-2">
+        <div
+          className={cn(
+            'shrink-0 border-t text-center text-sm text-muted-foreground',
+            isCompactLayout ? 'px-2 py-1.5' : 'px-3 py-2'
+          )}
+        >
           <p className="font-medium">{t.ticket.ticketClosed}</p>
           <p className="mt-1 text-xs text-muted-foreground">{t.ticket.ticketClosedHint}</p>
           <PluginSlot

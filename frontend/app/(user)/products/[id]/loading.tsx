@@ -10,7 +10,7 @@ export default function Loading() {
       </div>
 
       {/* 移动端图片骨架 */}
-      <div className="md:hidden">
+      <div className="lg:hidden">
         <Skeleton className="aspect-square w-full rounded-lg" />
         <div className="grid grid-cols-5 gap-2 mt-3">
           {Array.from({ length: 5 }).map((_, i) => (
@@ -19,9 +19,9 @@ export default function Loading() {
         </div>
       </div>
 
-      <div className="flex gap-6 lg:gap-8">
+      <div className="flex flex-col gap-6 lg:flex-row lg:gap-8">
         {/* 左侧图片骨架（桌面端） */}
-        <div className="hidden md:block w-[400px] shrink-0 space-y-3">
+        <div className="hidden w-[400px] shrink-0 space-y-3 lg:block">
           <Skeleton className="aspect-square rounded-lg" />
           <div className="grid grid-cols-4 gap-2">
             {Array.from({ length: 4 }).map((_, i) => (

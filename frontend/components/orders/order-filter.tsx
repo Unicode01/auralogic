@@ -17,6 +17,7 @@ import { Search, X, User } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { useLocale } from '@/hooks/use-locale'
+import { useIsMobile } from '@/hooks/use-mobile'
 import { getTranslations } from '@/lib/i18n'
 import { PluginSlot } from '@/components/plugins/plugin-slot'
 
@@ -104,6 +105,7 @@ export function OrderFilter({
   pluginSlotPath,
 }: OrderFilterProps) {
   const { locale } = useLocale()
+  const { isMobile } = useIsMobile()
   const t = getTranslations(locale)
   const [userSearch, setUserSearch] = useState('')
   const [selectedUser, setSelectedUser] = useState<any>(null)
@@ -181,11 +183,14 @@ export function OrderFilter({
       has_active_filters: Boolean(status || search || userId || country || productSearch),
     },
   }
+  const filterGridClassName = isMobile
+    ? 'grid grid-cols-1 gap-4'
+    : 'grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3'
 
   return (
     <Card>
       <CardContent className="pt-6">
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+        <div className={filterGridClassName}>
           {/* 订单搜索 */}
           <div>
             <label className="mb-2 block text-sm font-medium">{t.order.searchOrder}</label>

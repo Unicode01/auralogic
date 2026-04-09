@@ -10,8 +10,13 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { useLocale } from '@/hooks/use-locale'
 import { getTranslations } from '@/lib/i18n'
+import { cn } from '@/lib/utils'
 
-export function LanguageSwitcher() {
+interface LanguageSwitcherProps {
+  compact?: boolean
+}
+
+export function LanguageSwitcher({ compact = false }: LanguageSwitcherProps) {
   const { locale, setLocale, mounted } = useLocale()
   const t = getTranslations(locale)
 
@@ -25,15 +30,22 @@ export function LanguageSwitcher() {
         <Button
           variant="outline"
           size="sm"
-          className="w-full justify-start"
+          className={cn(
+            'w-full',
+            compact ? 'mx-auto h-9 w-9 justify-center rounded-lg px-0' : 'justify-start'
+          )}
           aria-label={t.sidebar.language}
           title={t.sidebar.language}
         >
-          <Languages className="mr-2 h-4 w-4" />
-          {t.sidebar.language}
+          <Languages className={cn(compact ? 'h-4 w-4' : 'h-4 w-4', !compact && 'mr-2')} />
+          {compact ? <span className="sr-only">{t.sidebar.language}</span> : t.sidebar.language}
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="w-[200px]">
+      <DropdownMenuContent
+        align={compact ? 'center' : 'start'}
+        side={compact ? 'right' : 'bottom'}
+        className={cn('w-[200px]', compact && 'ml-1')}
+      >
         <DropdownMenuItem
           onClick={() => setLocale('zh')}
           className={locale === 'zh' ? 'bg-accent' : ''}
