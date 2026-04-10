@@ -1,9 +1,15 @@
 import axios, { AxiosInstance } from 'axios'
 import { getToken, clearToken } from './auth'
-import { getConfiguredPublicAPIBaseURL, resolvePublicAPIURL } from './api-base-url'
+import {
+  getClientAPIProxyBaseURL,
+  getConfiguredPublicAPIBaseURL,
+  resolveClientAPIProxyURL,
+  resolvePublicAPIURL,
+} from './api-base-url'
 import { stringifyPluginHostContext } from './plugin-frontend-routing'
 
-const API_BASE_URL = getConfiguredPublicAPIBaseURL()
+const API_BASE_URL =
+  typeof window === 'undefined' ? getConfiguredPublicAPIBaseURL() : getClientAPIProxyBaseURL()
 const APP_LOCALE_STORAGE_KEY = 'auralogic_locale'
 const APP_LOCALE_HEADER = 'X-AuraLogic-Locale'
 
@@ -1935,7 +1941,7 @@ export function resolveAdminPluginWorkspaceWebSocketURL(
   }
 
   const suffix = query.toString()
-  const absoluteURL = resolveFetchAPIURL(
+  const absoluteURL = resolvePublicAPIURL(
     `/api/admin/plugins/${id}/workspace/ws${suffix ? `?${suffix}` : ''}`
   )
   const base =
@@ -2046,7 +2052,7 @@ function createAPIErrorFromPayload(payload: unknown, fallbackMessage: string): a
 }
 
 function resolveFetchAPIURL(url: string): string {
-  return resolvePublicAPIURL(url)
+  return resolveClientAPIProxyURL(url)
 }
 
 export function pluginRouteShouldStream(

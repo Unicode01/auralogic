@@ -1260,7 +1260,11 @@ export function PluginWorkspaceDialog({
     }
     const controller = new AbortController()
     let closed = false
-    let preferWebSocket = typeof window !== 'undefined' && typeof window.WebSocket !== 'undefined'
+    const socketProtocols = resolveAdminPluginWorkspaceWebSocketProtocols()
+    let preferWebSocket =
+      typeof window !== 'undefined' &&
+      typeof window.WebSocket !== 'undefined' &&
+      socketProtocols.length > 1
     workspaceSocketRef.current = null
 
     const sleep = async (ms: number) => {
@@ -1278,7 +1282,7 @@ export function PluginWorkspaceDialog({
           limit: 200,
           locale,
         })
-        const socket = new WebSocket(url, resolveAdminPluginWorkspaceWebSocketProtocols())
+        const socket = new WebSocket(url, socketProtocols)
         let opened = false
         let settled = false
 

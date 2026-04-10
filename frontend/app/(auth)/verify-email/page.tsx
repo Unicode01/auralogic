@@ -12,7 +12,7 @@ import { useLocale } from '@/hooks/use-locale'
 import { getTranslations } from '@/lib/i18n'
 import { usePageTitle } from '@/hooks/use-page-title'
 import { PluginSlot } from '@/components/plugins/plugin-slot'
-import { setToken, setUser } from '@/lib/auth'
+import { setUser } from '@/lib/auth'
 import toast from 'react-hot-toast'
 
 export default function VerifyEmailPage() {
@@ -51,10 +51,9 @@ function VerifyEmailContent() {
     onSuccess: (data: any) => {
       setErrorMessage('')
       setStatus('success')
-      const nextTarget = data.data?.token ? 'orders' : 'login'
+      const nextTarget = data.data?.user ? 'orders' : 'login'
       setRedirectTarget(nextTarget)
-      if (data.data?.token) {
-        setToken(data.data.token)
+      if (data.data?.user) {
         setUser(data.data.user)
       } else {
         setRedirectTarget('login')

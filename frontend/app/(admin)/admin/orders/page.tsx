@@ -5,7 +5,7 @@ import { useSearchParams } from 'next/navigation'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { getAdminOrders, batchUpdateOrders } from '@/lib/api'
 import { resolveApiErrorMessage } from '@/lib/api-error'
-import { resolvePublicAPIURL } from '@/lib/api-base-url'
+import { resolveClientAPIProxyURL } from '@/lib/api-base-url'
 import { DataTable } from '@/components/admin/data-table'
 import { OrderStatusBadge } from '@/components/orders/order-status-badge'
 import { OrderFilter } from '@/components/orders/order-filter'
@@ -195,7 +195,6 @@ function AdminOrdersContent() {
   })
 
   const handleExport = () => {
-    const token = getToken()
     const params = new URLSearchParams()
     if (status && status !== 'all') params.append('status', status)
     if (search) params.append('search', search)
@@ -204,13 +203,9 @@ function AdminOrdersContent() {
     if (promoCodeId) params.append('promo_code_id', String(promoCodeId))
     if (promoCode) params.append('promo_code', promoCode)
 
-    const url = resolvePublicAPIURL(`/api/admin/orders/export?${params.toString()}`)
+    const url = resolveClientAPIProxyURL(`/api/admin/orders/export?${params.toString()}`)
 
-    fetch(url, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-    })
+    fetch(url)
       .then(async (res) => {
         if (!res.ok) {
           throw new Error(await readFetchErrorMessage(res, t.admin.exportFailed))
@@ -235,14 +230,9 @@ function AdminOrdersContent() {
   }
 
   const handleDownloadTemplate = () => {
-    const token = getToken()
-    const url = resolvePublicAPIURL('/api/admin/orders/import-template')
+    const url = resolveClientAPIProxyURL('/api/admin/orders/import-template')
 
-    fetch(url, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-    })
+    fetch(url)
       .then(async (res) => {
         if (!res.ok) {
           throw new Error(await readFetchErrorMessage(res, t.admin.downloadFailed))
@@ -266,17 +256,13 @@ function AdminOrdersContent() {
 
   const importMutation = useMutation({
     mutationFn: async (file: File) => {
-      const token = getToken()
       const formData = new FormData()
       formData.append('file', file)
 
       const response = await fetch(
-        resolvePublicAPIURL('/api/admin/orders/import'),
+        resolveClientAPIProxyURL('/api/admin/orders/import'),
         {
           method: 'POST',
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
           body: formData,
         }
       )
