@@ -8,7 +8,7 @@ import { getTranslations } from '@/lib/i18n'
 import { usePreventScrollLock } from '@/hooks/use-prevent-scroll-lock'
 import { PluginSlot } from '@/components/plugins/plugin-slot'
 import { Sidebar } from '@/components/layout/sidebar'
-import { getToken } from '@/lib/auth'
+import { isAuthenticated as hasClientSession } from '@/lib/auth'
 
 function AdminSidebarFallback() {
   return <div className="w-64 shrink-0 border-r bg-card" />
@@ -49,7 +49,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const router = useRouter()
   const pathname = usePathname()
   const [mounted, setMounted] = useState(false)
-  const hasToken = getToken()
+  const hasToken = hasClientSession()
 
   // 防止 Radix UI Dialog/Select 锁定页面滚动
   usePreventScrollLock()
