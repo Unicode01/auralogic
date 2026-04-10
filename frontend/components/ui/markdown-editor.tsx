@@ -1,12 +1,11 @@
 'use client'
 
 import { useRef, useCallback, useState, useEffect } from 'react'
-import CodeMirror from '@uiw/react-codemirror'
-import { markdown } from '@codemirror/lang-markdown'
-import { EditorView } from '@codemirror/view'
+import type { EditorView } from '@codemirror/view'
 import { useTheme } from '@/contexts/theme-context'
 import { useLocale } from '@/hooks/use-locale'
 import { getTranslations } from '@/lib/i18n'
+import { LazyCodeEditor } from '@/components/ui/lazy-code-editor'
 import {
   Bold, Italic, Strikethrough, Heading1, Heading2, Heading3,
   Code, FileCode, Link, Image, List, ListOrdered, Quote, Palette, X, Pipette,
@@ -367,10 +366,10 @@ export function MarkdownEditor({ value, onChange, height = '400px', fill, theme,
           view.focus()
         }}
       >
-        <CodeMirror
+        <LazyCodeEditor
           value={value}
-          extensions={[markdown()]}
           onChange={onChange}
+          language="markdown"
           theme={resolvedEditorTheme}
           className="[&_.cm-editor]:!rounded-none"
           placeholder={placeholder}
