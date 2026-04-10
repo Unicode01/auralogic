@@ -27,6 +27,7 @@ function joinBaseURL(baseURL: string, path: string): string {
 }
 
 const CONFIGURED_PUBLIC_API_BASE_URL = normalizeBaseURL(process.env.NEXT_PUBLIC_API_URL)
+const CLIENT_API_PROXY_BASE_URL = '/api/_backend'
 
 export function getConfiguredPublicAPIBaseURL(): string {
   return CONFIGURED_PUBLIC_API_BASE_URL
@@ -48,4 +49,12 @@ export function resolvePublicAPIURL(path: string): string {
 
 export function resolvePublicAbsoluteAPIURL(path: string): string {
   return joinBaseURL(getPublicAbsoluteAPIBaseURL(), path)
+}
+
+export function getClientAPIProxyBaseURL(): string {
+  return CLIENT_API_PROXY_BASE_URL
+}
+
+export function resolveClientAPIProxyURL(path: string): string {
+  return joinBaseURL(CLIENT_API_PROXY_BASE_URL, path)
 }

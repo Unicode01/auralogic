@@ -23,8 +23,7 @@ import toast from 'react-hot-toast'
 import { useLocale } from '@/hooks/use-locale'
 import { getTranslations } from '@/lib/i18n'
 import { usePageTitle } from '@/hooks/use-page-title'
-import { resolvePublicAPIURL } from '@/lib/api-base-url'
-import { getToken } from '@/lib/auth'
+import { resolveClientAPIProxyURL } from '@/lib/api-base-url'
 import { PluginSlot } from '@/components/plugins/plugin-slot'
 
 interface ProductSerial {
@@ -61,12 +60,7 @@ async function getSerials(page: number, limit: number, filters: any) {
   if (filters.product_id) params.append('product_id', filters.product_id)
   if (filters.order_id) params.append('order_id', filters.order_id)
 
-  const token = getToken()
-  const response = await fetch(resolvePublicAPIURL(`/api/admin/serials?${params}`), {
-    headers: {
-      Authorization: `Bearer ${token}`,
-    },
-  })
+  const response = await fetch(resolveClientAPIProxyURL(`/api/admin/serials?${params}`))
 
   if (!response.ok) {
     throw new Error('Failed to fetch serials')
@@ -76,12 +70,7 @@ async function getSerials(page: number, limit: number, filters: any) {
 }
 
 async function getStatistics() {
-  const token = getToken()
-  const response = await fetch(resolvePublicAPIURL('/api/admin/serials/statistics'), {
-    headers: {
-      Authorization: `Bearer ${token}`,
-    },
-  })
+  const response = await fetch(resolveClientAPIProxyURL('/api/admin/serials/statistics'))
 
   if (!response.ok) {
     throw new Error('Failed to fetch statistics')
@@ -91,12 +80,8 @@ async function getStatistics() {
 }
 
 async function deleteSerial(id: number) {
-  const token = getToken()
-  const response = await fetch(resolvePublicAPIURL(`/api/admin/serials/${id}`), {
+  const response = await fetch(resolveClientAPIProxyURL(`/api/admin/serials/${id}`), {
     method: 'DELETE',
-    headers: {
-      Authorization: `Bearer ${token}`,
-    },
   })
 
   if (!response.ok) {
