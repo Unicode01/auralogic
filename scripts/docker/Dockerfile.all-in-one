@@ -31,8 +31,6 @@ COPY frontend/ ./
 # 覆盖前端配置为构建脚本生成的版本
 COPY docker-build/next.config.js ./next.config.js
 COPY docker-build/frontend.env.production ./.env.production
-ARG NEXT_PUBLIC_API_URL
-ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 RUN npm run build
 
 # ----------------
