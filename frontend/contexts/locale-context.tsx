@@ -2,7 +2,7 @@
 
 import { createContext, useContext, useState, useEffect, useLayoutEffect, useCallback, ReactNode } from 'react'
 import { updateUserPreferences } from '@/lib/api'
-import { getToken } from '@/lib/auth'
+import { isAuthenticated } from '@/lib/auth'
 import { hasLoadedTranslations, loadTranslations } from '@/lib/i18n'
 
 export type Locale = 'zh' | 'en'
@@ -96,7 +96,7 @@ export function LocaleProvider({ children }: { children: ReactNode }) {
     // API 同步（不阻塞渲染）
     useEffect(() => {
         const pendingLocale = getPendingLocale()
-        const hasToken = !!getToken()
+        const hasToken = isAuthenticated()
         if (hasToken && pendingLocale) {
             updateUserPreferences({ locale: pendingLocale })
                 .then(() => clearPendingLocale())
@@ -124,7 +124,7 @@ export function LocaleProvider({ children }: { children: ReactNode }) {
     const setLocale = useCallback((newLocale: Locale) => {
         setStoredLocale(newLocale)
         // 如果已登录，同步到后端；否则记录为待同步（登录后自动同步）
-        if (getToken()) {
+        if (isAuthenticated()) {
             updateUserPreferences({ locale: newLocale })
                 .then(() => clearPendingLocale())
                 .catch(() => setPendingLocale(newLocale))
