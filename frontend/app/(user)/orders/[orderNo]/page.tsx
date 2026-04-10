@@ -25,6 +25,7 @@ import { usePageTitle } from '@/hooks/use-page-title'
 import { getTranslations } from '@/lib/i18n'
 import { buildListReturnPath, readListBrowseState } from '@/lib/list-browse-state'
 import { resolveApiErrorMessage } from '@/lib/api-error'
+import { resolvePublicAPIURL } from '@/lib/api-base-url'
 import toast from 'react-hot-toast'
 import { PluginSlot } from '@/components/plugins/plugin-slot'
 
@@ -281,8 +282,7 @@ function OrderDetailContent({ orderNo }: { orderNo: string }) {
     try {
       const res = await getInvoiceToken(orderNo)
       const token = res.data.token
-      const baseUrl = process.env.NEXT_PUBLIC_API_URL || ''
-      window.open(`${baseUrl}/api/user/invoice/${token}`, '_blank')
+      window.open(resolvePublicAPIURL(`/api/user/invoice/${token}`), '_blank')
     } catch (error: any) {
       toast.error(resolveApiErrorMessage(error, t, t.order.downloadInvoiceFailed))
     } finally {
