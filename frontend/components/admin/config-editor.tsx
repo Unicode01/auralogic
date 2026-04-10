@@ -12,11 +12,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { LazyCodeEditor } from '@/components/ui/lazy-code-editor'
 import { Plus, X } from 'lucide-react'
-import dynamic from 'next/dynamic'
-
-const CodeMirror = dynamic(() => import('@uiw/react-codemirror'), { ssr: false })
-const loadJsonLang = () => import('@codemirror/lang-json').then(m => m.json())
 
 type ConfigEntry = { key: string; value: any }
 
@@ -64,11 +61,6 @@ export function ConfigEditor({
   const onChangeRef = useRef(onChange)
   onChangeRef.current = onChange
   const pendingJsonRef = useRef<string | null>(null)
-  const [jsonExtensions, setJsonExtensions] = useState<any[]>([])
-
-  useEffect(() => {
-    loadJsonLang().then(ext => setJsonExtensions([ext]))
-  }, [])
 
   useEffect(() => () => { clearTimeout(debounceRef.current) }, [])
 
@@ -157,10 +149,10 @@ export function ConfigEditor({
             {labels.visualEditor}
           </Button>
         </div>
-        <CodeMirror
+        <LazyCodeEditor
           value={rawValue}
-          extensions={jsonExtensions}
           onChange={(v) => { setRawValue(v); onChange(v) }}
+          language="json"
           height="250px"
           theme={cmTheme}
           className="rounded-md border overflow-hidden text-sm"

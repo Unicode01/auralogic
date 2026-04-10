@@ -1,11 +1,11 @@
 'use client'
 /* eslint-disable @next/next/no-img-element */
 
-import { memo, useMemo } from 'react'
+import { memo, useEffect, useMemo, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeRaw from 'rehype-raw'
-import DOMPurify from 'dompurify'
+import { prepareMarkdownContentForRender } from '@/lib/markdown-html-sanitize'
 import { cn } from '@/lib/utils'
 
 interface MarkdownMessageProps {
@@ -60,39 +60,18 @@ const markdownComponents = {
 }
 
 export const MarkdownMessage = memo(function MarkdownMessage({ content, className, isOwnMessage, allowHtml = false }: MarkdownMessageProps) {
-  // 对输入内容进行基础清理
-  const sanitizedContent = useMemo(() => {
-    if (typeof window === 'undefined') {
-      // SSR: 仅做基础清理
-      return content
-        .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
-        .replace(/javascript:/gi, '')
-        .replace(/on\w+=/gi, '')
-    }
-    // 客户端: 使用DOMPurify清理可能的HTML注入
-    if (allowHtml) {
-      // 允许HTML标签，但过滤危险内容
-      return DOMPurify.sanitize(content, {
-        ALLOWED_TAGS: [
-          'p', 'br', 'strong', 'em', 'u', 's', 'del', 'ins', 'mark', 'sub', 'sup',
-          'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
-          'ul', 'ol', 'li', 'dl', 'dt', 'dd',
-          'blockquote', 'pre', 'code',
-          'a', 'img',
-          'table', 'thead', 'tbody', 'tr', 'th', 'td',
-          'div', 'span', 'hr',
-        ],
-        ALLOWED_ATTR: ['href', 'src', 'alt', 'title', 'class', 'id', 'target', 'rel', 'style'],
-        ALLOWED_URI_REGEXP: /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|sms|cid|xmpp):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i,
-      })
-    } else {
-      // 不允许HTML标签，只保留文本
-      return DOMPurify.sanitize(content, {
-        ALLOWED_TAGS: [],
-        KEEP_CONTENT: true,
-      })
-    }
-  }, [content, allowHtml])
+  const [hydrated, setHydrated] = useState(false)
+
+  useEffect(() => {
+    setHydrated(true)
+  }, [])
+
+  const sanitizedContent = useMemo(
+    () => prepareMarkdownContentForRender(content, { allowHtml, hydrated }),
+    [content, allowHtml, hydrated]
+  )
+
+  const enableRawHtml = allowHtml && hydrated
 
   return (
     <div
@@ -124,7 +103,7 @@ export const MarkdownMessage = memo(function MarkdownMessage({ content, classNam
     >
       <ReactMarkdown
         remarkPlugins={remarkPluginsConfig}
-        rehypePlugins={allowHtml ? rehypePluginsConfig : undefined}
+        rehypePlugins={enableRawHtml ? rehypePluginsConfig : undefined}
         components={markdownComponents}
       >
         {sanitizedContent}

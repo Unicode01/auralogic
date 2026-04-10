@@ -79,12 +79,12 @@ import {
   Key,
   Undo2,
 } from 'lucide-react'
-import * as LucideIcons from 'lucide-react'
 import Link from 'next/link'
 import { useToast } from '@/hooks/use-toast'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { PluginSlot } from '@/components/plugins/plugin-slot'
 import { formatDate, formatCurrency, minorToMajor, parseMajorToMinor } from '@/lib/utils'
+import { resolvePaymentMethodIcon } from '@/lib/payment-method-icons'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { OrderStatusBadge } from '@/components/orders/order-status-badge'
@@ -504,13 +504,8 @@ export default function AdminOrderDetailPage({ params }: { params: Promise<{ id:
     const iconName = paymentInfo?.payment_method?.icon
     if (!iconName) return <Wallet className="h-5 w-5" />
 
-    // 检查是否是 lucide 图标名
-    const IconComponent = (LucideIcons as any)[iconName]
-    if (IconComponent) {
-      return <IconComponent className="h-5 w-5" />
-    }
-
-    return <Wallet className="h-5 w-5" />
+    const IconComponent = resolvePaymentMethodIcon(iconName, Wallet)
+    return <IconComponent className="h-5 w-5" />
   }
 
   // 构建付款信息卡片

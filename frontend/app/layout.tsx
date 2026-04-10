@@ -4,10 +4,43 @@ import './globals.css'
 import { Providers } from './providers'
 import { Toaster } from 'react-hot-toast'
 
+const APP_NAME = 'AuraLogic'
+const APP_DESCRIPTION = 'Self-hosted commerce platform for physical and virtual products.'
 const inter = Inter({ subsets: ['latin'] })
 
+function resolveMetadataBase(): URL | undefined {
+  const appURL = String(process.env.NEXT_PUBLIC_APP_URL || '')
+    .trim()
+    .replace(/\/+$/g, '')
+  if (!appURL) {
+    return undefined
+  }
+  try {
+    return new URL(appURL)
+  } catch {
+    return undefined
+  }
+}
+
 export const metadata: Metadata = {
-  description: 'AuraLogic Order Management System',
+  metadataBase: resolveMetadataBase(),
+  applicationName: APP_NAME,
+  title: {
+    default: APP_NAME,
+    template: `%s | ${APP_NAME}`,
+  },
+  description: APP_DESCRIPTION,
+  openGraph: {
+    type: 'website',
+    siteName: APP_NAME,
+    title: APP_NAME,
+    description: APP_DESCRIPTION,
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: APP_NAME,
+    description: APP_DESCRIPTION,
+  },
 }
 
 export default function RootLayout({
@@ -44,12 +77,15 @@ export default function RootLayout({
   const appNameScript = `
     (function() {
       try {
-        var n = localStorage.getItem('auralogic_app_name') || 'AuraLogic';
+        var n = localStorage.getItem('auralogic_app_name') || '${APP_NAME}';
         window.__APP_NAME__ = n;
-        document.title = n;
+        var currentTitle = (document.title || '').trim();
+        if (!currentTitle || currentTitle === '${APP_NAME}') {
+          document.title = n;
+        }
       } catch (e) {
-        window.__APP_NAME__ = 'AuraLogic';
-        document.title = 'AuraLogic';
+        window.__APP_NAME__ = '${APP_NAME}';
+        if (!document.title) document.title = '${APP_NAME}';
       }
       try {
         var pc = localStorage.getItem('auralogic_primary_color');

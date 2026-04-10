@@ -5,6 +5,7 @@ import { useSearchParams } from 'next/navigation'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { getAdminOrders, batchUpdateOrders } from '@/lib/api'
 import { resolveApiErrorMessage } from '@/lib/api-error'
+import { resolvePublicAPIURL } from '@/lib/api-base-url'
 import { DataTable } from '@/components/admin/data-table'
 import { OrderStatusBadge } from '@/components/orders/order-status-badge'
 import { OrderFilter } from '@/components/orders/order-filter'
@@ -203,7 +204,7 @@ function AdminOrdersContent() {
     if (promoCodeId) params.append('promo_code_id', String(promoCodeId))
     if (promoCode) params.append('promo_code', promoCode)
 
-    const url = `${process.env.NEXT_PUBLIC_API_URL || 'https://auralogic.un1c0de.com'}/api/admin/orders/export?${params.toString()}`
+    const url = resolvePublicAPIURL(`/api/admin/orders/export?${params.toString()}`)
 
     fetch(url, {
       headers: {
@@ -235,7 +236,7 @@ function AdminOrdersContent() {
 
   const handleDownloadTemplate = () => {
     const token = getToken()
-    const url = `${process.env.NEXT_PUBLIC_API_URL || 'https://auralogic.un1c0de.com'}/api/admin/orders/import-template`
+    const url = resolvePublicAPIURL('/api/admin/orders/import-template')
 
     fetch(url, {
       headers: {
@@ -270,7 +271,7 @@ function AdminOrdersContent() {
       formData.append('file', file)
 
       const response = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL || 'https://auralogic.un1c0de.com'}/api/admin/orders/import`,
+        resolvePublicAPIURL('/api/admin/orders/import'),
         {
           method: 'POST',
           headers: {
