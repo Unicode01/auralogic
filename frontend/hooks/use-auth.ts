@@ -8,10 +8,18 @@ import {
   login,
   loginWithCode,
   loginWithPhoneCode,
+  logout,
   register,
   phoneRegister,
 } from '@/lib/api'
-import { getToken, setToken, clearToken, setUser } from '@/lib/auth'
+import {
+  clearLegacyToken,
+  clearToken,
+  getToken,
+  hasSessionHint,
+  markSessionActive,
+  setUser,
+} from '@/lib/auth'
 import { clearGuestCart, getGuestCart, setGuestCart } from '@/lib/guest-cart'
 import { clearAuthReturnState, readAuthReturnState } from '@/lib/auth-return-state'
 import { resolveAuthApiErrorMessage } from '@/lib/api-error'
@@ -70,11 +78,12 @@ export function useAuth() {
   }
 
   async function handleAuthSuccess(data: any) {
-    setToken(data.data.token)
     const user = normalizeAuthUser(data.data.user)
     const desired = resolvePostLoginLocale(user?.locale)
     const finalUser = normalizeAuthUser(desired ? { ...user, locale: desired } : user)
     setUser(finalUser)
+    markSessionActive()
+    clearLegacyToken()
     if (desired) setLocale(desired)
     queryClient.setQueryData(['currentUser'], { data: finalUser })
 
@@ -88,15 +97,21 @@ export function useAuth() {
     queryKey: ['currentUser'],
     queryFn: async () => {
       const response: any = await getCurrentUser()
-      return response?.data
+      const normalizedResponse = response?.data
         ? {
             ...response,
             data: normalizeAuthUser(response.data),
           }
         : response
+      if (normalizedResponse?.data) {
+        setUser(normalizedResponse.data)
+        markSessionActive()
+        clearLegacyToken()
+      }
+      return normalizedResponse
     },
     retry: false,
-    enabled: typeof window !== 'undefined' && !!getToken(),
+    enabled: typeof window !== 'undefined' && (hasSessionHint() || !!getToken()),
   })
 
   // 登录
@@ -164,7 +179,12 @@ export function useAuth() {
     },
   })
 
-  const logoutUser = () => {
+  const logoutUser = async () => {
+    try {
+      await logout()
+    } catch {
+      // Session cleanup still happens locally.
+    }
     clearToken()
     clearAuthReturnState()
     queryClient.clear()
@@ -172,7 +192,7 @@ export function useAuth() {
   }
 
   // 判断认证状态
-  const hasToken = typeof window !== 'undefined' && !!getToken()
+  const hasToken = typeof window !== 'undefined' && (hasSessionHint() || !!getToken())
   // 如果有token且正在loading，或者有token且请求成功有用户数据，则认为已认证
   // 如果请求失败（error），说明token无效，返回false
   const isAuthenticated = hasToken && !error && (isLoading || !!user?.data)
@@ -188,7 +208,9 @@ export function useAuth() {
     login: loginMutation.mutate,
     loginWithCode: loginWithCodeMutation.mutate,
     loginWithPhoneCode: loginWithPhoneCodeMutation.mutate,
-    logout: logoutUser,
+    logout: () => {
+      void logoutUser()
+    },
     isLoggingIn: loginMutation.isPending,
     isLoggingInWithCode: loginWithCodeMutation.isPending,
     isLoggingInWithPhoneCode: loginWithPhoneCodeMutation.isPending,

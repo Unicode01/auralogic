@@ -1,16 +1,10 @@
 import 'server-only'
 
 import { cookies, headers } from 'next/headers'
-import { getConfiguredPublicAPIBaseURL } from '@/lib/api-base-url'
 import { AUTH_TOKEN_COOKIE_NAME } from '@/lib/auth'
+import { resolveServerAPIBaseURL } from '@/lib/server-api-base-url'
 
 const APP_LOCALE_HEADER = 'X-AuraLogic-Locale'
-
-function normalizeBaseURL(value: string | undefined | null): string {
-  return String(value || '')
-    .trim()
-    .replace(/\/+$/g, '')
-}
 
 function normalizePath(path: string): string {
   const trimmed = String(path || '').trim()
@@ -55,27 +49,6 @@ function firstForwardedValue(value: string | null | undefined): string {
   return String(value || '')
     .split(',')[0]
     .trim()
-}
-
-async function resolveServerAPIBaseURL(): Promise<string> {
-  const configuredBaseURL = normalizeBaseURL(getConfiguredPublicAPIBaseURL())
-  if (configuredBaseURL) {
-    return configuredBaseURL
-  }
-
-  const requestHeaders = await headers()
-  const forwardedHost = firstForwardedValue(requestHeaders.get('x-forwarded-host'))
-  const host = firstForwardedValue(requestHeaders.get('host'))
-  const resolvedHost = forwardedHost || host
-  if (!resolvedHost) {
-    throw new Error('Unable to resolve server public API base URL')
-  }
-
-  const forwardedProto = firstForwardedValue(requestHeaders.get('x-forwarded-proto'))
-  const protocol =
-    forwardedProto || (resolvedHost.startsWith('localhost') || resolvedHost.startsWith('127.0.0.1') ? 'http' : 'https')
-
-  return `${protocol}://${resolvedHost}`
 }
 
 async function resolveServerLocaleHeader(): Promise<string | undefined> {

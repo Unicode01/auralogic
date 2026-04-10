@@ -12,7 +12,7 @@ import { getTranslations } from '@/lib/i18n'
 import { PageLoading } from '@/components/ui/page-loading'
 import { usePageTitle } from '@/hooks/use-page-title'
 import { PluginSlot } from '@/components/plugins/plugin-slot'
-import { getToken } from '@/lib/auth'
+import { isAuthenticated } from '@/lib/auth'
 
 function ShippingFormContent() {
   const searchParams = useSearchParams()
@@ -103,7 +103,7 @@ function ShippingFormContent() {
   useEffect(() => {
     loadFormInfo()
   }, [loadFormInfo])
-  const hasAuthToken = typeof window !== 'undefined' && !!getToken()
+  const hasAuthToken = typeof window !== 'undefined' && isAuthenticated()
   const publicShippingFormPluginContext = {
     view: 'public_shipping_form',
     locale: activeLocale,
