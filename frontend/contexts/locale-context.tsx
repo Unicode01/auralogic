@@ -3,6 +3,7 @@
 import { createContext, useContext, useState, useEffect, useLayoutEffect, useCallback, ReactNode } from 'react'
 import { updateUserPreferences } from '@/lib/api'
 import { getToken } from '@/lib/auth'
+import { hasLoadedTranslations, loadTranslations } from '@/lib/i18n'
 
 export type Locale = 'zh' | 'en'
 
@@ -66,15 +67,30 @@ function clearPendingLocale() {
 }
 
 export function LocaleProvider({ children }: { children: ReactNode }) {
-    const [locale, setLocaleState] = useState<Locale>('en')
+    const [locale, setLocaleState] = useState<Locale>('zh')
     const [mounted, setMounted] = useState(false)
 
     // paint 前从 window.__LOCALE__（head 脚本已同步设好）修正语言，零 I/O
     useLayoutEffect(() => {
+        let active = true
         setMounted(true)
         const w = (window as any).__LOCALE__
         const correct: Locale = (w === 'zh' || w === 'en') ? w : (getStoredLocale() || getBrowserLocale())
-        if (correct !== 'en') setLocaleState(correct)
+        if (correct === 'zh' || hasLoadedTranslations(correct)) {
+            setLocaleState(correct)
+            return () => {
+                active = false
+            }
+        }
+        void loadTranslations(correct)
+            .then(() => {
+                if (!active) return
+                setLocaleState(correct)
+            })
+            .catch(() => {})
+        return () => {
+            active = false
+        }
     }, [])
 
     // API 同步（不阻塞渲染）
@@ -106,7 +122,6 @@ export function LocaleProvider({ children }: { children: ReactNode }) {
 
     // 切换语言
     const setLocale = useCallback((newLocale: Locale) => {
-        setLocaleState(newLocale)
         setStoredLocale(newLocale)
         // 如果已登录，同步到后端；否则记录为待同步（登录后自动同步）
         if (getToken()) {
@@ -116,6 +131,13 @@ export function LocaleProvider({ children }: { children: ReactNode }) {
         } else {
             setPendingLocale(newLocale)
         }
+        if (newLocale === 'zh' || hasLoadedTranslations(newLocale)) {
+            setLocaleState(newLocale)
+            return
+        }
+        void loadTranslations(newLocale)
+            .then(() => setLocaleState(newLocale))
+            .catch(() => {})
     }, [])
 
     // 切换到另一种语言

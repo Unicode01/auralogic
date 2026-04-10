@@ -74,10 +74,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import CodeMirror from '@uiw/react-codemirror'
-import { html } from '@codemirror/lang-html'
-import { css } from '@codemirror/lang-css'
-import { javascript } from '@codemirror/lang-javascript'
+import { LazyCodeEditor } from '@/components/ui/lazy-code-editor'
 import { useTheme } from '@/contexts/theme-context'
 import { resolveApiErrorMessage } from '@/lib/api-error'
 import { usePluginBootstrapQuery } from '@/lib/plugin-bootstrap-query'
@@ -201,10 +198,10 @@ function PageRuleItem({
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
           <div>
             <Label className="text-xs">CSS</Label>
-            <CodeMirror
+            <LazyCodeEditor
               value={local.css}
-              extensions={[css()]}
               onChange={(v) => setLocal((prev) => ({ ...prev, css: v }))}
+              language="css"
               onBlur={handleBlur}
               placeholder={t.admin.cssPlaceholder}
               height="100px"
@@ -215,10 +212,10 @@ function PageRuleItem({
           </div>
           <div>
             <Label className="text-xs">JavaScript</Label>
-            <CodeMirror
+            <LazyCodeEditor
               value={local.js}
-              extensions={[javascript()]}
               onChange={(v) => setLocal((prev) => ({ ...prev, js: v }))}
+              language="javascript"
               onBlur={handleBlur}
               placeholder={t.admin.jsPlaceholder}
               height="100px"
@@ -282,10 +279,10 @@ function TemplateEditor({
 
   return (
     <>
-      <CodeMirror
+      <LazyCodeEditor
         value={local}
-        extensions={[html()]}
         onChange={(v) => setLocal(v)}
+        language="html"
         onBlur={() => onChange(local)}
         height="500px"
         theme={cmTheme}
@@ -454,10 +451,10 @@ function AuthBrandingCard({
                 />
               </div>
             ) : (
-              <CodeMirror
+              <LazyCodeEditor
                 value={local.custom_html}
-                extensions={[html()]}
                 onChange={(v) => setLocal((prev) => ({ ...prev, custom_html: v }))}
+                language="html"
                 height="300px"
                 theme={cmTheme}
                 className="overflow-hidden rounded-md border"
@@ -4734,10 +4731,10 @@ export default function SettingsPage() {
                       {invoiceTemplateType === 'custom' && (
                         <div className="space-y-2">
                           <Label>{t.admin.invoiceCustomTemplate}</Label>
-                          <CodeMirror
+                          <LazyCodeEditor
                             value={invoiceCustomTemplate}
-                            extensions={[html()]}
                             onChange={setInvoiceCustomTemplate}
+                            language="html"
                             height="300px"
                             theme={resolvedTheme === 'dark' ? 'dark' : 'light'}
                             className="overflow-hidden rounded-md border text-sm"
@@ -5167,10 +5164,10 @@ export default function SettingsPage() {
                 ) : (
                   <div>
                     <Label>{t.admin.landingPageHtml}</Label>
-                    <CodeMirror
+                    <LazyCodeEditor
                       value={landingHtml}
-                      extensions={[html()]}
                       onChange={(v) => setLandingHtml(v)}
+                      language="html"
                       height="500px"
                       theme={resolvedTheme === 'dark' ? 'dark' : 'light'}
                       className="mt-1 overflow-hidden rounded-md border"

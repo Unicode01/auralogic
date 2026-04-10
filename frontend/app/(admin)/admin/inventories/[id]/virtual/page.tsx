@@ -73,14 +73,11 @@ import {
 import { useLocale } from '@/hooks/use-locale'
 import { getTranslations } from '@/lib/i18n'
 import { usePageTitle } from '@/hooks/use-page-title'
-import dynamic from 'next/dynamic'
 import { useTheme } from '@/contexts/theme-context'
 import { ConfigEditor } from '@/components/admin/config-editor'
 import { resolveApiErrorMessage } from '@/lib/api-error'
 import { PluginSlot } from '@/components/plugins/plugin-slot'
-
-const CodeMirror = dynamic(() => import('@uiw/react-codemirror'), { ssr: false })
-const loadJsLang = () => import('@codemirror/lang-javascript').then(m => m.javascript())
+import { LazyCodeEditor } from '@/components/ui/lazy-code-editor'
 
 // Example delivery scripts
 const SCRIPT_EXAMPLE_BASIC = `// Generate random activation codes
@@ -430,14 +427,9 @@ export default function VirtualInventoryEditPage() {
   const [page, setPage] = useState(1)
   const [limit] = useState(20)
   const [statusFilter, setStatusFilter] = useState<string>('all')
-  const [jsExtensions, setJsExtensions] = useState<any[]>([])
   const [testQuantity, setTestQuantity] = useState(1)
   const [testResult, setTestResult] = useState<any>(null)
   const configFlushRef = useRef<(() => string | null) | null>(null)
-
-  useEffect(() => {
-    loadJsLang().then(ext => setJsExtensions([ext]))
-  }, [])
 
   const [editForm, setEditForm] = useState({
     name: '',
@@ -967,10 +959,10 @@ export default function VirtualInventoryEditPage() {
                 </DropdownMenu>
               </div>
               <div className="rounded-md border overflow-hidden">
-                <CodeMirror
+                <LazyCodeEditor
                   value={editForm.script}
-                  extensions={jsExtensions}
-                  onChange={(v: string) => setEditForm({ ...editForm, script: v })}
+                  onChange={(v) => setEditForm({ ...editForm, script: v })}
+                  language="javascript"
                   height="300px"
                   theme={cmTheme}
                   placeholder={t.admin.scriptPlaceholder}

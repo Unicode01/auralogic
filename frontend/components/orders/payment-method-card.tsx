@@ -14,34 +14,19 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { SandboxedHtmlFrame } from '@/components/ui/sandboxed-html-frame'
+import { resolvePaymentMethodIcon } from '@/lib/payment-method-icons'
 import {
   CreditCard,
-  Building2,
-  Wallet,
-  MessageCircle,
-  Bitcoin,
-  Code,
   Check,
   Loader2,
   ChevronDown,
   ChevronUp,
-  Coins,
   AlertTriangle,
 } from 'lucide-react'
 import { useLocale } from '@/hooks/use-locale'
 import { getTranslations } from '@/lib/i18n'
 import toast from 'react-hot-toast'
 import { PluginSlot } from '@/components/plugins/plugin-slot'
-
-const iconMap: Record<string, any> = {
-  CreditCard,
-  Building2,
-  Wallet,
-  MessageCircle,
-  Bitcoin,
-  Code,
-  Coins,
-}
 
 const localizedBuiltinPaymentMethodDescriptions: Record<string, { zh: string; en: string }> = {
   'Pay with USDT via TRC20 network, supports auto-confirmation': {
@@ -149,7 +134,7 @@ export function PaymentMethodCard({
   })
 
   const getIcon = (iconName: string) => {
-    const Icon = iconMap[iconName] || CreditCard
+    const Icon = resolvePaymentMethodIcon(iconName)
     return <Icon className="h-5 w-5" />
   }
 

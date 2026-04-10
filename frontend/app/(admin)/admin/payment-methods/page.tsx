@@ -27,8 +27,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
-import CodeMirror from '@uiw/react-codemirror'
-import { javascript } from '@codemirror/lang-javascript'
+import { LazyCodeEditor } from '@/components/ui/lazy-code-editor'
 import { useTheme } from '@/contexts/theme-context'
 import { Switch } from '@/components/ui/switch'
 import { Badge } from '@/components/ui/badge'
@@ -66,15 +65,10 @@ import {
   Trash2,
   GripVertical,
   Play,
-  CreditCard,
-  Building2,
-  Wallet,
-  MessageCircle,
-  Bitcoin,
   Code,
+  CreditCard,
   Settings,
   RefreshCw,
-  Coins,
   FileUp,
   Loader2,
   Package,
@@ -85,6 +79,10 @@ import { getTranslations } from '@/lib/i18n'
 import { usePageTitle } from '@/hooks/use-page-title'
 import { resolveApiErrorMessage } from '@/lib/api-error'
 import { usePluginBootstrapQuery } from '@/lib/plugin-bootstrap-query'
+import {
+  paymentMethodIconNames,
+  resolvePaymentMethodIcon,
+} from '@/lib/payment-method-icons'
 import {
   buildAdminMarketPluginPageHref,
   findAdminMarketPluginBasePath,
@@ -106,15 +104,6 @@ import {
   tryFormatTextareaJSON,
 } from '@/lib/package-manifest-schema'
 
-const iconMap: Record<string, any> = {
-  CreditCard,
-  Building2,
-  Wallet,
-  MessageCircle,
-  Bitcoin,
-  Code,
-  Coins,
-}
 type PaymentPackageFormState = {
   target_id: string
   name: string
@@ -922,7 +911,7 @@ export default function PaymentMethodsPage() {
   }
 
   const getIcon = (iconName: string) => {
-    const Icon = iconMap[iconName] || CreditCard
+    const Icon = resolvePaymentMethodIcon(iconName)
     return <Icon className="h-5 w-5" />
   }
 
@@ -1155,11 +1144,11 @@ export default function PaymentMethodsPage() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {Object.keys(iconMap).map((icon) => (
-                      <SelectItem key={icon} value={icon}>
-                        <div className="flex items-center gap-2">
-                          {getIcon(icon)}
-                          <span>{icon}</span>
+                     {paymentMethodIconNames.map((icon) => (
+                       <SelectItem key={icon} value={icon}>
+                          <div className="flex items-center gap-2">
+                            {getIcon(icon)}
+                            <span>{icon}</span>
                         </div>
                       </SelectItem>
                     ))}
@@ -1242,10 +1231,10 @@ export default function PaymentMethodsPage() {
             <TabsContent value="script" className="mt-4 space-y-4">
               <div className="space-y-2">
                 <Label>{t.admin.pmJsScript}</Label>
-                <CodeMirror
+                <LazyCodeEditor
                   value={formData.script}
-                  extensions={[javascript()]}
                   onChange={(v) => setFormData({ ...formData, script: v })}
+                  language="javascript"
                   placeholder={t.admin.pmScriptPlaceholder}
                   height="300px"
                   theme={resolvedTheme === 'dark' ? 'dark' : 'light'}
@@ -1795,11 +1784,11 @@ export default function PaymentMethodsPage() {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        {Object.keys(iconMap).map((icon) => (
-                          <SelectItem key={icon} value={icon}>
-                            <div className="flex items-center gap-2">
-                              {getIcon(icon)}
-                              <span>{icon}</span>
+                         {paymentMethodIconNames.map((icon) => (
+                           <SelectItem key={icon} value={icon}>
+                              <div className="flex items-center gap-2">
+                                {getIcon(icon)}
+                                <span>{icon}</span>
                             </div>
                           </SelectItem>
                         ))}

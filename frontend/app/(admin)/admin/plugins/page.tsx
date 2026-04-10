@@ -1,6 +1,7 @@
 ﻿'use client'
 
 import { Suspense, useEffect, useMemo, useState } from 'react'
+import dynamic from 'next/dynamic'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -50,15 +51,8 @@ import {
   parseManifestObject,
   parseManifestObjectSchema,
 } from '@/lib/package-manifest-schema'
-import { PluginDeleteAlert } from '@/components/admin/plugins/plugin-delete-alert'
-import { PluginDiagnosticDialog } from '@/components/admin/plugins/plugin-diagnostic-dialog'
-import { PluginEditorDialog } from '@/components/admin/plugins/plugin-editor-dialog'
-import { PluginExecutionLogsDialog } from '@/components/admin/plugins/plugin-execution-logs-dialog'
 import { PluginListPanel } from '@/components/admin/plugins/plugin-list-panel'
-import { PluginWorkspaceDialog } from '@/components/admin/plugins/plugin-workspace-dialog'
 import { resolvePluginUploadConflictSummary } from '@/components/admin/plugins/plugin-upload-conflicts'
-import { PluginUploadDialog } from '@/components/admin/plugins/plugin-upload-dialog'
-import { PluginVersionsDialog } from '@/components/admin/plugins/plugin-versions-dialog'
 import { PluginSlot } from '@/components/plugins/plugin-slot'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -84,6 +78,50 @@ import type {
   UploadPermissionPreview,
 } from '@/components/admin/plugins/types'
 import { Card, CardContent } from '@/components/ui/card'
+
+const PluginDeleteAlert = dynamic(
+  () =>
+    import('@/components/admin/plugins/plugin-delete-alert').then((mod) => mod.PluginDeleteAlert),
+  { ssr: false }
+)
+const PluginDiagnosticDialog = dynamic(
+  () =>
+    import('@/components/admin/plugins/plugin-diagnostic-dialog').then(
+      (mod) => mod.PluginDiagnosticDialog
+    ),
+  { ssr: false }
+)
+const PluginEditorDialog = dynamic(
+  () =>
+    import('@/components/admin/plugins/plugin-editor-dialog').then((mod) => mod.PluginEditorDialog),
+  { ssr: false }
+)
+const PluginExecutionLogsDialog = dynamic(
+  () =>
+    import('@/components/admin/plugins/plugin-execution-logs-dialog').then(
+      (mod) => mod.PluginExecutionLogsDialog
+    ),
+  { ssr: false }
+)
+const PluginUploadDialog = dynamic(
+  () =>
+    import('@/components/admin/plugins/plugin-upload-dialog').then((mod) => mod.PluginUploadDialog),
+  { ssr: false }
+)
+const PluginVersionsDialog = dynamic(
+  () =>
+    import('@/components/admin/plugins/plugin-versions-dialog').then(
+      (mod) => mod.PluginVersionsDialog
+    ),
+  { ssr: false }
+)
+const PluginWorkspaceDialog = dynamic(
+  () =>
+    import('@/components/admin/plugins/plugin-workspace-dialog').then(
+      (mod) => mod.PluginWorkspaceDialog
+    ),
+  { ssr: false }
+)
 
 const EMPTY_PLUGIN_FORM: PluginForm = {
   name: '',
