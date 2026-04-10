@@ -79,10 +79,7 @@ import { getTranslations } from '@/lib/i18n'
 import { usePageTitle } from '@/hooks/use-page-title'
 import { resolveApiErrorMessage } from '@/lib/api-error'
 import { usePluginBootstrapQuery } from '@/lib/plugin-bootstrap-query'
-import {
-  paymentMethodIconNames,
-  resolvePaymentMethodIcon,
-} from '@/lib/payment-method-icons'
+import { paymentMethodIconNames, resolvePaymentMethodIcon } from '@/lib/payment-method-icons'
 import {
   buildAdminMarketPluginPageHref,
   findAdminMarketPluginBasePath,
@@ -95,6 +92,7 @@ import { PluginExtensionList } from '@/components/plugins/plugin-extension-list'
 import { PluginSlot } from '@/components/plugins/plugin-slot'
 import type { PluginJSONSchema } from '@/components/admin/plugins/types'
 import { usePluginExtensionBatch } from '@/lib/plugin-extension-batch'
+import { adminPaymentMethodsQueryKey } from '@/lib/payment-queries'
 import {
   findMissingRequiredSchemaFields,
   formatHumanReadableJSONText,
@@ -324,7 +322,7 @@ export default function PaymentMethodsPage() {
       : 'Use AuraLogic.system.getWebhookUrl("payment.notify") as the callback URL when creating upstream payment sessions.'
 
   const { data, isLoading } = useQuery({
-    queryKey: ['paymentMethods'],
+    queryKey: adminPaymentMethodsQueryKey,
     queryFn: () => getPaymentMethods(),
     staleTime: 0, // 数据立即过期，每次都重新获取
     refetchOnMount: 'always', // 组件挂载时总是重新获取
@@ -389,7 +387,7 @@ export default function PaymentMethodsPage() {
     mutationFn: createPaymentMethod,
     onSuccess: () => {
       toast.success(t.admin.pmCreatedSuccess)
-      queryClient.invalidateQueries({ queryKey: ['paymentMethods'] })
+      queryClient.invalidateQueries({ queryKey: adminPaymentMethodsQueryKey })
       setIsCreateOpen(false)
       resetForm()
     },
@@ -403,7 +401,7 @@ export default function PaymentMethodsPage() {
       updatePaymentMethod(id, data),
     onSuccess: () => {
       toast.success(t.admin.pmUpdatedSuccess)
-      queryClient.invalidateQueries({ queryKey: ['paymentMethods'] })
+      queryClient.invalidateQueries({ queryKey: adminPaymentMethodsQueryKey })
       setEditingMethod(null)
       resetForm()
     },
@@ -416,7 +414,7 @@ export default function PaymentMethodsPage() {
     mutationFn: deletePaymentMethod,
     onSuccess: () => {
       toast.success(t.admin.pmDeletedSuccess)
-      queryClient.invalidateQueries({ queryKey: ['paymentMethods'] })
+      queryClient.invalidateQueries({ queryKey: adminPaymentMethodsQueryKey })
       setDeleteId(null)
     },
     onError: (error: any) => {
@@ -428,13 +426,13 @@ export default function PaymentMethodsPage() {
     mutationFn: togglePaymentMethodEnabled,
     onMutate: async (id) => {
       // Cancel any outgoing refetches
-      await queryClient.cancelQueries({ queryKey: ['paymentMethods'] })
+      await queryClient.cancelQueries({ queryKey: adminPaymentMethodsQueryKey })
 
       // Snapshot the previous value
-      const previousData = queryClient.getQueryData(['paymentMethods'])
+      const previousData = queryClient.getQueryData(adminPaymentMethodsQueryKey)
 
       // Optimistically update to the new value
-      queryClient.setQueryData(['paymentMethods'], (old: any) => {
+      queryClient.setQueryData(adminPaymentMethodsQueryKey, (old: any) => {
         if (!old?.data?.items) return old
         return {
           ...old,
@@ -452,13 +450,13 @@ export default function PaymentMethodsPage() {
     onError: (error: any, id, context) => {
       // Rollback on error
       if (context?.previousData) {
-        queryClient.setQueryData(['paymentMethods'], context.previousData)
+        queryClient.setQueryData(adminPaymentMethodsQueryKey, context.previousData)
       }
       showAdminErrorToast(error, t.admin.operationFailed)
     },
     onSettled: () => {
       // Always refetch to ensure data is in sync
-      queryClient.invalidateQueries({ queryKey: ['paymentMethods'] })
+      queryClient.invalidateQueries({ queryKey: adminPaymentMethodsQueryKey })
     },
   })
 
@@ -466,7 +464,7 @@ export default function PaymentMethodsPage() {
     mutationFn: initBuiltinPaymentMethods,
     onSuccess: () => {
       toast.success(t.admin.pmBuiltinInitialized)
-      queryClient.invalidateQueries({ queryKey: ['paymentMethods'] })
+      queryClient.invalidateQueries({ queryKey: adminPaymentMethodsQueryKey })
     },
     onError: (error: any) => {
       showAdminErrorToast(error, t.admin.operationFailed)
@@ -476,11 +474,11 @@ export default function PaymentMethodsPage() {
   const reorderMutation = useMutation({
     mutationFn: reorderPaymentMethods,
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['paymentMethods'] })
+      queryClient.invalidateQueries({ queryKey: adminPaymentMethodsQueryKey })
     },
     onError: (error: any) => {
       showAdminErrorToast(error, t.admin.operationFailed)
-      queryClient.invalidateQueries({ queryKey: ['paymentMethods'] })
+      queryClient.invalidateQueries({ queryKey: adminPaymentMethodsQueryKey })
     },
   })
 
@@ -537,7 +535,7 @@ export default function PaymentMethodsPage() {
     mutationFn: (payload: FormData) => uploadPaymentMethodPackage(payload),
     onSuccess: () => {
       toast.success(t.admin.pmPackageImportedSuccess)
-      queryClient.invalidateQueries({ queryKey: ['paymentMethods'] })
+      queryClient.invalidateQueries({ queryKey: adminPaymentMethodsQueryKey })
       closeImportDialog()
     },
     onError: (error: unknown) => {
@@ -606,7 +604,7 @@ export default function PaymentMethodsPage() {
       }),
     onSuccess: () => {
       toast.success(t.admin.pmPackageImportedSuccess)
-      queryClient.invalidateQueries({ queryKey: ['paymentMethods'] })
+      queryClient.invalidateQueries({ queryKey: adminPaymentMethodsQueryKey })
       closeImportDialog()
     },
     onError: (error: unknown) => {
@@ -1007,7 +1005,7 @@ export default function PaymentMethodsPage() {
                   const [moved] = reordered.splice(from, 1)
                   reordered.splice(to, 0, moved)
                   // Optimistic update
-                  queryClient.setQueryData(['paymentMethods'], (old: any) => {
+                  queryClient.setQueryData(adminPaymentMethodsQueryKey, (old: any) => {
                     if (!old?.data?.items) return old
                     return { ...old, data: { ...old.data, items: reordered } }
                   })
@@ -1144,11 +1142,11 @@ export default function PaymentMethodsPage() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                     {paymentMethodIconNames.map((icon) => (
-                       <SelectItem key={icon} value={icon}>
-                          <div className="flex items-center gap-2">
-                            {getIcon(icon)}
-                            <span>{icon}</span>
+                    {paymentMethodIconNames.map((icon) => (
+                      <SelectItem key={icon} value={icon}>
+                        <div className="flex items-center gap-2">
+                          {getIcon(icon)}
+                          <span>{icon}</span>
                         </div>
                       </SelectItem>
                     ))}
@@ -1784,11 +1782,11 @@ export default function PaymentMethodsPage() {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                         {paymentMethodIconNames.map((icon) => (
-                           <SelectItem key={icon} value={icon}>
-                              <div className="flex items-center gap-2">
-                                {getIcon(icon)}
-                                <span>{icon}</span>
+                        {paymentMethodIconNames.map((icon) => (
+                          <SelectItem key={icon} value={icon}>
+                            <div className="flex items-center gap-2">
+                              {getIcon(icon)}
+                              <span>{icon}</span>
                             </div>
                           </SelectItem>
                         ))}
