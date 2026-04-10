@@ -114,6 +114,61 @@ describe('server-api', () => {
     })
   })
 
+  test('fetches protected order lists with normalized query params and auth headers', async () => {
+    const fetchMock = jest.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          data: {
+            items: [{ id: 1, order_no: 'ORD-1001' }],
+            pagination: { page: 2, limit: 18, total: 1, total_pages: 1 },
+          },
+        }),
+        {
+          status: 200,
+          headers: {
+            'content-type': 'application/json',
+          },
+        }
+      )
+    )
+    global.fetch = fetchMock as unknown as typeof fetch
+
+    const { module } = loadServerAPIModule({
+      requestHeaders: {
+        'accept-language': 'zh-CN,zh;q=0.9',
+      },
+      cookieValues: {
+        [AUTH_TOKEN_COOKIE_NAME]: 'orders-cookie-token',
+      },
+    })
+
+    await expect(
+      module.getServerOrders({
+        page: 2,
+        limit: 18,
+        status: 'pending_payment',
+        search: 'ORD-1001',
+      })
+    ).resolves.toEqual({
+      data: {
+        items: [{ id: 1, order_no: 'ORD-1001' }],
+        pagination: { page: 2, limit: 18, total: 1, total_pages: 1 },
+      },
+    })
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://backend.example.com/api/user/orders?page=2&limit=18&status=pending_payment&search=ORD-1001',
+      {
+        cache: 'no-store',
+        headers: {
+          Accept: 'application/json',
+          Authorization: 'Bearer orders-cookie-token',
+          'X-AuraLogic-Locale': 'zh',
+        },
+      }
+    )
+  })
+
   test('requires auth for protected server fetches and includes authorization when present', async () => {
     const missingAuthModule = loadServerAPIModule().module
     await expect(missingAuthModule.getServerAnnouncement(12)).rejects.toMatchObject({
