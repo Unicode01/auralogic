@@ -34,6 +34,7 @@ function loadServerAPIBaseURLModule(nextHeaders?: HeaderInitMap) {
 
 describe('server-api-base-url', () => {
   const originalAPIURL = process.env.NEXT_PUBLIC_API_URL
+  const originalInternalAPIURL = process.env.INTERNAL_API_BASE_URL
 
   afterEach(() => {
     jest.resetModules()
@@ -43,9 +44,39 @@ describe('server-api-base-url', () => {
     } else {
       process.env.NEXT_PUBLIC_API_URL = originalAPIURL
     }
+    if (originalInternalAPIURL === undefined) {
+      delete process.env.INTERNAL_API_BASE_URL
+    } else {
+      process.env.INTERNAL_API_BASE_URL = originalInternalAPIURL
+    }
+  })
+
+  test('prefers the internal API URL over all other sources', async () => {
+    process.env.INTERNAL_API_BASE_URL = 'http://127.0.0.1:8080/'
+    process.env.NEXT_PUBLIC_API_URL = 'https://api.example.com/'
+
+    const { module } = loadServerAPIBaseURLModule({
+      host: 'frontend.example.com',
+      'x-forwarded-host': 'proxy.example.com',
+      'x-forwarded-proto': 'https',
+    })
+
+    expect(
+      module.resolveServerAPIBaseURLFromRequest(
+        new Request('https://frontend.example.com/products', {
+          headers: {
+            host: 'frontend.example.com',
+            'x-forwarded-host': 'proxy.example.com',
+            'x-forwarded-proto': 'https',
+          },
+        })
+      )
+    ).toBe('http://127.0.0.1:8080')
+    await expect(module.resolveServerAPIBaseURL()).resolves.toBe('http://127.0.0.1:8080')
   })
 
   test('prefers the configured public API URL over request headers', async () => {
+    delete process.env.INTERNAL_API_BASE_URL
     process.env.NEXT_PUBLIC_API_URL = 'https://api.example.com/'
 
     const { module } = loadServerAPIBaseURLModule({
@@ -69,6 +100,7 @@ describe('server-api-base-url', () => {
   })
 
   test('uses forwarded host and protocol when config is missing', () => {
+    delete process.env.INTERNAL_API_BASE_URL
     delete process.env.NEXT_PUBLIC_API_URL
 
     const { module } = loadServerAPIBaseURLModule()
@@ -87,6 +119,7 @@ describe('server-api-base-url', () => {
   })
 
   test('falls back to localhost http and external https when forwarded proto is absent', async () => {
+    delete process.env.INTERNAL_API_BASE_URL
     delete process.env.NEXT_PUBLIC_API_URL
 
     const localhostModule = loadServerAPIBaseURLModule({
@@ -110,6 +143,7 @@ describe('server-api-base-url', () => {
   })
 
   test('throws when no host headers are available', () => {
+    delete process.env.INTERNAL_API_BASE_URL
     delete process.env.NEXT_PUBLIC_API_URL
 
     const { module } = loadServerAPIBaseURLModule()

@@ -3,6 +3,8 @@ import 'server-only'
 import { headers } from 'next/headers'
 import { getConfiguredPublicAPIBaseURL } from '@/lib/api-base-url'
 
+const INTERNAL_API_BASE_URL = normalizeBaseURL(process.env.INTERNAL_API_BASE_URL)
+
 function normalizeBaseURL(value: string | undefined | null): string {
   return String(value || '')
     .trim()
@@ -18,6 +20,10 @@ function firstForwardedValue(value: string | null | undefined): string {
 function resolveBaseURLFromHeaderSource(
   getHeader: (name: string) => string | null | undefined
 ): string {
+  if (INTERNAL_API_BASE_URL) {
+    return INTERNAL_API_BASE_URL
+  }
+
   const configuredBaseURL = normalizeBaseURL(getConfiguredPublicAPIBaseURL())
   if (configuredBaseURL) {
     return configuredBaseURL
