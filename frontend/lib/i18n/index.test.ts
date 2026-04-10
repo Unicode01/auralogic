@@ -1,9 +1,9 @@
 import {
-  enTranslations,
   translateBizError,
   type Translations,
   zhTranslations,
 } from '@/lib/i18n'
+import { enTranslations } from '@/lib/i18n/en'
 
 describe('translateBizError', () => {
   it('translates existing zh/en biz errors with parameter interpolation', () => {
@@ -59,5 +59,18 @@ describe('translateBizError', () => {
     ).toBe('操作失败')
 
     expect(translateBizError(zhTranslations, 'order.unknown')).toBe('order.unknown')
+  })
+
+  it('loads english translations on demand and caches them', async () => {
+    const { getTranslations, hasLoadedTranslations, loadTranslations } = await import('@/lib/i18n')
+
+    expect(hasLoadedTranslations('zh')).toBe(true)
+    expect(getTranslations('en').common.loading).toBe(zhTranslations.common.loading)
+
+    const loaded = await loadTranslations('en')
+
+    expect(loaded.common.loading).toBe(enTranslations.common.loading)
+    expect(hasLoadedTranslations('en')).toBe(true)
+    expect(getTranslations('en').common.loading).toBe(enTranslations.common.loading)
   })
 })

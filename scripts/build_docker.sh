@@ -1046,6 +1046,7 @@ EOF
   # ---------------------------
   cat > "$WORK_DIR/docker-build/frontend.env.production" <<EOF
 NEXT_PUBLIC_API_URL=$APP_URL
+NEXT_PUBLIC_APP_URL=$APP_URL
 NEXT_PUBLIC_GIT_COMMIT=$(cd "$WORK_DIR" && git rev-parse --short HEAD 2>/dev/null || echo "dev")
 EOF
 
@@ -1067,6 +1068,7 @@ const nextConfig = {
     env: {
         NEXT_PUBLIC_GIT_COMMIT: process.env.NEXT_PUBLIC_GIT_COMMIT || 'dev',
         NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL || '$APP_URL',
+        NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL || '$APP_URL',
     },
     async redirects() {
         return [
@@ -1405,6 +1407,7 @@ update_container() {
 
   cat > "$WORK_DIR/docker-build/frontend.env.production" <<EOF
 NEXT_PUBLIC_API_URL=$APP_URL
+NEXT_PUBLIC_APP_URL=$APP_URL
 NEXT_PUBLIC_GIT_COMMIT=$(cd "$WORK_DIR" && git rev-parse --short HEAD 2>/dev/null || echo "dev")
 EOF
 
@@ -1423,6 +1426,7 @@ const nextConfig = {
     env: {
         NEXT_PUBLIC_GIT_COMMIT: process.env.NEXT_PUBLIC_GIT_COMMIT || 'dev',
         NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL || '$APP_URL',
+        NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL || '$APP_URL',
     },
     async redirects() {
         return [

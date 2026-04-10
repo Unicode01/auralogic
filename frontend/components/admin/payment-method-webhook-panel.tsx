@@ -5,6 +5,7 @@ import { Copy, Link2, ShieldCheck } from 'lucide-react'
 import toast from 'react-hot-toast'
 
 import type { PaymentMethodPackageWebhookManifest } from '@/lib/api'
+import { getPublicAbsoluteAPIBaseURL } from '@/lib/api-base-url'
 import { getTranslations } from '@/lib/i18n'
 import { useLocale } from '@/hooks/use-locale'
 import { resolveManifestLocalizedString } from '@/lib/package-manifest-schema'
@@ -146,16 +147,15 @@ export function PaymentMethodWebhookPanel(props: PaymentMethodWebhookPanelProps)
     () => resolvePaymentMethodID(props.paymentMethodId),
     [props.paymentMethodId]
   )
-  const [resolvedBaseURL, setResolvedBaseURL] = useState(() =>
-    String(process.env.NEXT_PUBLIC_API_URL || '')
-      .trim()
-      .replace(/\/+$/g, '')
-  )
+  const [resolvedBaseURL, setResolvedBaseURL] = useState(() => getPublicAbsoluteAPIBaseURL())
   useEffect(() => {
-    if (resolvedBaseURL || typeof window === 'undefined' || !window.location?.origin) {
+    if (resolvedBaseURL) {
       return
     }
-    setResolvedBaseURL(window.location.origin.replace(/\/+$/g, ''))
+    const nextBaseURL = getPublicAbsoluteAPIBaseURL()
+    if (nextBaseURL) {
+      setResolvedBaseURL(nextBaseURL)
+    }
   }, [resolvedBaseURL])
   const items = useMemo(() => {
     const source =
