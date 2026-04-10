@@ -133,3 +133,11 @@ export function getServerAnnouncement(announcementId: number) {
 export function getServerKnowledgeArticle(articleId: number) {
   return fetchServerAPI(`/api/user/knowledge/articles/${articleId}`, { auth: true })
 }
+
+export function getServerOrder(orderNo: string) {
+  return fetchServerAPI(`/api/user/orders/${orderNo}`, { auth: true })
+}
+
+export function getServerOrderVirtualProducts(orderNo: string) {
+  return fetchServerAPI(`/api/user/orders/${orderNo}/virtual-products`, { auth: true })
+}
