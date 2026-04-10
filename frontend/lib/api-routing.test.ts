@@ -104,22 +104,30 @@ describe('api routing', () => {
     jest.clearAllMocks()
   })
 
-  test('routes public helpers through the direct public client and keeps protected calls proxied', async () => {
+  test('routes non-token public helpers through the direct public client and keeps session-establishing auth calls proxied', async () => {
     const { module, proxyClient, publicClient } = loadAPIModule()
 
     await module.getCaptcha()
-    await module.login({ email: 'demo@example.com', password: 'Secret123!' })
     await module.getPublicConfig()
     await module.getCountries()
     await module.getFeaturedProducts(6)
     await module.getPluginExtensions('/', 'default')
+    await module.sendLoginCode({ email: 'demo@example.com' })
+    await module.forgotPassword({ email: 'demo@example.com' })
+    await module.login({ email: 'demo@example.com', password: 'Secret123!' })
+    await module.register({ email: 'demo@example.com', password: 'Secret123!', name: 'Demo' })
+    await module.loginWithCode({ email: 'demo@example.com', code: '123456' })
+    await module.loginWithPhoneCode({ phone: '13800138000', code: '123456' })
+    await module.phoneRegister({
+      phone: '13800138000',
+      code: '123456',
+      password: 'Secret123!',
+      name: 'Demo',
+    })
+    await module.verifyEmail('verify-token')
     await module.logout()
 
     expect(publicClient.get).toHaveBeenCalledWith('/api/user/auth/captcha')
-    expect(publicClient.post).toHaveBeenCalledWith('/api/user/auth/login', {
-      email: 'demo@example.com',
-      password: 'Secret123!',
-    })
     expect(publicClient.get).toHaveBeenCalledWith('/api/config/public')
     expect(publicClient.get).toHaveBeenCalledWith('/api/form/countries')
     expect(publicClient.get).toHaveBeenCalledWith('/api/user/products/featured?limit=6')
@@ -127,10 +135,40 @@ describe('api routing', () => {
       headers: undefined,
       signal: undefined,
     })
+    expect(publicClient.post).toHaveBeenCalledWith('/api/user/auth/send-login-code', {
+      email: 'demo@example.com',
+    })
+    expect(publicClient.post).toHaveBeenCalledWith('/api/user/auth/forgot-password', {
+      email: 'demo@example.com',
+    })
 
+    expect(proxyClient.post).toHaveBeenCalledWith('/api/user/auth/login', {
+      email: 'demo@example.com',
+      password: 'Secret123!',
+    })
+    expect(proxyClient.post).toHaveBeenCalledWith('/api/user/auth/register', {
+      email: 'demo@example.com',
+      password: 'Secret123!',
+      name: 'Demo',
+    })
+    expect(proxyClient.post).toHaveBeenCalledWith('/api/user/auth/login-with-code', {
+      email: 'demo@example.com',
+      code: '123456',
+    })
+    expect(proxyClient.post).toHaveBeenCalledWith('/api/user/auth/login-with-phone-code', {
+      phone: '13800138000',
+      code: '123456',
+    })
+    expect(proxyClient.post).toHaveBeenCalledWith('/api/user/auth/phone-register', {
+      phone: '13800138000',
+      code: '123456',
+      password: 'Secret123!',
+      name: 'Demo',
+    })
+    expect(proxyClient.get).toHaveBeenCalledWith('/api/user/auth/verify-email?token=verify-token')
     expect(proxyClient.post).toHaveBeenCalledWith('/api/user/auth/logout')
     expect(proxyClient.get).not.toHaveBeenCalledWith('/api/user/auth/captcha')
-    expect(proxyClient.post).not.toHaveBeenCalledWith('/api/user/auth/login', expect.anything())
+    expect(publicClient.post).not.toHaveBeenCalledWith('/api/user/auth/login', expect.anything())
   })
 
   test('routes public plugin execute actions directly and protected ones through the proxy client', async () => {
