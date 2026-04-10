@@ -3,6 +3,7 @@ import 'server-only'
 import { cookies, headers } from 'next/headers'
 import { AUTH_TOKEN_COOKIE_NAME } from '@/lib/auth'
 import { resolveServerAPIBaseURL } from '@/lib/server-api-base-url'
+import type { OrderQueryParams } from '@/types/order'
 
 const APP_LOCALE_HEADER = 'X-AuraLogic-Locale'
 
@@ -107,6 +108,16 @@ async function fetchServerAPI(path: string, options?: { auth?: boolean }) {
   return payload
 }
 
+function buildOrderListPath(params?: OrderQueryParams): string {
+  const query = new URLSearchParams()
+  if (params?.page) query.set('page', String(params.page))
+  if (params?.limit) query.set('limit', String(params.limit))
+  if (params?.status) query.set('status', params.status)
+  if (params?.search) query.set('search', params.search)
+  const search = query.toString()
+  return search ? `/api/user/orders?${search}` : '/api/user/orders'
+}
+
 export function getServerPublicConfig() {
   return fetchServerAPI('/api/config/public')
 }
@@ -132,6 +143,10 @@ export function getServerAnnouncement(announcementId: number) {
 
 export function getServerKnowledgeArticle(articleId: number) {
   return fetchServerAPI(`/api/user/knowledge/articles/${articleId}`, { auth: true })
+}
+
+export function getServerOrders(params?: OrderQueryParams) {
+  return fetchServerAPI(buildOrderListPath(params), { auth: true })
 }
 
 export function getServerOrder(orderNo: string) {

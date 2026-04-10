@@ -3,12 +3,13 @@
 import { useQuery } from '@tanstack/react-query'
 import { getOrders } from '@/lib/api'
 import type { OrderQueryParams } from '@/lib/api'
+import { getOrderListQueryOptions } from '@/lib/order-list-queries'
 import { getOrderDetailQueryOptions } from '@/lib/order-detail-queries'
 
 export function useOrders(params: OrderQueryParams = {}) {
+  const queryOptions = getOrderListQueryOptions(params)
   return useQuery({
-    queryKey: ['orders', params],
-    queryFn: () => getOrders(params),
+    ...queryOptions,
   })
 }
 
