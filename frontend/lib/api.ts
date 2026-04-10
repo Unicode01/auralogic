@@ -8,8 +8,9 @@ import {
 } from './api-base-url'
 import { stringifyPluginHostContext } from './plugin-frontend-routing'
 
-const API_BASE_URL =
+const PROXY_API_BASE_URL =
   typeof window === 'undefined' ? getConfiguredPublicAPIBaseURL() : getClientAPIProxyBaseURL()
+const PUBLIC_API_BASE_URL = getConfiguredPublicAPIBaseURL()
 const APP_LOCALE_STORAGE_KEY = 'auralogic_locale'
 const APP_LOCALE_HEADER = 'X-AuraLogic-Locale'
 
@@ -196,59 +197,72 @@ export function extractApiErrorInfo(error: unknown): ApiErrorInfo {
   }
 }
 
-// 创建axios实例
-export const apiClient: AxiosInstance = axios.create({
-  baseURL: API_BASE_URL,
-  timeout: 30000,
-  headers: {
-    'Content-Type': 'application/json',
-  },
+type APIClientOptions = {
+  clearTokenOnUnauthorized?: boolean
+}
+
+function createAPIClient(baseURL: string, options?: APIClientOptions): AxiosInstance {
+  const client = axios.create({
+    baseURL,
+    timeout: 30000,
+    headers: {
+      'Content-Type': 'application/json',
+    },
+  })
+
+  client.interceptors.request.use(
+    (config) => {
+      const token = getToken()
+      if (token) {
+        config.headers.Authorization = `Bearer ${token}`
+      }
+      const locale = resolveClientLocaleHeaderValue()
+      if (locale) {
+        config.headers[APP_LOCALE_HEADER] = locale
+      }
+      return config
+    },
+    (error) => {
+      return Promise.reject(error)
+    }
+  )
+
+  client.interceptors.response.use(
+    (response) => {
+      return response.data
+    },
+    (error) => {
+      if (options?.clearTokenOnUnauthorized && error.response?.status === 401) {
+        // Token过期，清除token但不自动跳转
+        // 跳转逻辑由各页面的布局组件控制
+        clearToken()
+      }
+
+      const parsed = parseApiErrorPayload(error.response?.data)
+      const fallback = asString(error?.message) || parsed.message || 'Request failed'
+      const message = parsed.message || fallback
+      const apiError: any = new Error(message)
+      apiError.code = parsed.code
+      apiError.data = parsed.data
+      apiError.status = parsed.status ?? asNumber(error.response?.status)
+      apiError.errorKey = parsed.errorKey
+      apiError.error_key = parsed.errorKey
+      apiError.errorParams = parsed.errorParams
+      apiError.error_params = parsed.errorParams
+      return Promise.reject(apiError)
+    }
+  )
+
+  return client
+}
+
+// 默认客户端仍走 Next 代理，避免影响鉴权/敏感接口。
+export const apiClient: AxiosInstance = createAPIClient(PROXY_API_BASE_URL, {
+  clearTokenOnUnauthorized: true,
 })
 
-// 请求拦截器
-apiClient.interceptors.request.use(
-  (config) => {
-    const token = getToken()
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`
-    }
-    const locale = resolveClientLocaleHeaderValue()
-    if (locale) {
-      config.headers[APP_LOCALE_HEADER] = locale
-    }
-    return config
-  },
-  (error) => {
-    return Promise.reject(error)
-  }
-)
-
-// 响应拦截器
-apiClient.interceptors.response.use(
-  (response) => {
-    return response.data
-  },
-  (error) => {
-    if (error.response?.status === 401) {
-      // Token过期，清除token但不自动跳转
-      // 跳转逻辑由各页面的布局组件控制
-      clearToken()
-    }
-
-    const parsed = parseApiErrorPayload(error.response?.data)
-    const fallback = asString(error?.message) || parsed.message || 'Request failed'
-    const message = parsed.message || fallback
-    const apiError: any = new Error(message)
-    apiError.code = parsed.code
-    apiError.data = parsed.data
-    apiError.status = parsed.status ?? asNumber(error.response?.status)
-    apiError.errorKey = parsed.errorKey
-    apiError.error_key = parsed.errorKey
-    apiError.errorParams = parsed.errorParams
-    apiError.error_params = parsed.errorParams
-    return Promise.reject(apiError)
-  }
-)
+// 公开接口优先直连后端 /api，减少额外代理跳数。
+export const publicApiClient: AxiosInstance = createAPIClient(PUBLIC_API_BASE_URL)
 
 // ==========================================
 // 库存管理API
@@ -460,7 +474,7 @@ export async function submitShippingForm(data: ShippingFormData) {
 
 // 获取国家列表
 export async function getCountries() {
-  return apiClient.get('/api/form/countries')
+  return publicApiClient.get('/api/form/countries')
 }
 
 // ==========================================
@@ -481,35 +495,35 @@ export interface RegisterData {
 }
 
 export async function login(data: LoginData) {
-  return apiClient.post('/api/user/auth/login', data)
+  return publicApiClient.post('/api/user/auth/login', data)
 }
 
 export async function register(data: RegisterData) {
-  return apiClient.post('/api/user/auth/register', data)
+  return publicApiClient.post('/api/user/auth/register', data)
 }
 
 export async function verifyEmail(token: string) {
-  return apiClient.get(`/api/user/auth/verify-email?token=${token}`)
+  return publicApiClient.get(`/api/user/auth/verify-email?token=${token}`)
 }
 
 export async function resendVerification(email: string) {
-  return apiClient.post('/api/user/auth/resend-verification', { email })
+  return publicApiClient.post('/api/user/auth/resend-verification', { email })
 }
 
 export async function sendLoginCode(data: { email: string; captcha_token?: string }) {
-  return apiClient.post('/api/user/auth/send-login-code', data)
+  return publicApiClient.post('/api/user/auth/send-login-code', data)
 }
 
 export async function loginWithCode(data: { email: string; code: string }) {
-  return apiClient.post('/api/user/auth/login-with-code', data)
+  return publicApiClient.post('/api/user/auth/login-with-code', data)
 }
 
 export async function forgotPassword(data: { email: string; captcha_token?: string }) {
-  return apiClient.post('/api/user/auth/forgot-password', data)
+  return publicApiClient.post('/api/user/auth/forgot-password', data)
 }
 
 export async function resetPassword(data: { token: string; new_password: string }) {
-  return apiClient.post('/api/user/auth/reset-password', data)
+  return publicApiClient.post('/api/user/auth/reset-password', data)
 }
 
 export async function sendPhoneCode(data: {
@@ -517,7 +531,7 @@ export async function sendPhoneCode(data: {
   phone_code?: string
   captcha_token?: string
 }) {
-  return apiClient.post('/api/user/auth/send-phone-code', data)
+  return publicApiClient.post('/api/user/auth/send-phone-code', data)
 }
 
 export async function loginWithPhoneCode(data: {
@@ -525,7 +539,7 @@ export async function loginWithPhoneCode(data: {
   phone_code?: string
   code: string
 }) {
-  return apiClient.post('/api/user/auth/login-with-phone-code', data)
+  return publicApiClient.post('/api/user/auth/login-with-phone-code', data)
 }
 
 export async function sendPhoneRegisterCode(data: {
@@ -533,7 +547,7 @@ export async function sendPhoneRegisterCode(data: {
   phone_code?: string
   captcha_token?: string
 }) {
-  return apiClient.post('/api/user/auth/send-phone-register-code', data)
+  return publicApiClient.post('/api/user/auth/send-phone-register-code', data)
 }
 
 export async function phoneRegister(data: {
@@ -544,7 +558,7 @@ export async function phoneRegister(data: {
   code: string
   captcha_token?: string
 }) {
-  return apiClient.post('/api/user/auth/phone-register', data)
+  return publicApiClient.post('/api/user/auth/phone-register', data)
 }
 
 export async function phoneForgotPassword(data: {
@@ -552,7 +566,7 @@ export async function phoneForgotPassword(data: {
   phone_code?: string
   captcha_token?: string
 }) {
-  return apiClient.post('/api/user/auth/phone-forgot-password', data)
+  return publicApiClient.post('/api/user/auth/phone-forgot-password', data)
 }
 
 export async function phoneResetPassword(data: {
@@ -561,7 +575,7 @@ export async function phoneResetPassword(data: {
   code: string
   new_password: string
 }) {
-  return apiClient.post('/api/user/auth/phone-reset-password', data)
+  return publicApiClient.post('/api/user/auth/phone-reset-password', data)
 }
 
 export async function logout() {
@@ -611,7 +625,7 @@ export async function bindPhone(phone: string, code: string) {
 }
 
 export async function getCaptcha() {
-  return apiClient.get('/api/user/auth/captcha')
+  return publicApiClient.get('/api/user/auth/captcha')
 }
 
 // ==========================================
@@ -698,7 +712,7 @@ export async function getProductAvailableStock(id: number, attributes?: Record<s
 
 export async function getFeaturedProducts(limit?: number) {
   const query = limit ? `?limit=${limit}` : ''
-  return apiClient.get(`/api/user/products/featured${query}`)
+  return publicApiClient.get(`/api/user/products/featured${query}`)
 }
 
 export async function getCategories() {
@@ -2051,7 +2065,22 @@ function createAPIErrorFromPayload(payload: unknown, fallbackMessage: string): a
   return apiError
 }
 
-function resolveFetchAPIURL(url: string): string {
+function normalizePluginRouteScope(scope: unknown): string {
+  return String(scope || '')
+    .trim()
+    .toLowerCase()
+}
+
+export function shouldUseDirectPublicPluginRouteAPI(
+  executeAPI?: Pick<PluginFrontendRouteExecuteAPI, 'scope' | 'requires_auth'>
+): boolean {
+  return normalizePluginRouteScope(executeAPI?.scope) === 'public' && !executeAPI?.requires_auth
+}
+
+function resolveFetchAPIURL(url: string, options?: { direct?: boolean }): string {
+  if (options?.direct) {
+    return resolvePublicAPIURL(url)
+  }
   return resolveClientAPIProxyURL(url)
 }
 
@@ -2100,7 +2129,8 @@ export async function executePluginRouteAction(
   if (allowedActions.length > 0 && !allowedActions.includes(action.toLowerCase())) {
     throw new Error('Plugin execute action is not declared for this page route')
   }
-  return apiClient.request({
+  const client = shouldUseDirectPublicPluginRouteAPI(executeAPI) ? publicApiClient : apiClient
+  return client.request({
     url,
     method: method as any,
     data,
@@ -2130,6 +2160,7 @@ export async function executePluginRouteActionStream(
   if (streamActions.length > 0 && !streamActions.includes(action.toLowerCase())) {
     throw new Error('Plugin stream action is not declared for this page route')
   }
+  const useDirectPublicAPI = shouldUseDirectPublicPluginRouteAPI(executeAPI)
 
   const headers = new Headers({
     Accept:
@@ -2148,7 +2179,7 @@ export async function executePluginRouteActionStream(
     headers.set(APP_LOCALE_HEADER, requestedLocale)
   }
 
-  const response = await fetch(resolveFetchAPIURL(url), {
+  const response = await fetch(resolveFetchAPIURL(url, { direct: useDirectPublicAPI }), {
     method: 'POST',
     headers,
     body: JSON.stringify(data || {}),
@@ -2752,12 +2783,12 @@ export async function resetLandingPage() {
 
 // 公开配置（无需登录）
 export async function getPublicConfig() {
-  return apiClient.get('/api/config/public')
+  return publicApiClient.get('/api/config/public')
 }
 
 // 获取页面注入脚本/样式（无需登录，通过path参数穿透CDN）
 export async function getPageInject(path: string) {
-  return apiClient.get(`/api/config/page-inject?path=${encodeURIComponent(path)}`)
+  return publicApiClient.get(`/api/config/page-inject?path=${encodeURIComponent(path)}`)
 }
 
 export interface PluginFrontendExtension {
@@ -2850,7 +2881,7 @@ export async function getPluginExtensions(
   query.append('slot', slot || 'default')
   appendPluginQueryParams(query, queryParams)
   appendPluginHostContext(query, hostContext)
-  return apiClient.get(`/api/config/plugin-extensions?${query.toString()}`, {
+  return publicApiClient.get(`/api/config/plugin-extensions?${query.toString()}`, {
     signal,
     headers: buildLocaleHeaders(locale),
   })
@@ -2882,7 +2913,7 @@ export async function getPluginExtensionsBatch(
   signal?: AbortSignal,
   locale?: string
 ) {
-  return apiClient.post(
+  return publicApiClient.post(
     '/api/config/plugin-extensions/batch',
     {
       path: path || '/',
@@ -2924,7 +2955,7 @@ export async function getPluginFrontendBootstrap(
   const query = new URLSearchParams()
   query.append('path', path || '/')
   appendPluginQueryParams(query, queryParams)
-  return apiClient.get(`/api/config/plugin-bootstrap?${query.toString()}`, {
+  return publicApiClient.get(`/api/config/plugin-bootstrap?${query.toString()}`, {
     signal,
     headers: buildLocaleHeaders(locale),
   })
