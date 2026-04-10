@@ -1,7 +1,8 @@
 import 'server-only'
 
-import { headers } from 'next/headers'
+import { cookies, headers } from 'next/headers'
 import { getConfiguredPublicAPIBaseURL } from '@/lib/api-base-url'
+import { AUTH_TOKEN_COOKIE_NAME } from '@/lib/auth'
 
 const APP_LOCALE_HEADER = 'X-AuraLogic-Locale'
 
@@ -56,7 +57,7 @@ function firstForwardedValue(value: string | null | undefined): string {
     .trim()
 }
 
-async function resolveServerPublicAPIBaseURL(): Promise<string> {
+async function resolveServerAPIBaseURL(): Promise<string> {
   const configuredBaseURL = normalizeBaseURL(getConfiguredPublicAPIBaseURL())
   if (configuredBaseURL) {
     return configuredBaseURL
@@ -85,6 +86,12 @@ async function resolveServerLocaleHeader(): Promise<string | undefined> {
   )
 }
 
+export async function getServerAuthToken(): Promise<string | undefined> {
+  const cookieStore = await cookies()
+  const token = cookieStore.get(AUTH_TOKEN_COOKIE_NAME)?.value?.trim()
+  return token || undefined
+}
+
 function extractServerErrorMessage(payload: any, statusText: string): string {
   return (
     payload?.message ||
@@ -96,16 +103,23 @@ function extractServerErrorMessage(payload: any, statusText: string): string {
   )
 }
 
-async function fetchServerPublicAPI(path: string) {
-  const [baseURL, locale] = await Promise.all([
-    resolveServerPublicAPIBaseURL(),
+async function fetchServerAPI(path: string, options?: { auth?: boolean }) {
+  const [baseURL, locale, authToken] = await Promise.all([
+    resolveServerAPIBaseURL(),
     resolveServerLocaleHeader(),
+    options?.auth ? getServerAuthToken() : Promise.resolve(undefined),
   ])
+  if (options?.auth && !authToken) {
+    const error: any = new Error('Authentication required')
+    error.status = 401
+    throw error
+  }
   const response = await fetch(joinBaseURL(baseURL, path), {
     cache: 'no-store',
     headers: {
       Accept: 'application/json',
       ...(locale ? { [APP_LOCALE_HEADER]: locale } : {}),
+      ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
     },
   })
 
@@ -121,11 +135,11 @@ async function fetchServerPublicAPI(path: string) {
 }
 
 export function getServerPublicConfig() {
-  return fetchServerPublicAPI('/api/config/public')
+  return fetchServerAPI('/api/config/public')
 }
 
 export function getServerProduct(productId: number) {
-  return fetchServerPublicAPI(`/api/user/products/${productId}`)
+  return fetchServerAPI(`/api/user/products/${productId}`)
 }
 
 export function getServerProductAvailableStock(
@@ -136,5 +150,13 @@ export function getServerProductAvailableStock(
   if (attributes && Object.keys(attributes).length > 0) {
     path += `?attributes=${encodeURIComponent(JSON.stringify(attributes))}`
   }
-  return fetchServerPublicAPI(path)
+  return fetchServerAPI(path)
+}
+
+export function getServerAnnouncement(announcementId: number) {
+  return fetchServerAPI(`/api/user/announcements/${announcementId}`, { auth: true })
+}
+
+export function getServerKnowledgeArticle(articleId: number) {
+  return fetchServerAPI(`/api/user/knowledge/articles/${articleId}`, { auth: true })
 }
