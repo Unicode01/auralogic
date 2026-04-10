@@ -2,27 +2,21 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import {
-  getUserPaymentMethods,
-  getOrderPaymentInfo,
-  selectOrderPaymentMethod,
-  PaymentCardResult,
-} from '@/lib/api'
+import { selectOrderPaymentMethod, PaymentCardResult } from '@/lib/api'
 import { resolveApiErrorMessage } from '@/lib/api-error'
+import {
+  getOrderPaymentInfoQueryKey,
+  getOrderPaymentInfoQueryOptions,
+  getUserPaymentMethodsQueryOptions,
+  mergeSelectedOrderPaymentInfo,
+} from '@/lib/payment-queries'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { SandboxedHtmlFrame } from '@/components/ui/sandboxed-html-frame'
 import { resolvePaymentMethodIcon } from '@/lib/payment-method-icons'
-import {
-  CreditCard,
-  Check,
-  Loader2,
-  ChevronDown,
-  ChevronUp,
-  AlertTriangle,
-} from 'lucide-react'
+import { CreditCard, Check, Loader2, ChevronDown, ChevronUp, AlertTriangle } from 'lucide-react'
 import { useLocale } from '@/hooks/use-locale'
 import { getTranslations } from '@/lib/i18n'
 import toast from 'react-hot-toast'
@@ -70,12 +64,7 @@ export function PaymentMethodCard({
     isError,
     error: paymentInfoError,
     refetch,
-  } = useQuery({
-    queryKey: ['orderPaymentInfo', orderNo],
-    queryFn: () => getOrderPaymentInfo(orderNo),
-    refetchOnWindowFocus: false,
-    staleTime: 1000 * 60 * 2,
-  })
+  } = useQuery(getOrderPaymentInfoQueryOptions(orderNo))
   const paymentInfoErrorRef = useRef('')
 
   useEffect(() => {
@@ -98,10 +87,8 @@ export function PaymentMethodCard({
 
   // 获取可用付款方式列表（用于更换时）
   const { data: methodsData, isLoading: methodsLoading } = useQuery({
-    queryKey: ['paymentMethods'],
-    queryFn: () => getUserPaymentMethods(),
+    ...getUserPaymentMethodsQueryOptions(),
     enabled: isChanging,
-    staleTime: 1000 * 60 * 5,
   })
 
   // 选择付款方式
@@ -113,17 +100,9 @@ export function PaymentMethodCard({
       // 直接用 select-payment 返回的数据更新缓存，避免再次调用 payment-info 触发重复的 JSVM 执行
       const selectedMethod = availableMethods.find((m: any) => m.id === selectedId)
       if (selectedMethod && response?.data) {
-        queryClient.setQueryData(['orderPaymentInfo', orderNo], {
-          data: {
-            selected: true,
-            payment_method: {
-              id: selectedMethod.id,
-              name: selectedMethod.name,
-              icon: selectedMethod.icon,
-            },
-            payment_card: response.data,
-          },
-        })
+        queryClient.setQueryData(getOrderPaymentInfoQueryKey(orderNo), (current: unknown) =>
+          mergeSelectedOrderPaymentInfo(current, selectedMethod, response.data)
+        )
       }
       toast.success(t.order.paymentMethodSelected)
       onPaymentSelected?.()
