@@ -1,8 +1,9 @@
 import axios, { AxiosInstance } from 'axios'
 import { getToken, clearToken } from './auth'
+import { getConfiguredPublicAPIBaseURL, resolvePublicAPIURL } from './api-base-url'
 import { stringifyPluginHostContext } from './plugin-frontend-routing'
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || ''
+const API_BASE_URL = getConfiguredPublicAPIBaseURL()
 const APP_LOCALE_STORAGE_KEY = 'auralogic_locale'
 const APP_LOCALE_HEADER = 'X-AuraLogic-Locale'
 
@@ -2045,10 +2046,7 @@ function createAPIErrorFromPayload(payload: unknown, fallbackMessage: string): a
 }
 
 function resolveFetchAPIURL(url: string): string {
-  if (/^https?:\/\//i.test(url)) {
-    return url
-  }
-  return `${API_BASE_URL}${url}`
+  return resolvePublicAPIURL(url)
 }
 
 export function pluginRouteShouldStream(

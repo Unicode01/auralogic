@@ -1,19 +1,44 @@
-import { Locale } from '@/hooks/use-locale'
+import type { Locale } from '@/hooks/use-locale'
 import { zhTranslations } from './zh'
-import { enTranslations } from './en'
 
 export type Translations = typeof zhTranslations
 
-const translations: Record<Locale, Translations> = {
+const translations: Partial<Record<Locale, Translations>> = {
     zh: zhTranslations,
-    en: enTranslations,
 }
 
 export function getTranslations(locale: Locale): Translations {
-    return translations[locale]
+    return translations[locale] || zhTranslations
 }
 
-export { zhTranslations, enTranslations }
+export async function loadTranslations(locale: Locale): Promise<Translations> {
+    const cached = translations[locale]
+    if (cached) {
+        return cached
+    }
+
+    let loaded: Translations
+    switch (locale) {
+        case 'en': {
+            const mod = await import('./en')
+            loaded = mod.enTranslations
+            break
+        }
+        case 'zh':
+        default:
+            loaded = zhTranslations
+            break
+    }
+
+    translations[locale] = loaded
+    return loaded
+}
+
+export function hasLoadedTranslations(locale: Locale): boolean {
+    return Boolean(translations[locale])
+}
+
+export { zhTranslations }
 
 type BizErrorDictionary = Record<string, string>
 

@@ -24,7 +24,7 @@ import {
   Tooltip,
   XAxis,
   YAxis,
-} from 'recharts'
+} from '@/components/ui/lazy-recharts'
 
 import { useTheme } from '@/contexts/theme-context'
 import { useLocale } from '@/hooks/use-locale'
