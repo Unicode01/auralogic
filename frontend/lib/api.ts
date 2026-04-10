@@ -495,15 +495,15 @@ export interface RegisterData {
 }
 
 export async function login(data: LoginData) {
-  return publicApiClient.post('/api/user/auth/login', data)
+  return apiClient.post('/api/user/auth/login', data)
 }
 
 export async function register(data: RegisterData) {
-  return publicApiClient.post('/api/user/auth/register', data)
+  return apiClient.post('/api/user/auth/register', data)
 }
 
 export async function verifyEmail(token: string) {
-  return publicApiClient.get(`/api/user/auth/verify-email?token=${token}`)
+  return apiClient.get(`/api/user/auth/verify-email?token=${token}`)
 }
 
 export async function resendVerification(email: string) {
@@ -515,7 +515,7 @@ export async function sendLoginCode(data: { email: string; captcha_token?: strin
 }
 
 export async function loginWithCode(data: { email: string; code: string }) {
-  return publicApiClient.post('/api/user/auth/login-with-code', data)
+  return apiClient.post('/api/user/auth/login-with-code', data)
 }
 
 export async function forgotPassword(data: { email: string; captcha_token?: string }) {
@@ -539,7 +539,7 @@ export async function loginWithPhoneCode(data: {
   phone_code?: string
   code: string
 }) {
-  return publicApiClient.post('/api/user/auth/login-with-phone-code', data)
+  return apiClient.post('/api/user/auth/login-with-phone-code', data)
 }
 
 export async function sendPhoneRegisterCode(data: {
@@ -558,7 +558,7 @@ export async function phoneRegister(data: {
   code: string
   captcha_token?: string
 }) {
-  return publicApiClient.post('/api/user/auth/phone-register', data)
+  return apiClient.post('/api/user/auth/phone-register', data)
 }
 
 export async function phoneForgotPassword(data: {
