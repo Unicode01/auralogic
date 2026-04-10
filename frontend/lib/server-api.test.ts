@@ -225,4 +225,55 @@ describe('server-api', () => {
       },
     })
   })
+
+  test('fetches protected order resources with the server auth cookie', async () => {
+    const fetchMock = jest
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ data: { order_no: 'ORD-1001', status: 'completed' } }), {
+          status: 200,
+          headers: {
+            'content-type': 'application/json',
+          },
+        })
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ data: { stocks: [{ id: 1, content: 'KEY-001' }] } }), {
+          status: 200,
+          headers: {
+            'content-type': 'application/json',
+          },
+        })
+      )
+    global.fetch = fetchMock as unknown as typeof fetch
+
+    const { module } = loadServerAPIModule({
+      requestHeaders: {
+        'accept-language': 'en-US,en;q=0.9',
+      },
+      cookieValues: {
+        [AUTH_TOKEN_COOKIE_NAME]: 'order-cookie-token',
+      },
+    })
+
+    await expect(module.getServerOrder('ORD-1001')).resolves.toEqual({
+      data: { order_no: 'ORD-1001', status: 'completed' },
+    })
+    await expect(module.getServerOrderVirtualProducts('ORD-1001')).resolves.toEqual({
+      data: { stocks: [{ id: 1, content: 'KEY-001' }] },
+    })
+
+    expect(fetchMock.mock.calls[0][0]).toBe('https://backend.example.com/api/user/orders/ORD-1001')
+    expect(fetchMock.mock.calls[1][0]).toBe(
+      'https://backend.example.com/api/user/orders/ORD-1001/virtual-products'
+    )
+    expect(fetchMock.mock.calls[0][1]).toEqual({
+      cache: 'no-store',
+      headers: {
+        Accept: 'application/json',
+        Authorization: 'Bearer order-cookie-token',
+        'X-AuraLogic-Locale': 'en',
+      },
+    })
+  })
 })
