@@ -1045,7 +1045,7 @@ EOF
   # 前端配置: .env.production
   # ---------------------------
   cat > "$WORK_DIR/docker-build/frontend.env.production" <<EOF
-NEXT_PUBLIC_API_URL=$APP_URL
+NEXT_PUBLIC_API_URL=
 NEXT_PUBLIC_APP_URL=$APP_URL
 NEXT_PUBLIC_GIT_COMMIT=$(cd "$WORK_DIR" && git rev-parse --short HEAD 2>/dev/null || echo "dev")
 EOF
@@ -1067,7 +1067,10 @@ const nextConfig = {
     reactStrictMode: true,
     env: {
         NEXT_PUBLIC_GIT_COMMIT: process.env.NEXT_PUBLIC_GIT_COMMIT || 'dev',
-        NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL || '$APP_URL',
+        // All-in-one Docker serves frontend and backend on the same origin.
+        // Keep the public API base URL empty so client requests stay relative
+        // and server-side proxy/SSR can resolve the active host from headers.
+        NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL || '',
         NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL || '$APP_URL',
     },
     async redirects() {
@@ -1168,7 +1171,6 @@ build_docker_image() {
   # 构建镜像
   GIT_COMMIT=$(cd "$WORK_DIR" && git rev-parse --short HEAD 2>/dev/null || echo "dev")
   docker build \
-    --build-arg NEXT_PUBLIC_API_URL="$APP_URL" \
     --build-arg BUILD_VERSION="$GIT_COMMIT" \
     -f docker-build/Dockerfile \
     -t "${IMAGE_NAME}:${IMAGE_TAG}" \
@@ -1406,7 +1408,7 @@ update_container() {
   cp "$(dirname "$0")/docker/entrypoint.sh" "$WORK_DIR/docker-build/entrypoint.sh"
 
   cat > "$WORK_DIR/docker-build/frontend.env.production" <<EOF
-NEXT_PUBLIC_API_URL=$APP_URL
+NEXT_PUBLIC_API_URL=
 NEXT_PUBLIC_APP_URL=$APP_URL
 NEXT_PUBLIC_GIT_COMMIT=$(cd "$WORK_DIR" && git rev-parse --short HEAD 2>/dev/null || echo "dev")
 EOF
@@ -1425,7 +1427,10 @@ const nextConfig = {
     reactStrictMode: true,
     env: {
         NEXT_PUBLIC_GIT_COMMIT: process.env.NEXT_PUBLIC_GIT_COMMIT || 'dev',
-        NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL || '$APP_URL',
+        // All-in-one Docker serves frontend and backend on the same origin.
+        // Keep the public API base URL empty so client requests stay relative
+        // and server-side proxy/SSR can resolve the active host from headers.
+        NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL || '',
         NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL || '$APP_URL',
     },
     async redirects() {
@@ -1470,7 +1475,6 @@ NEXTEOF
   cd "$WORK_DIR"
   GIT_COMMIT=$(cd "$WORK_DIR" && git rev-parse --short HEAD 2>/dev/null || echo "dev")
   docker build \
-    --build-arg NEXT_PUBLIC_API_URL="$APP_URL" \
     --build-arg BUILD_VERSION="$GIT_COMMIT" \
     -f docker-build/Dockerfile \
     -t "${IMAGE_NAME}:${IMAGE_TAG}" \
