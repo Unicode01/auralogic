@@ -1,4 +1,4 @@
-import { HydrationBoundary, QueryClient, dehydrate } from '@tanstack/react-query'
+import { HydrationBoundary, dehydrate } from '@tanstack/react-query'
 import ProductDetailClient from './product-detail-client'
 import {
   getProductQueryOptions,
@@ -9,7 +9,8 @@ import {
   getServerProduct,
   getServerProductAvailableStock,
   getServerPublicConfig,
-} from '@/lib/server-public-api'
+} from '@/lib/server-api'
+import { createServerQueryClient } from '@/lib/server-query-client'
 
 function isPositiveInteger(value: number): boolean {
   return Number.isFinite(value) && value > 0
@@ -18,14 +19,7 @@ function isPositiveInteger(value: number): boolean {
 export default async function ProductDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
   const productId = Number(id)
-  const queryClient = new QueryClient({
-    defaultOptions: {
-      queries: {
-        staleTime: 60 * 1000,
-        refetchOnWindowFocus: false,
-      },
-    },
-  })
+  const queryClient = createServerQueryClient()
 
   let allowGuestProductBrowse = false
 
