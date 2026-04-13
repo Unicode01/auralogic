@@ -220,6 +220,8 @@ var hookDefinitions = map[string]hookDefinition{
 	"order.complete.before":        newRestrictedHookDefinition("order.complete.before", hookPhaseBefore, "feedback"),
 	"order.create.after":           newReadOnlyHookDefinition("order.create.after", hookPhaseAfter),
 	"order.create.before":          newRestrictedHookDefinition("order.create.before", hookPhaseBefore, "items", "remark", "promo_code"),
+	"order.status.changed.after":   newReadOnlyHookDefinition("order.status.changed.after", hookPhaseAfter),
+	"payment.confirm.after":        newReadOnlyHookDefinition("payment.confirm.after", hookPhaseAfter),
 	"payment.confirm.before":       newRestrictedHookDefinition("payment.confirm.before", hookPhaseBefore, "transaction_id", "payment_result"),
 	"payment.market.install.after": newReadOnlyHookDefinition("payment.market.install.after", hookPhaseAfter),
 	"payment.market.install.before": newRestrictedHookDefinition(

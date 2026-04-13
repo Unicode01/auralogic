@@ -86,6 +86,14 @@ func injectPageContent(htmlContent, css, js string) string {
 	return result
 }
 
+func injectLandingPageSessionScript(htmlContent string) string {
+	sessionScript := `<script id="auralogic-session-bootstrap">(function(){try{var key='auralogic_session_id';var sid=localStorage.getItem(key);if(!sid){if(window.crypto&&typeof window.crypto.randomUUID==='function'){sid=window.crypto.randomUUID();}else{sid='web-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,12);}localStorage.setItem(key,sid);}window.__AURALOGIC_SESSION_ID__=sid;}catch(e){}})();</script>`
+	if strings.Contains(htmlContent, "</head>") {
+		return strings.Replace(htmlContent, "</head>", sessionScript+"\n</head>", 1)
+	}
+	return sessionScript + "\n" + htmlContent
+}
+
 // ServeLandingPage 公开 GET / — 渲染落地页
 func (h *LandingPageHandler) ServeLandingPage(c *gin.Context) {
 	var page models.LandingPage
@@ -130,6 +138,7 @@ func (h *LandingPageHandler) ServeLandingPage(c *gin.Context) {
 		return
 	}
 	renderedHTML := buf.String()
+	renderedHTML = injectLandingPageSessionScript(renderedHTML)
 	pageInjectCSS, pageInjectJS := collectPageInjectContent("/", h.cfg.Customization.PageRules)
 	renderedHTML = injectPageContent(renderedHTML, pageInjectCSS, pageInjectJS)
 
