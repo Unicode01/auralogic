@@ -168,6 +168,7 @@ func AutoMigrate() error {
 		&models.PluginDeployment{},
 		&models.PluginStorageEntry{},
 		&models.PluginSecretEntry{},
+		&models.PluginPageRuleEntry{},
 	); err != nil {
 		return fmt.Errorf("failed to migrate database: %w", err)
 	}

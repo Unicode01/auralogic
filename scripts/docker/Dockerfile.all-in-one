@@ -28,6 +28,8 @@ WORKDIR /build
 COPY frontend/package*.json ./
 RUN npm install --no-audit --no-fund
 COPY frontend/ ./
+# Never let local frontend env files leak into the all-in-one bundle.
+RUN find . -maxdepth 1 -type f -name '.env*' -delete
 # 覆盖前端配置为构建脚本生成的版本
 COPY docker-build/next.config.js ./next.config.js
 COPY docker-build/frontend.env.production ./.env.production

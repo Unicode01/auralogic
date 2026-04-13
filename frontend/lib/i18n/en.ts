@@ -2000,6 +2000,12 @@ export const enTranslations = {
     pluginPermissionHostPageRulePackWriteTitle: 'Host Page Rule Pack Write',
     pluginPermissionHostPageRulePackWriteDesc:
       'Allow the plugin to save or reset native page rules through Plugin.pageRulePack.save() and Plugin.pageRulePack.reset().',
+    pluginPermissionHostPluginPageRuleReadTitle: 'Plugin Page Rule Read',
+    pluginPermissionHostPluginPageRuleReadDesc:
+      'Allow the plugin to read its own managed page inject rules through Plugin.pageRules.list() and Plugin.pageRules.get().',
+    pluginPermissionHostPluginPageRuleWriteTitle: 'Plugin Page Rule Write',
+    pluginPermissionHostPluginPageRuleWriteDesc:
+      'Allow the plugin to create, update, delete, and activate its own managed page inject rules through Plugin.pageRules.upsert(), Plugin.pageRules.delete(), and Plugin.pageRules.reset().',
     pluginPermissionCustomTitle: 'Custom Permission',
     pluginPermissionCustomDesc: 'Custom permission declared by plugin.',
     pluginSummaryHooks: 'Hook Summary',

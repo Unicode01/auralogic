@@ -1191,7 +1191,14 @@ func openPluginManagerE2ETestDB(t *testing.T) *gorm.DB {
 	if err != nil {
 		t.Fatalf("open sqlite failed: %v", err)
 	}
-	if err := db.AutoMigrate(&models.Plugin{}, &models.PluginVersion{}, &models.PluginExecution{}, &models.PluginStorageEntry{}, &models.PluginSecretEntry{}); err != nil {
+	if err := db.AutoMigrate(
+		&models.Plugin{},
+		&models.PluginVersion{},
+		&models.PluginExecution{},
+		&models.PluginStorageEntry{},
+		&models.PluginSecretEntry{},
+		&models.PluginPageRuleEntry{},
+	); err != nil {
 		t.Fatalf("auto migrate failed: %v", err)
 	}
 	return db
