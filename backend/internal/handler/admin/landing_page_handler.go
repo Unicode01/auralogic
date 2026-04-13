@@ -139,8 +139,11 @@ func (h *LandingPageHandler) ServeLandingPage(c *gin.Context) {
 	}
 	renderedHTML := buf.String()
 	renderedHTML = injectLandingPageSessionScript(renderedHTML)
-	pageInjectCSS, pageInjectJS := collectPageInjectContent("/", h.cfg.Customization.PageRules)
-	renderedHTML = injectPageContent(renderedHTML, pageInjectCSS, pageInjectJS)
+	pageInjectPayload, resolveErr := service.ResolvePageInjectPayload(h.db, h.cfg, "/")
+	if resolveErr != nil {
+		log.Printf("landing page inject resolve failed: %v", resolveErr)
+	}
+	renderedHTML = injectPageContent(renderedHTML, pageInjectPayload.CSS, pageInjectPayload.JS)
 
 	// 异步记录 PageView
 	ip := utils.GetRealIP(c)

@@ -1301,7 +1301,8 @@ export const zhTranslations = {
     pluginWorkspaceJSHint:
       '已连接到插件实时 VM。可直接输入 JS 表达式，也可输入 help、ls、kv.list 等工作台命令，或用 :inspect 检查对象。',
     pluginWorkspaceJSRun: '执行 JS',
-    pluginWorkspaceJSTerminalPlaceholder: '输入 JS 表达式，或直接输入 help / ls / kv.list / :inspect',
+    pluginWorkspaceJSTerminalPlaceholder:
+      '输入 JS 表达式，或直接输入 help / ls / kv.list / :inspect',
     pluginWorkspaceJSInspectHint: '当前将执行对象检查，预览深度 {depth}。',
     pluginWorkspaceSearchSummary: '匹配 {matched} / {total}',
     pluginWorkspaceCompletionNoMatch: '当前输入位置没有可用的自动补全项。',
@@ -1850,6 +1851,12 @@ export const zhTranslations = {
     pluginPermissionHostPageRulePackWriteTitle: '宿主页面规则包写入',
     pluginPermissionHostPageRulePackWriteDesc:
       '允许插件通过 Plugin.pageRulePack.save() 与 Plugin.pageRulePack.reset() 保存或重置系统原生页面定向规则。',
+    pluginPermissionHostPluginPageRuleReadTitle: '插件页面规则读取',
+    pluginPermissionHostPluginPageRuleReadDesc:
+      '允许插件通过 Plugin.pageRules.list() 与 Plugin.pageRules.get() 读取自己托管的页面注入规则。',
+    pluginPermissionHostPluginPageRuleWriteTitle: '插件页面规则写入',
+    pluginPermissionHostPluginPageRuleWriteDesc:
+      '允许插件通过 Plugin.pageRules.upsert()、Plugin.pageRules.delete() 与 Plugin.pageRules.reset() 创建、更新、删除并启用自己托管的页面注入规则。',
     pluginPermissionCustomTitle: '自定义权限',
     pluginPermissionCustomDesc: '插件声明的自定义权限。',
     pluginSummaryHooks: 'Hook 摘要',

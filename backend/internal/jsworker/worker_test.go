@@ -2577,6 +2577,34 @@ module.exports.execute = function() {
 	}
 }
 
+func TestRunScriptFunctionWithStorageInjectsPluginPageRulesHelper(t *testing.T) {
+	responseData := runPluginMarketHostHelperTest(
+		t,
+		"host.plugin_page_rule.list",
+		[]string{"host.plugin_page_rule.read"},
+		`
+module.exports.execute = function() {
+  const result = Plugin.pageRules.list();
+  return {
+    success: true,
+    data: {
+      action: result.action
+    }
+  };
+};
+`,
+		func(req pluginipc.HostRequest) map[string]interface{} {
+			return map[string]interface{}{
+				"action": req.Action,
+			}
+		},
+	)
+
+	if got := interfaceToString(responseData["action"]); got != "host.plugin_page_rule.list" {
+		t.Fatalf("expected action host.plugin_page_rule.list, got %#v", responseData)
+	}
+}
+
 func TestRunScriptFunctionWithStorageInjectsPluginInventoryBindingHelper(t *testing.T) {
 	rootDir := t.TempDir()
 	scriptPath := filepath.Join(rootDir, "index.js")

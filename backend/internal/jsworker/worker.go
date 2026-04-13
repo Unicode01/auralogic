@@ -2838,6 +2838,7 @@ func registerGlobals(
 	invoiceTemplateObj := sharedHostRootObjects["invoiceTemplate"]
 	authBrandingObj := sharedHostRootObjects["authBranding"]
 	pageRulePackObj := sharedHostRootObjects["pageRulePack"]
+	pageRulesObj := sharedHostRootObjects["pageRules"]
 
 	_ = hostObj.Set("order", orderObj)
 	_ = hostObj.Set("user", userObj)
@@ -2858,6 +2859,7 @@ func registerGlobals(
 	_ = hostObj.Set("invoiceTemplate", invoiceTemplateObj)
 	_ = hostObj.Set("authBranding", authBrandingObj)
 	_ = hostObj.Set("pageRulePack", pageRulePackObj)
+	_ = hostObj.Set("pageRules", pageRulesObj)
 	_ = pluginObj.Set("host", hostObj)
 	_ = pluginObj.Set("order", orderObj)
 	_ = pluginObj.Set("user", userObj)
@@ -2878,6 +2880,7 @@ func registerGlobals(
 	_ = pluginObj.Set("invoiceTemplate", invoiceTemplateObj)
 	_ = pluginObj.Set("authBranding", authBrandingObj)
 	_ = pluginObj.Set("pageRulePack", pageRulePackObj)
+	_ = pluginObj.Set("pageRules", pageRulesObj)
 
 	fsObj := vm.NewObject()
 	_ = fsObj.Set("enabled", opts.allowFS)

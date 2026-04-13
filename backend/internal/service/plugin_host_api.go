@@ -449,6 +449,16 @@ func ExecutePluginHostActionWithRuntime(runtime *PluginHostRuntime, claims *Plug
 		return executePluginHostPageRulePackSave(runtime, params)
 	case "host.page_rule_pack.reset":
 		return executePluginHostPageRulePackReset(runtime, params)
+	case "host.plugin_page_rule.list":
+		return executePluginHostPluginPageRuleList(runtime, claims, params)
+	case "host.plugin_page_rule.get":
+		return executePluginHostPluginPageRuleGet(runtime, claims, params)
+	case "host.plugin_page_rule.upsert":
+		return executePluginHostPluginPageRuleUpsert(runtime, claims, params)
+	case "host.plugin_page_rule.delete":
+		return executePluginHostPluginPageRuleDelete(runtime, claims, params)
+	case "host.plugin_page_rule.reset":
+		return executePluginHostPluginPageRuleReset(runtime, claims, params)
 	default:
 		return nil, &PluginHostActionError{Status: http.StatusNotFound, Message: fmt.Sprintf("unsupported plugin host action %q", normalizedAction)}
 	}
