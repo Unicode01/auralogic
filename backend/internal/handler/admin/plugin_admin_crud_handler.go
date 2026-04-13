@@ -591,6 +591,9 @@ func (h *PluginHandler) DeletePlugin(c *gin.Context) {
 		if err := tx.Where("plugin_id = ?", id).Delete(&models.PluginSecretEntry{}).Error; err != nil {
 			return fmt.Errorf("delete plugin secrets failed: %w", err)
 		}
+		if err := tx.Where("plugin_id = ?", id).Delete(&models.PluginPageRuleEntry{}).Error; err != nil {
+			return fmt.Errorf("delete plugin page rules failed: %w", err)
+		}
 		if err := tx.Delete(&models.Plugin{}, id).Error; err != nil {
 			return fmt.Errorf("delete plugin failed: %w", err)
 		}

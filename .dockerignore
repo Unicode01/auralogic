@@ -17,6 +17,7 @@ backend/.cache
 frontend/.next
 frontend/node_modules
 frontend/coverage
+frontend/.env*
 plugins
 docs
 *.tar
