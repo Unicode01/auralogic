@@ -1480,6 +1480,7 @@ func (s *OrderService) SubmitShippingForm(formToken string, receiverInfo map[str
 		user              *models.User
 		isNewUser         bool
 		isResubmit        bool
+		statusHookBefore  models.OrderStatus
 		serialHookSerials []models.ProductSerial
 		serialTaskQueued  bool
 	)
@@ -1510,6 +1511,7 @@ func (s *OrderService) SubmitShippingForm(formToken string, receiverInfo map[str
 
 		beforeStatus := lockedOrder.Status
 		beforeUserID := lockedOrder.UserID
+		statusHookBefore = beforeStatus
 
 		lockedOrder.ReceiverName = receiverInfo["receiver_name"].(string)
 		if phoneCode, ok := receiverInfo["phone_code"].(string); ok {
@@ -1752,6 +1754,12 @@ func (s *OrderService) SubmitShippingForm(formToken string, receiverInfo map[str
 	if len(serialHookSerials) > 0 {
 		s.serialService.emitSerialCreateAfterHook(serialHookSerials, "order_service", order.UserID, order.ID)
 	}
+	EmitOrderStatusChangedAfterHookAsync(s.pluginManager, nil, order, statusHookBefore, order.Status, map[string]interface{}{
+		"source":         "shipping_form_submit",
+		"form_resubmit":  isResubmit,
+		"is_new_user":    isNewUser,
+		"trigger_action": "shipping_form.submit",
+	})
 
 	// 发送邮件通知
 	if s.emailService != nil {
@@ -1806,6 +1814,7 @@ func (s *OrderService) AssignTracking(orderID uint, trackingNo string) error {
 	if err != nil {
 		return normalizeOrderLookupError(err)
 	}
+	beforeStatus := order.Status
 
 	// 只有待发货状态的订单可以分配物流单号
 	if order.Status != models.OrderStatusPending {
@@ -1844,6 +1853,11 @@ func (s *OrderService) AssignTracking(orderID uint, trackingNo string) error {
 	if err := s.OrderRepo.Update(order); err != nil {
 		return err
 	}
+	EmitOrderStatusChangedAfterHookAsync(s.pluginManager, nil, order, beforeStatus, order.Status, map[string]interface{}{
+		"source":         "assign_tracking",
+		"trigger_action": "order.assign_tracking",
+		"tracking_no":    trackingNo,
+	})
 
 	// 发送发货邮件通知
 	if s.emailService != nil {
@@ -1860,6 +1874,7 @@ func (s *OrderService) DeliverVirtualStock(orderID uint, deliveredBy uint, markO
 	if err != nil {
 		return normalizeOrderLookupError(err)
 	}
+	beforeStatus := order.Status
 
 	// 只有待发货和已发货状态的订单可以手动发货虚拟商品
 	if order.Status != models.OrderStatusPending && order.Status != models.OrderStatusShipped {
@@ -1909,6 +1924,13 @@ func (s *OrderService) DeliverVirtualStock(orderID uint, deliveredBy uint, markO
 		if err := s.OrderRepo.Update(order); err != nil {
 			return err
 		}
+		EmitOrderStatusChangedAfterHookAsync(s.pluginManager, nil, order, beforeStatus, order.Status, map[string]interface{}{
+			"source":                "deliver_virtual_stock",
+			"trigger_action":        "order.deliver_virtual",
+			"delivered_by":          deliveredBy,
+			"mark_only_shipped":     markOnlyShipped,
+			"virtual_delivery_auto": true,
+		})
 
 		// 发送发货邮件通知
 		if s.emailService != nil {
@@ -1925,6 +1947,7 @@ func (s *OrderService) CompleteOrder(orderID uint, completedBy uint, feedback, a
 	if err != nil {
 		return normalizeOrderLookupError(err)
 	}
+	beforeStatus := order.Status
 
 	if order.Status != models.OrderStatusShipped {
 		return newOrderCompleteStatusInvalidError(order.Status)
@@ -1954,6 +1977,11 @@ func (s *OrderService) CompleteOrder(orderID uint, completedBy uint, feedback, a
 	if err := s.OrderRepo.Update(order); err != nil {
 		return err
 	}
+	EmitOrderStatusChangedAfterHookAsync(s.pluginManager, nil, order, beforeStatus, order.Status, map[string]interface{}{
+		"source":         "complete_order",
+		"trigger_action": "order.complete",
+		"completed_by":   completedBy,
+	})
 
 	// 发送完成邮件通知
 	if s.emailService != nil {
@@ -1969,6 +1997,7 @@ func (s *OrderService) RequestResubmit(orderID uint, reason string) (string, err
 	if err != nil {
 		return "", err
 	}
+	beforeStatus := order.Status
 
 	// generate新的表单Token
 	formToken := uuid.New().String()
@@ -1988,6 +2017,11 @@ func (s *OrderService) RequestResubmit(orderID uint, reason string) (string, err
 	if err := s.OrderRepo.Update(order); err != nil {
 		return "", err
 	}
+	EmitOrderStatusChangedAfterHookAsync(s.pluginManager, nil, order, beforeStatus, order.Status, map[string]interface{}{
+		"source":         "request_resubmit",
+		"trigger_action": "order.request_resubmit",
+		"reason":         reason,
+	})
 
 	// 发送重填通知邮件
 	if s.emailService != nil {
@@ -2136,6 +2170,11 @@ func (s *OrderService) CancelOrder(orderID uint, reason string) error {
 	}
 	syncUserPurchaseStatsTransitionBestEffort(s.OrderRepo, order.UserID, order.UserID, previousStatus, order.Status, order.Items, "cancel_order")
 	s.syncUserConsumptionStatusTransitionBestEffort(order.UserID, previousStatus, order.Status, order.TotalAmount, "cancel_order")
+	EmitOrderStatusChangedAfterHookAsync(s.pluginManager, nil, order, previousStatus, order.Status, map[string]interface{}{
+		"source":         "cancel_order",
+		"trigger_action": "order.cancel",
+		"reason":         reason,
+	})
 
 	// 发送Order取消邮件
 	if s.emailService != nil {
@@ -2220,6 +2259,11 @@ func (s *OrderService) MarkAsPaidWithOptions(orderID uint, options MarkAsPaidOpt
 		order.TotalAmount,
 		"mark_as_paid",
 	)
+	EmitOrderStatusChangedAfterHookAsync(s.pluginManager, nil, order, models.OrderStatusPendingPayment, finalizeResult.FinalStatus, map[string]interface{}{
+		"source":             "mark_as_paid",
+		"trigger_action":     "order.mark_paid",
+		"skip_auto_delivery": options.SkipAutoDelivery,
+	})
 
 	// 发送付款成功邮件
 	if s.emailService != nil {
