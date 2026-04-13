@@ -240,6 +240,7 @@ var pluginTestAllHookChecks = []string{
 	"hook.order.admin.delete.after",
 	"hook.order.auto_cancel.before",
 	"hook.order.auto_cancel.after",
+	"hook.order.status.changed.after",
 	"hook.payment.method.select.before",
 	"hook.payment.method.select.after",
 	"hook.payment.confirm.before",

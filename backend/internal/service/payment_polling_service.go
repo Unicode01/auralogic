@@ -976,6 +976,14 @@ func (s *PaymentPollingService) handlePaymentSuccess(task *PollingTask, order *m
 		"retry_count":       task.RetryCount,
 		"source":            normalizedSource,
 	}, hookExecCtx)
+	EmitOrderStatusChangedAfterHookAsync(s.pluginManager, hookExecCtx, order, models.OrderStatusPendingPayment, finalizeResult.FinalStatus, map[string]interface{}{
+		"source":            normalizedSource,
+		"trigger_action":    "payment.confirm",
+		"payment_method_id": pm.ID,
+		"payment_method":    pm.Name,
+		"transaction_id":    result.TransactionID,
+		"retry_count":       task.RetryCount,
+	})
 	s.emitPaymentHookAsync("payment.polling.succeeded", map[string]interface{}{
 		"order_id":          order.ID,
 		"order_no":          order.OrderNo,

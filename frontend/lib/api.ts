@@ -13,6 +13,8 @@ const PROXY_API_BASE_URL =
 const PUBLIC_API_BASE_URL = getConfiguredPublicAPIBaseURL()
 const APP_LOCALE_STORAGE_KEY = 'auralogic_locale'
 const APP_LOCALE_HEADER = 'X-AuraLogic-Locale'
+const APP_SESSION_STORAGE_KEY = 'auralogic_session_id'
+const APP_SESSION_HEADER = 'X-Session-ID'
 
 type AnyRecord = Record<string, any>
 
@@ -55,6 +57,43 @@ function buildLocaleHeaders(locale?: string): Record<string, string> | undefined
   return {
     [APP_LOCALE_HEADER]: resolved,
   }
+}
+
+function generateClientSessionID(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  return `web-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`
+}
+
+function resolveClientSessionID(): string | undefined {
+  if (typeof window === 'undefined') {
+    return undefined
+  }
+
+  const existingGlobal = String((window as any).__AURALOGIC_SESSION_ID__ || '').trim()
+  if (existingGlobal) {
+    return existingGlobal
+  }
+
+  try {
+    const stored = String(window.localStorage?.getItem(APP_SESSION_STORAGE_KEY) || '').trim()
+    if (stored) {
+      ;(window as any).__AURALOGIC_SESSION_ID__ = stored
+      return stored
+    }
+  } catch {
+    // ignore storage access failures
+  }
+
+  const next = generateClientSessionID()
+  ;(window as any).__AURALOGIC_SESSION_ID__ = next
+  try {
+    window.localStorage?.setItem(APP_SESSION_STORAGE_KEY, next)
+  } catch {
+    // ignore storage access failures
+  }
+  return next
 }
 
 export type ApiErrorInfo = {
@@ -219,6 +258,10 @@ function createAPIClient(baseURL: string, options?: APIClientOptions): AxiosInst
       const locale = resolveClientLocaleHeaderValue()
       if (locale) {
         config.headers[APP_LOCALE_HEADER] = locale
+      }
+      const sessionID = resolveClientSessionID()
+      if (sessionID) {
+        config.headers[APP_SESSION_HEADER] = sessionID
       }
       return config
     },
