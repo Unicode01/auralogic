@@ -1,4 +1,5 @@
 export const PAGE_INJECT_CACHE_KEY = 'auralogic-page-inject:v2'
+export const PAGE_INJECT_INVALIDATE_EVENT = 'auralogic:page-inject:invalidate'
 const LEGACY_PAGE_INJECT_CACHE_KEYS = ['auralogic-page-inject']
 
 export const DEFAULT_PAGE_INJECT_TTL = 5 * 60 * 1000
@@ -100,6 +101,16 @@ export function clearStoredPageInjectCache(
   for (const key of [PAGE_INJECT_CACHE_KEY, ...LEGACY_PAGE_INJECT_CACHE_KEYS]) {
     storage.removeItem(key)
   }
+}
+
+export function invalidatePageInjectRuntime(
+  storage: Pick<Storage, 'removeItem'> | undefined | null
+) {
+  clearStoredPageInjectCache(storage)
+  if (typeof window === 'undefined') {
+    return
+  }
+  window.dispatchEvent(new Event(PAGE_INJECT_INVALIDATE_EVENT))
 }
 
 export function readStoredPageInjectCache(
