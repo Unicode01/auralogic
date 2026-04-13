@@ -14,9 +14,12 @@ export const TOKEN_ISSUING_PATHS = new Set([
 export const FORWARDED_REQUEST_HEADERS = [
   'accept',
   'accept-language',
+  'cf-connecting-ip',
   'content-type',
   'user-agent',
   'x-auralogic-locale',
+  'x-forwarded-for',
+  'x-real-ip',
   'x-session-id',
 ]
 
