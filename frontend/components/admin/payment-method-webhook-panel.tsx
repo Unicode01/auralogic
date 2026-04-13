@@ -147,13 +147,10 @@ export function PaymentMethodWebhookPanel(props: PaymentMethodWebhookPanelProps)
     () => resolvePaymentMethodID(props.paymentMethodId),
     [props.paymentMethodId]
   )
-  const [resolvedBaseURL, setResolvedBaseURL] = useState(() => getPublicAbsoluteAPIBaseURL())
+  const [resolvedBaseURL, setResolvedBaseURL] = useState('')
   useEffect(() => {
-    if (resolvedBaseURL) {
-      return
-    }
     const nextBaseURL = getPublicAbsoluteAPIBaseURL()
-    if (nextBaseURL) {
+    if (nextBaseURL !== resolvedBaseURL) {
       setResolvedBaseURL(nextBaseURL)
     }
   }, [resolvedBaseURL])
