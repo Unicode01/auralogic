@@ -1669,6 +1669,10 @@ function resolvePluginPermissionTitle(
       return t.admin.pluginPermissionHostPageRulePackReadTitle
     case 'host.page_rule_pack.write':
       return t.admin.pluginPermissionHostPageRulePackWriteTitle
+    case 'host.plugin_page_rule.read':
+      return t.admin.pluginPermissionHostPluginPageRuleReadTitle
+    case 'host.plugin_page_rule.write':
+      return t.admin.pluginPermissionHostPluginPageRuleWriteTitle
     default:
       return String(permission.title || key || t.admin.pluginPermissionCustomTitle)
   }
@@ -1798,6 +1802,10 @@ function resolvePluginPermissionDescription(
       return t.admin.pluginPermissionHostPageRulePackReadDesc
     case 'host.page_rule_pack.write':
       return t.admin.pluginPermissionHostPageRulePackWriteDesc
+    case 'host.plugin_page_rule.read':
+      return t.admin.pluginPermissionHostPluginPageRuleReadDesc
+    case 'host.plugin_page_rule.write':
+      return t.admin.pluginPermissionHostPluginPageRuleWriteDesc
     default:
       return String(permission.description || t.admin.pluginPermissionCustomDesc)
   }

@@ -1,6 +1,6 @@
 'use client'
 
-import { type ReactNode } from 'react'
+import { Component, type ErrorInfo, type ReactNode } from 'react'
 
 import { useLocale } from '@/hooks/use-locale'
 import { PluginPageLink } from '@/components/plugins/plugin-page-link'
@@ -20,6 +20,8 @@ type PluginHTMLPresentation = {
 }
 
 type RenderedPluginExtension = {
+  key: string
+  label: string
   inline: boolean
   node: ReactNode
 }
@@ -38,6 +40,37 @@ type PluginExtensionListProps = {
   extensions: PluginFrontendExtension[]
   className?: string
   display?: 'stack' | 'inline'
+}
+
+class PluginExtensionErrorBoundary extends Component<
+  {
+    label: string
+    children: ReactNode
+  },
+  {
+    failed: boolean
+  }
+> {
+  state = {
+    failed: false,
+  }
+
+  static getDerivedStateFromError() {
+    return {
+      failed: true,
+    }
+  }
+
+  componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    console.error(`[AuraLogic] Plugin extension render failed: ${this.props.label}`, error, errorInfo)
+  }
+
+  render() {
+    if (this.state.failed) {
+      return null
+    }
+    return this.props.children
+  }
 }
 
 const pluginButtonTypes = new Set(['action_button', 'toolbar_button', 'button'])
@@ -144,6 +177,8 @@ function renderPluginButtonExtension(
 
   if (presentation.external) {
     return {
+      key,
+      label: presentation.label,
       inline: true,
       node: (
         <Button key={key} asChild size={presentation.size} variant={presentation.variant} className="gap-2">
@@ -160,6 +195,8 @@ function renderPluginButtonExtension(
   }
 
   return {
+    key,
+    label: presentation.label,
     inline: true,
     node: (
       <Button key={key} asChild size={presentation.size} variant={presentation.variant} className="gap-2">
@@ -191,12 +228,9 @@ function renderExtension(
     if (!content) {
       return null
     }
-    const htmlMode = String(extension.metadata?.html_mode || '')
-      .trim()
-      .toLowerCase()
-    const renderedHtml = preparePluginHtmlForRender(content, {
-      trusted: htmlMode === 'trusted',
-    })
+    // Slot extensions render inside host pages, so they are always sanitized.
+    // Trusted HTML remains reserved for dedicated plugin pages.
+    const renderedHtml = preparePluginHtmlForRender(content)
     const htmlPresentation = normalizePluginHTMLPresentation(
       extension.data && typeof extension.data === 'object' ? extension.data : undefined
     )
@@ -206,6 +240,8 @@ function renderExtension(
     }
     if (htmlPresentation.chrome === 'bare') {
       return {
+        key,
+        label: title || key,
         inline: false,
         node: (
           <div key={key} className="space-y-2">
@@ -220,6 +256,8 @@ function renderExtension(
       }
     }
     return {
+      key,
+      label: title || key,
       inline: false,
       node: (
         <Card key={key}>
@@ -232,6 +270,8 @@ function renderExtension(
   }
 
   return {
+    key,
+    label: title || key,
     inline: false,
     node: (
       <PluginStructuredBlock
@@ -247,6 +287,39 @@ function renderExtension(
   }
 }
 
+function resolvePluginExtensionLabel(
+  extension: PluginFrontendExtension,
+  index: number,
+  locale?: string
+): string {
+  return (
+    manifestString(extension as Record<string, unknown>, 'title', locale) ||
+    manifestString(extension as Record<string, unknown>, 'content', locale) ||
+    extension.id ||
+    `${extension.plugin_id || 'plugin'}-${extension.type || 'block'}-${index}`
+  )
+}
+
+function renderExtensionSafely(
+  extension: PluginFrontendExtension,
+  index: number,
+  locale?: string
+): RenderedPluginExtension | null {
+  try {
+    return renderExtension(extension, index, locale)
+  } catch (error) {
+    console.error(
+      `[AuraLogic] Plugin extension normalize failed: ${resolvePluginExtensionLabel(
+        extension,
+        index,
+        locale
+      )}`,
+      error
+    )
+    return null
+  }
+}
+
 export function PluginExtensionList({
   extensions,
   className,
@@ -259,7 +332,7 @@ export function PluginExtensionList({
   }
 
   const renderedExtensions = extensions
-    .map((extension, index) => renderExtension(extension, index, locale))
+    .map((extension, index) => renderExtensionSafely(extension, index, locale))
     .filter((item): item is RenderedPluginExtension => item !== null)
 
   if (renderedExtensions.length === 0) {
@@ -273,13 +346,29 @@ export function PluginExtensionList({
       <div className={cn(stackedItems.length > 0 ? 'space-y-3' : undefined, className)}>
         {inlineItems.length > 0 ? (
           <div className="flex flex-wrap items-center gap-2">
-            {inlineItems.map((item) => item.node)}
+            {inlineItems.map((item) => (
+              <PluginExtensionErrorBoundary key={item.key} label={item.label}>
+                {item.node}
+              </PluginExtensionErrorBoundary>
+            ))}
           </div>
         ) : null}
-        {stackedItems.map((item) => item.node)}
+        {stackedItems.map((item) => (
+          <PluginExtensionErrorBoundary key={item.key} label={item.label}>
+            {item.node}
+          </PluginExtensionErrorBoundary>
+        ))}
       </div>
     )
   }
 
-  return <div className={cn('space-y-3', className)}>{renderedExtensions.map((item) => item.node)}</div>
+  return (
+    <div className={cn('space-y-3', className)}>
+      {renderedExtensions.map((item) => (
+        <PluginExtensionErrorBoundary key={item.key} label={item.label}>
+          {item.node}
+        </PluginExtensionErrorBoundary>
+      ))}
+    </div>
+  )
 }

@@ -166,6 +166,36 @@ var sharedActionDefinitions = []ActionDefinition{
 		OperatorPermissions: []string{"page_rule_pack.edit"},
 		JSImportPath:        []string{"pageRulePack", "reset"},
 	},
+	{
+		Action:              "host.plugin_page_rule.list",
+		PluginPermissions:   []string{"host.plugin_page_rule.read"},
+		OperatorPermissions: []string{"plugin.view"},
+		JSImportPath:        []string{"pageRules", "list"},
+	},
+	{
+		Action:              "host.plugin_page_rule.get",
+		PluginPermissions:   []string{"host.plugin_page_rule.read"},
+		OperatorPermissions: []string{"plugin.view"},
+		JSImportPath:        []string{"pageRules", "get"},
+	},
+	{
+		Action:              "host.plugin_page_rule.upsert",
+		PluginPermissions:   []string{"host.plugin_page_rule.write"},
+		OperatorPermissions: []string{"plugin.edit"},
+		JSImportPath:        []string{"pageRules", "upsert"},
+	},
+	{
+		Action:              "host.plugin_page_rule.delete",
+		PluginPermissions:   []string{"host.plugin_page_rule.write"},
+		OperatorPermissions: []string{"plugin.edit"},
+		JSImportPath:        []string{"pageRules", "delete"},
+	},
+	{
+		Action:              "host.plugin_page_rule.reset",
+		PluginPermissions:   []string{"host.plugin_page_rule.write"},
+		OperatorPermissions: []string{"plugin.edit"},
+		JSImportPath:        []string{"pageRules", "reset"},
+	},
 }
 
 var sharedActionDefinitionIndex = buildActionDefinitionIndex(sharedActionDefinitions)

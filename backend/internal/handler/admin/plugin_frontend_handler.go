@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	pathpkg "path"
@@ -1114,6 +1115,11 @@ func (h *PluginHandler) handleFrontendBootstrap(c *gin.Context, area string, pub
 		execUserID,
 	)
 	if err != nil {
+		if fallback, ok := resolveFrontendBootstrapErrorFallback(resolvedArea, path, publicEndpoint, err); ok {
+			response.Success(c, fallback)
+			return
+		}
+		log.Printf("Plugin frontend bootstrap load failed (area=%s path=%s public=%t): %v", resolvedArea, path, publicEndpoint, err)
 		h.respondPluginError(c, http.StatusInternalServerError, "Failed to load plugin frontend bootstrap")
 		return
 	}
@@ -1476,6 +1482,28 @@ func buildEmptyFrontendBootstrapPayload(area string, path string) frontendBootst
 		Menus:  []frontendBootstrapMenuItem{},
 		Routes: []frontendBootstrapRouteItem{},
 	}
+}
+
+func resolveFrontendBootstrapErrorFallback(
+	area string,
+	path string,
+	publicEndpoint bool,
+	err error,
+) (frontendBootstrapResponseData, bool) {
+	if err == nil || !publicEndpoint {
+		return frontendBootstrapResponseData{}, false
+	}
+
+	normalizedArea := normalizeFrontendBootstrapArea(area)
+	normalizedPath := normalizeFrontendBootstrapPath(path)
+	log.Printf(
+		"Plugin frontend bootstrap degraded to empty payload (area=%s path=%s public=%t): %v",
+		normalizedArea,
+		normalizedPath,
+		publicEndpoint,
+		err,
+	)
+	return buildEmptyFrontendBootstrapPayload(normalizedArea, normalizedPath), true
 }
 
 func (h *PluginHandler) buildFrontendBootstrapPayload(

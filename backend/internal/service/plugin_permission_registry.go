@@ -65,6 +65,8 @@ const (
 	PluginPermissionHostAuthBrandingWrite           = "host.auth_branding.write"
 	PluginPermissionHostPageRulePackRead            = "host.page_rule_pack.read"
 	PluginPermissionHostPageRulePackWrite           = "host.page_rule_pack.write"
+	PluginPermissionHostPluginPageRuleRead          = "host.plugin_page_rule.read"
+	PluginPermissionHostPluginPageRuleWrite         = "host.plugin_page_rule.write"
 )
 
 type PluginPermissionDefinition struct {
@@ -430,6 +432,18 @@ var pluginPermissionDefinitions = map[string]PluginPermissionDefinition{
 		Key:            PluginPermissionHostPageRulePackWrite,
 		Title:          "Host Page Rule Pack Write",
 		Description:    "Allow the plugin to save or reset native page rules through Plugin.pageRulePack.save() and Plugin.pageRulePack.reset().",
+		DefaultGranted: false,
+	},
+	PluginPermissionHostPluginPageRuleRead: {
+		Key:            PluginPermissionHostPluginPageRuleRead,
+		Title:          "Plugin Page Rule Read",
+		Description:    "Allow the plugin to read its own injected page rules through Plugin.pageRules.list() and Plugin.pageRules.get().",
+		DefaultGranted: false,
+	},
+	PluginPermissionHostPluginPageRuleWrite: {
+		Key:            PluginPermissionHostPluginPageRuleWrite,
+		Title:          "Plugin Page Rule Write",
+		Description:    "Allow the plugin to create, update, delete, and activate its own injected page rules through Plugin.pageRules.upsert(), Plugin.pageRules.delete(), and Plugin.pageRules.reset().",
 		DefaultGranted: false,
 	},
 }
