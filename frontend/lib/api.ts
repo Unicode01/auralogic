@@ -10,7 +10,6 @@ import { stringifyPluginHostContext } from './plugin-frontend-routing'
 
 const PROXY_API_BASE_URL =
   typeof window === 'undefined' ? getConfiguredPublicAPIBaseURL() : getClientAPIProxyBaseURL()
-const PUBLIC_API_BASE_URL = getConfiguredPublicAPIBaseURL()
 const APP_LOCALE_STORAGE_KEY = 'auralogic_locale'
 const APP_LOCALE_HEADER = 'X-AuraLogic-Locale'
 const APP_SESSION_STORAGE_KEY = 'auralogic_session_id'
@@ -304,8 +303,8 @@ export const apiClient: AxiosInstance = createAPIClient(PROXY_API_BASE_URL, {
   clearTokenOnUnauthorized: true,
 })
 
-// 公开接口优先直连后端 /api，减少额外代理跳数。
-export const publicApiClient: AxiosInstance = createAPIClient(PUBLIC_API_BASE_URL)
+// 公开接口同样走 Next 代理，保留可选鉴权、会话转发与统一语义。
+export const publicApiClient: AxiosInstance = createAPIClient(PROXY_API_BASE_URL)
 
 // ==========================================
 // 库存管理API
@@ -2117,13 +2116,14 @@ function normalizePluginRouteScope(scope: unknown): string {
 export function shouldUseDirectPublicPluginRouteAPI(
   executeAPI?: Pick<PluginFrontendRouteExecuteAPI, 'scope' | 'requires_auth'>
 ): boolean {
-  return normalizePluginRouteScope(executeAPI?.scope) === 'public' && !executeAPI?.requires_auth
+  // Public plugin/config routes can still depend on optional auth and session context.
+  // Keep them on the Next proxy so auth cookies are translated into Authorization.
+  void executeAPI
+  return false
 }
 
 function resolveFetchAPIURL(url: string, options?: { direct?: boolean }): string {
-  if (options?.direct) {
-    return resolvePublicAPIURL(url)
-  }
+  void options
   return resolveClientAPIProxyURL(url)
 }
 
@@ -2172,7 +2172,8 @@ export async function executePluginRouteAction(
   if (allowedActions.length > 0 && !allowedActions.includes(action.toLowerCase())) {
     throw new Error('Plugin execute action is not declared for this page route')
   }
-  const client = shouldUseDirectPublicPluginRouteAPI(executeAPI) ? publicApiClient : apiClient
+  const client =
+    normalizePluginRouteScope(executeAPI?.scope) === 'public' ? publicApiClient : apiClient
   return client.request({
     url,
     method: method as any,
