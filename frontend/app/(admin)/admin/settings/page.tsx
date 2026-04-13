@@ -77,6 +77,7 @@ import {
 import { LazyCodeEditor } from '@/components/ui/lazy-code-editor'
 import { useTheme } from '@/contexts/theme-context'
 import { resolveApiErrorMessage } from '@/lib/api-error'
+import { clearStoredPageInjectCache } from '@/lib/page-inject'
 import { usePluginBootstrapQuery } from '@/lib/plugin-bootstrap-query'
 import {
   buildAdminMarketPluginPageHref,
@@ -546,7 +547,7 @@ export default function SettingsPage() {
       queryClient.invalidateQueries({ queryKey: ['settings'] })
       queryClient.invalidateQueries({ queryKey: ['publicConfig'] })
       try {
-        localStorage.removeItem('auralogic-page-inject')
+        clearStoredPageInjectCache(localStorage)
         localStorage.removeItem('auth_branding_cache')
         localStorage.removeItem('auralogic_app_name')
         localStorage.removeItem('auralogic_primary_color')
@@ -763,7 +764,7 @@ export default function SettingsPage() {
         }
         queryClient.invalidateQueries({ queryKey: ['publicConfig'] })
         try {
-          localStorage.removeItem('auralogic-page-inject')
+          clearStoredPageInjectCache(localStorage)
         } catch {}
       }
 

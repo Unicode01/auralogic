@@ -5,6 +5,7 @@ const PLUGIN_HTML_FORBID_TAGS = [
   'iframe',
   'object',
   'embed',
+  'style',
   'link',
   'meta',
   'base',

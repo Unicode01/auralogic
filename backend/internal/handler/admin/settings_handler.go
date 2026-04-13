@@ -13,7 +13,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -1707,57 +1706,18 @@ func (h *SettingsHandler) GetPageInject(c *gin.Context) {
 	if pagePath == "" {
 		pagePath = "/"
 	}
-
-	type matchedPageRule struct {
-		Name      string `json:"name,omitempty"`
-		Pattern   string `json:"pattern,omitempty"`
-		MatchType string `json:"match_type,omitempty"`
-		CSS       string `json:"css,omitempty"`
-		JS        string `json:"js,omitempty"`
-	}
-
-	var css, js string
-	matchedRules := make([]matchedPageRule, 0)
-	for _, rule := range h.cfg.Customization.PageRules {
-		if !rule.Enabled {
-			continue
-		}
-
-		matched := false
-		if rule.MatchType == "regex" {
-			re, err := regexp.Compile(rule.Pattern)
-			if err != nil {
-				continue
-			}
-			matched = re.MatchString(pagePath)
-		} else {
-			matched = pagePath == rule.Pattern
-		}
-
-		if matched {
-			if rule.CSS != "" {
-				css += rule.CSS + "\n"
-			}
-			if rule.JS != "" {
-				js += rule.JS + "\n"
-			}
-			matchedRules = append(matchedRules, matchedPageRule{
-				Name:      rule.Name,
-				Pattern:   rule.Pattern,
-				MatchType: rule.MatchType,
-				CSS:       rule.CSS,
-				JS:        rule.JS,
-			})
-		}
+	payload, err := service.ResolvePageInjectPayload(h.db, h.cfg, pagePath)
+	if err != nil {
+		log.Printf("page inject resolve failed for %s: %v", pagePath, err)
 	}
 
 	c.Header("Cache-Control", "public, max-age=300")
 	response.Success(c, gin.H{
-		"path":          pagePath,
-		"css":           css,
-		"js":            js,
-		"rules":         matchedRules,
-		"matched_count": len(matchedRules),
+		"path":          payload.Path,
+		"css":           payload.CSS,
+		"js":            payload.JS,
+		"rules":         payload.Rules,
+		"matched_count": payload.MatchedCount,
 	})
 }
 

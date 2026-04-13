@@ -14,6 +14,15 @@ describe('plugin-html-sanitize', () => {
     expect(rendered).toContain('height: auto')
   })
 
+  it('removes style tags in sanitize mode to avoid host-page css pollution', () => {
+    const rendered = preparePluginHtmlForRender(
+      '<div><style>svg * { fill: transparent !important; }</style><p>hello</p></div>'
+    )
+
+    expect(rendered).not.toContain('<style')
+    expect(rendered).toContain('<p>hello</p>')
+  })
+
   it('preserves explicit image loading attributes while appending responsive styles', () => {
     const rendered = preparePluginHtmlForRender(
       '<img src="/demo.png" loading="eager" decoding="sync" style="border-radius: 12px" />',
