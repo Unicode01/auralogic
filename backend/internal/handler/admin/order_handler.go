@@ -976,6 +976,15 @@ func (h *OrderHandler) RefundOrder(c *gin.Context) {
 			"source":         "admin_api",
 			"completed_at":   time.Now().Format(time.RFC3339),
 		}
+		service.EmitOrderStatusChangedAfterHookAsync(h.pluginManager, hookExecCtx, order, beforeStatus, nextStatus, map[string]interface{}{
+			"source":          "admin_api",
+			"trigger_action":  "order.admin.refund",
+			"admin_id":        adminID,
+			"reason":          req.Reason,
+			"transaction_id":  refundResult.TransactionID,
+			"refund_pending":  refundResult.Pending,
+			"payment_message": refundResult.Message,
+		})
 		go func(execCtx *service.ExecutionContext, payload map[string]interface{}, aid uint, orderNo string) {
 			_, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
 				Hook:    "order.admin.refund.after",
@@ -1173,6 +1182,13 @@ func (h *OrderHandler) ConfirmRefund(c *gin.Context) {
 			"source":         "admin_api",
 			"completed_at":   now.Format(time.RFC3339),
 		}
+		service.EmitOrderStatusChangedAfterHookAsync(h.pluginManager, hookExecCtx, order, beforeStatus, models.OrderStatusRefunded, map[string]interface{}{
+			"source":         "admin_api",
+			"trigger_action": "order.admin.refund_finalize",
+			"admin_id":       adminID,
+			"remark":         req.Remark,
+			"transaction_id": req.TransactionID,
+		})
 		go func(execCtx *service.ExecutionContext, payload map[string]interface{}, aid uint, orderNo string) {
 			_, hookErr := h.pluginManager.ExecuteHook(service.HookExecutionRequest{
 				Hook:    "order.admin.refund_finalize.after",

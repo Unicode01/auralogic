@@ -43,11 +43,7 @@ export const metadata: Metadata = {
   },
 }
 
-export default function RootLayout({
-  children,
-}: {
-  children: React.ReactNode
-}) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   // 防止白屏闪烁的脚本
   const themeScript = `
     (function() {
@@ -57,7 +53,7 @@ export default function RootLayout({
         document.documentElement.classList.add(isDark ? 'dark' : 'light');
       } catch (e) {}
     })();
-  `;
+  `
 
   // 防止语言属性闪烁的脚本
   const localeScript = `
@@ -71,7 +67,7 @@ export default function RootLayout({
         window.__LOCALE__ = locale;
       } catch (e) {}
     })();
-  `;
+  `
 
   // 预加载 app_name 并设置 document.title + 预加载主题色避免蓝色闪烁
   const appNameScript = `
@@ -97,13 +93,35 @@ export default function RootLayout({
         if (bc) window.__AUTH_BRAND__ = JSON.parse(bc);
       } catch (e) {}
     })();
-  `;
+  `
+
+  const sessionScript = `
+    (function() {
+      try {
+        var key = 'auralogic_session_id';
+        var sid = localStorage.getItem(key);
+        if (!sid) {
+          if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+            sid = window.crypto.randomUUID();
+          } else {
+            sid = 'web-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 12);
+          }
+          localStorage.setItem(key, sid);
+        }
+        window.__AURALOGIC_SESSION_ID__ = sid;
+      } catch (e) {}
+    })();
+  `
 
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
         <link rel="icon" href="/favicon.ico" sizes="any" />
-        <script dangerouslySetInnerHTML={{ __html: themeScript + localeScript + appNameScript }} />
+        <script
+          dangerouslySetInnerHTML={{
+            __html: themeScript + localeScript + appNameScript + sessionScript,
+          }}
+        />
       </head>
       <body className={inter.className}>
         <Providers>
@@ -139,4 +157,3 @@ export default function RootLayout({
     </html>
   )
 }
-
