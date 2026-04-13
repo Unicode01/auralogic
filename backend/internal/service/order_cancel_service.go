@@ -374,6 +374,12 @@ func (s *OrderCancelService) cancelOrder(order *models.Order, autoCancelHours in
 		"created_at": order.CreatedAt.Format(time.RFC3339),
 		"reason":     "pending_payment_timeout",
 	})
+	EmitOrderStatusChangedAfterHookAsync(s.pluginManager, hookExecCtx, order, beforeStatus, models.OrderStatusCancelled, map[string]interface{}{
+		"source":            "order_auto_cancel",
+		"trigger_action":    "order.auto_cancel",
+		"auto_cancel_hours": autoCancelHours,
+		"admin_remark":      adminRemark,
+	})
 
 	if s.pluginManager != nil {
 		afterPayload := map[string]interface{}{
