@@ -72,6 +72,7 @@ function loadAPIModule() {
   jest.doMock('./api-base-url', () => ({
     getClientAPIProxyBaseURL: () => '/api/_backend',
     getConfiguredPublicAPIBaseURL: () => '',
+    getEffectivePublicAPIBaseURL: () => '',
     resolveClientAPIProxyURL: (path: string) => `/api/_backend${path}`,
     resolvePublicAPIURL: (path: string) => path,
   }))
@@ -104,8 +105,8 @@ describe('api routing', () => {
     jest.clearAllMocks()
   })
 
-  test('routes non-token public helpers through the direct public client and keeps session-establishing auth calls proxied', async () => {
-    const { module, proxyClient, publicClient } = loadAPIModule()
+  test('routes public helpers through the proxied public client and keeps session-establishing auth calls proxied', async () => {
+    const { module, proxyClient, publicClient, axiosCreateMock } = loadAPIModule()
 
     await module.getCaptcha()
     await module.getPublicConfig()
@@ -127,6 +128,14 @@ describe('api routing', () => {
     await module.verifyEmail('verify-token')
     await module.logout()
 
+    expect(axiosCreateMock).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ baseURL: '/api/_backend' })
+    )
+    expect(axiosCreateMock).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ baseURL: '/api/_backend' })
+    )
     expect(publicClient.get).toHaveBeenCalledWith('/api/user/auth/captcha')
     expect(publicClient.get).toHaveBeenCalledWith('/api/config/public')
     expect(publicClient.get).toHaveBeenCalledWith('/api/form/countries')
@@ -171,7 +180,7 @@ describe('api routing', () => {
     expect(publicClient.post).not.toHaveBeenCalledWith('/api/user/auth/login', expect.anything())
   })
 
-  test('routes public plugin execute actions directly and protected ones through the proxy client', async () => {
+  test('routes public and protected plugin execute actions through the proxy client family', async () => {
     const { module, proxyClient, publicClient } = loadAPIModule()
 
     await module.executePluginRouteAction(
@@ -196,7 +205,7 @@ describe('api routing', () => {
       }
     )
 
-    expect(module.shouldUseDirectPublicPluginRouteAPI({ scope: 'public' })).toBe(true)
+    expect(module.shouldUseDirectPublicPluginRouteAPI({ scope: 'public' })).toBe(false)
     expect(module.shouldUseDirectPublicPluginRouteAPI({ scope: 'public', requires_auth: true })).toBe(
       false
     )
@@ -214,7 +223,7 @@ describe('api routing', () => {
     })
   })
 
-  test('routes plugin execute streams to direct /api only for public unauthenticated routes', async () => {
+  test('routes plugin execute streams through the proxy path for both public and protected routes', async () => {
     const fetchMock = jest
       .fn()
       .mockResolvedValueOnce(createFetchJSONResponse({ ok: true }))
@@ -247,7 +256,7 @@ describe('api routing', () => {
 
     expect(fetchMock).toHaveBeenNthCalledWith(
       1,
-      '/api/config/plugins/demo/execute/stream',
+      '/api/_backend/api/config/plugins/demo/execute/stream',
       expect.objectContaining({
         credentials: 'same-origin',
         method: 'POST',
