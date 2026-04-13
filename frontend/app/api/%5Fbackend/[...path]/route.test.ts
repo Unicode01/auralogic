@@ -54,7 +54,10 @@ describe('backend proxy route', () => {
       headers: {
         'content-type': 'application/json',
         cookie: 'theme=dark',
+        'cf-connecting-ip': '203.0.113.8',
+        'x-forwarded-for': '203.0.113.8, 10.0.0.2',
         'x-forwarded-proto': 'https',
+        'x-real-ip': '203.0.113.8',
         'x-session-id': 'client-session',
       },
       body: JSON.stringify({ email: 'admin@example.com', password: 'secret' }),
@@ -69,6 +72,9 @@ describe('backend proxy route', () => {
     const upstreamInit = fetchMock.mock.calls[0][1] as RequestInit
     const upstreamHeaders = upstreamInit.headers as Headers
     expect(upstreamHeaders.get('content-type')).toBe('application/json')
+    expect(upstreamHeaders.get('cf-connecting-ip')).toBe('203.0.113.8')
+    expect(upstreamHeaders.get('x-forwarded-for')).toBe('203.0.113.8, 10.0.0.2')
+    expect(upstreamHeaders.get('x-real-ip')).toBe('203.0.113.8')
     expect(upstreamHeaders.get('x-session-id')).toBe('client-session')
     expect(upstreamHeaders.get('cookie')).toBeNull()
 

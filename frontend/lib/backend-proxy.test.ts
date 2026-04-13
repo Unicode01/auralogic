@@ -52,8 +52,11 @@ describe('backend-proxy helpers', () => {
       headers: {
         accept: 'application/json',
         'accept-language': 'zh-CN',
+        'cf-connecting-ip': '203.0.113.8',
         'content-type': 'application/json',
         cookie: 'ignored=1',
+        'x-forwarded-for': '203.0.113.8, 10.0.0.2',
+        'x-real-ip': '203.0.113.8',
         'x-session-id': 'session-123',
       },
     })
@@ -61,7 +64,10 @@ describe('backend-proxy helpers', () => {
     const forwardedRequestHeaders = copyProxyRequestHeaders(request, 'token-123')
     expect(forwardedRequestHeaders.get('accept')).toBe('application/json')
     expect(forwardedRequestHeaders.get('accept-language')).toBe('zh-CN')
+    expect(forwardedRequestHeaders.get('cf-connecting-ip')).toBe('203.0.113.8')
     expect(forwardedRequestHeaders.get('content-type')).toBe('application/json')
+    expect(forwardedRequestHeaders.get('x-forwarded-for')).toBe('203.0.113.8, 10.0.0.2')
+    expect(forwardedRequestHeaders.get('x-real-ip')).toBe('203.0.113.8')
     expect(forwardedRequestHeaders.get('x-session-id')).toBe('session-123')
     expect(forwardedRequestHeaders.get('authorization')).toBe('Bearer token-123')
     expect(forwardedRequestHeaders.get('cookie')).toBeNull()
