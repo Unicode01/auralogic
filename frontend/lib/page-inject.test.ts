@@ -1,8 +1,10 @@
 import {
   buildPageInjectRuntimeScript,
   clearStoredPageInjectCache,
+  invalidatePageInjectRuntime,
   isSamePageInjectPayload,
   PAGE_INJECT_CACHE_KEY,
+  PAGE_INJECT_INVALIDATE_EVENT,
   readStoredPageInjectCache,
   writeStoredPageInjectCache,
 } from '@/lib/page-inject'
@@ -53,6 +55,19 @@ describe('page inject helpers', () => {
 
     expect(window.localStorage.getItem('auralogic-page-inject')).toBeNull()
     expect(window.localStorage.getItem(PAGE_INJECT_CACHE_KEY)).toBeNull()
+  })
+
+  it('invalidates runtime cache and dispatches a refresh event', () => {
+    const listener = jest.fn()
+    window.addEventListener(PAGE_INJECT_INVALIDATE_EVENT, listener)
+    window.localStorage.setItem(PAGE_INJECT_CACHE_KEY, '{"current":true}')
+
+    invalidatePageInjectRuntime(window.localStorage)
+
+    expect(window.localStorage.getItem(PAGE_INJECT_CACHE_KEY)).toBeNull()
+    expect(listener).toHaveBeenCalledTimes(1)
+
+    window.removeEventListener(PAGE_INJECT_INVALIDATE_EVENT, listener)
   })
 
   it('writes only fresh cache entries', () => {

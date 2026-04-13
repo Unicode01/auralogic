@@ -9,6 +9,7 @@ import {
   DEFAULT_PAGE_INJECT_TTL,
   isSamePageInjectPayload,
   normalizePageInjectPayload,
+  PAGE_INJECT_INVALIDATE_EVENT,
   readStoredPageInjectCache,
   type PageInjectPayload,
   writeStoredPageInjectCache,
@@ -30,6 +31,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setThemeState] = useState<Theme>('system')
   const [resolvedTheme, setResolvedTheme] = useState<'light' | 'dark'>('light')
   const [mounted, setMounted] = useState(false)
+  const [pageInjectRefreshNonce, setPageInjectRefreshNonce] = useState(0)
   const pathname = usePathname() || '/'
   const pageInjectIdsRef = useRef<string[]>([])
   const lastInjectPathRef = useRef<string>('')
@@ -150,6 +152,16 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     }
   }, [clearPageInject, pathname])
 
+  useEffect(() => {
+    const handleInvalidate = () => {
+      lastInjectPathRef.current = ''
+      setPageInjectRefreshNonce((value) => value + 1)
+    }
+
+    window.addEventListener(PAGE_INJECT_INVALIDATE_EVENT, handleInvalidate)
+    return () => window.removeEventListener(PAGE_INJECT_INVALIDATE_EVENT, handleInvalidate)
+  }, [])
+
   // 页面切换时获取并应用定向注入
   useEffect(() => {
     if (!mounted) return
@@ -208,7 +220,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       cancelled = true
       clearPageInject()
     }
-  }, [mounted, pathname, applyPageInject, clearPageInject])
+  }, [mounted, pathname, pageInjectRefreshNonce, applyPageInject, clearPageInject])
 
   // 应用主题
   useEffect(() => {
