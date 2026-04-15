@@ -2,15 +2,19 @@ package service
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
+	"auralogic/internal/config"
 	"auralogic/internal/models"
 	"auralogic/internal/pkg/money"
 
@@ -33,13 +37,19 @@ type ScriptDeliveryItem struct {
 
 // ScriptDeliveryService JS脚本发货服务
 type ScriptDeliveryService struct {
-	db              *gorm.DB
-	moneyMinorUnits bool
+	db                *gorm.DB
+	cfg               *config.Config
+	httpClientFactory func() *http.Client
+	moneyMinorUnits   bool
 }
 
 // NewScriptDeliveryService 创建脚本发货服务
-func NewScriptDeliveryService(db *gorm.DB) *ScriptDeliveryService {
-	svc := &ScriptDeliveryService{db: db}
+func NewScriptDeliveryService(db *gorm.DB, cfg *config.Config) *ScriptDeliveryService {
+	svc := &ScriptDeliveryService{
+		db:                db,
+		cfg:               cfg,
+		httpClientFactory: getPaymentHTTPClient,
+	}
 	svc.moneyMinorUnits = svc.detectMoneyMinorUnits()
 	return svc
 }
@@ -80,10 +90,25 @@ func (s *ScriptDeliveryService) ExecuteDeliveryScript(
 		return nil, fmt.Errorf("inventory %d has no script", inventory.ID)
 	}
 
+	configData := s.parseScriptConfig(inventory.ScriptConfig)
+	requestedTimeoutMs := parseScriptDeliveryTimeoutMs(configData)
+	executionTimeoutMs := s.resolveExecutionTimeoutMs(requestedTimeoutMs)
+	executionTimeout := time.Duration(executionTimeoutMs) * time.Millisecond
+	if requestedTimeoutMs > executionTimeoutMs {
+		log.Printf(
+			"[ScriptDelivery] inventory=%d requested timeout %dms capped to host max %dms",
+			inventory.ID,
+			requestedTimeoutMs,
+			executionTimeoutMs,
+		)
+	}
+
+	executeCtx, cancel := context.WithTimeout(context.Background(), executionTimeout)
+	defer cancel()
+
 	vm := goja.New()
 
-	// 设置超时（10秒，脚本发货可能涉及外部API调用）
-	timer := time.AfterFunc(10*time.Second, func() {
+	timer := time.AfterFunc(executionTimeout, func() {
 		vm.Interrupt("execution timeout")
 	})
 	defer timer.Stop()
@@ -96,8 +121,7 @@ func (s *ScriptDeliveryService) ExecuteDeliveryScript(
 	}
 
 	// 注册API
-	configData := s.parseScriptConfig(inventory.ScriptConfig)
-	s.registerAPIs(vm, ctx, order, configData)
+	s.registerAPIs(vm, executeCtx, ctx, order, configData)
 
 	// 执行脚本
 	program, err := getOrCompileJSProgram("virtual_inventory_delivery", inventory.Script)
@@ -128,6 +152,7 @@ func (s *ScriptDeliveryService) ExecuteDeliveryScript(
 // registerAPIs 注册脚本API
 func (s *ScriptDeliveryService) registerAPIs(
 	vm *goja.Runtime,
+	executeCtx context.Context,
 	ctx *ScriptDeliveryContext,
 	order *models.Order,
 	configData map[string]interface{},
@@ -206,7 +231,7 @@ func (s *ScriptDeliveryService) registerAPIs(
 		if len(call.Arguments) < 1 {
 			return vm.ToValue(map[string]interface{}{"error": "URL is required", "status": 0})
 		}
-		return s.doHTTPRequest(vm, "GET", call.Arguments[0].String(), nil, s.extractHeaders(call, 1))
+		return s.doHTTPRequest(vm, executeCtx, "GET", call.Arguments[0].String(), nil, s.extractHeaders(call, 1))
 	})
 	httpObj.Set("post", func(call goja.FunctionCall) goja.Value {
 		if len(call.Arguments) < 1 {
@@ -216,7 +241,7 @@ func (s *ScriptDeliveryService) registerAPIs(
 		if len(call.Arguments) > 1 {
 			body = call.Arguments[1].Export()
 		}
-		return s.doHTTPRequest(vm, "POST", call.Arguments[0].String(), body, s.extractHeaders(call, 2))
+		return s.doHTTPRequest(vm, executeCtx, "POST", call.Arguments[0].String(), body, s.extractHeaders(call, 2))
 	})
 	httpObj.Set("request", func(call goja.FunctionCall) goja.Value {
 		if len(call.Arguments) < 2 {
@@ -226,7 +251,7 @@ func (s *ScriptDeliveryService) registerAPIs(
 		if len(call.Arguments) > 2 {
 			body = call.Arguments[2].Export()
 		}
-		return s.doHTTPRequest(vm, call.Arguments[0].String(), call.Arguments[1].String(), body, s.extractHeaders(call, 3))
+		return s.doHTTPRequest(vm, executeCtx, call.Arguments[0].String(), call.Arguments[1].String(), body, s.extractHeaders(call, 3))
 	})
 
 	// 配置API
@@ -278,7 +303,7 @@ func (s *ScriptDeliveryService) extractHeaders(call goja.FunctionCall, idx int) 
 }
 
 // doHTTPRequest 执行HTTP请求（SSRF安全）
-func (s *ScriptDeliveryService) doHTTPRequest(vm *goja.Runtime, method, urlStr string, body interface{}, headers map[string]string) goja.Value {
+func (s *ScriptDeliveryService) doHTTPRequest(vm *goja.Runtime, executeCtx context.Context, method, urlStr string, body interface{}, headers map[string]string) goja.Value {
 	parsedURL, err := url.Parse(urlStr)
 	if err != nil {
 		return vm.ToValue(map[string]interface{}{"error": fmt.Sprintf("Invalid URL: %v", err), "status": 0})
@@ -287,7 +312,10 @@ func (s *ScriptDeliveryService) doHTTPRequest(vm *goja.Runtime, method, urlStr s
 		return vm.ToValue(map[string]interface{}{"error": "URL is not allowed", "status": 0})
 	}
 
-	client := getPaymentHTTPClient()
+	if executeCtx == nil {
+		executeCtx = context.Background()
+	}
+	client := s.newScriptHTTPClient()
 
 	// 准备请求体
 	var reqBody io.Reader
@@ -311,7 +339,7 @@ func (s *ScriptDeliveryService) doHTTPRequest(vm *goja.Runtime, method, urlStr s
 		}
 	}
 
-	req, err := http.NewRequest(method, parsedURL.String(), reqBody)
+	req, err := http.NewRequestWithContext(executeCtx, method, parsedURL.String(), reqBody)
 	if err != nil {
 		return vm.ToValue(map[string]interface{}{"error": fmt.Sprintf("Failed to create request: %v", err), "status": 0})
 	}
@@ -355,6 +383,20 @@ func (s *ScriptDeliveryService) doHTTPRequest(vm *goja.Runtime, method, urlStr s
 	return vm.ToValue(result)
 }
 
+func (s *ScriptDeliveryService) newScriptHTTPClient() *http.Client {
+	factory := getPaymentHTTPClient
+	if s != nil && s.httpClientFactory != nil {
+		factory = s.httpClientFactory
+	}
+	baseClient := factory()
+	if baseClient == nil {
+		baseClient = newPaymentHTTPClient()
+	}
+	client := *baseClient
+	client.Timeout = 0
+	return &client
+}
+
 // orderToJS 将订单转换为JS对象
 func (s *ScriptDeliveryService) orderToJS(order *models.Order, quantity int) map[string]interface{} {
 	totalAmountMinor := order.TotalAmount
@@ -384,6 +426,138 @@ func (s *ScriptDeliveryService) parseScriptConfig(configJSON string) map[string]
 		}
 	}
 	return config
+}
+
+func (s *ScriptDeliveryService) resolveExecutionTimeoutMs(requestedTimeoutMs int) int {
+	maxTimeoutMs := defaultVirtualScriptTimeoutMaxMs
+	if cfg := s.getConfig(); cfg != nil && cfg.Order.VirtualScriptTimeoutMaxMs > 0 {
+		maxTimeoutMs = cfg.Order.VirtualScriptTimeoutMaxMs
+	}
+	maxTimeoutMs = normalizeVirtualScriptTimeoutMaxMs(maxTimeoutMs)
+
+	requestedTimeoutMs = normalizeScriptDeliveryRequestedTimeoutMs(requestedTimeoutMs)
+	if requestedTimeoutMs > 0 && requestedTimeoutMs < maxTimeoutMs {
+		return requestedTimeoutMs
+	}
+	return maxTimeoutMs
+}
+
+func (s *ScriptDeliveryService) getConfig() *config.Config {
+	if s != nil && s.cfg != nil {
+		return s.cfg
+	}
+	return config.GetConfig()
+}
+
+const (
+	defaultVirtualScriptTimeoutMaxMs = 10000
+	minVirtualScriptTimeoutMs        = 100
+)
+
+func normalizeVirtualScriptTimeoutMaxMs(timeoutMs int) int {
+	if timeoutMs <= 0 {
+		return defaultVirtualScriptTimeoutMaxMs
+	}
+	if timeoutMs < minVirtualScriptTimeoutMs {
+		return minVirtualScriptTimeoutMs
+	}
+	return timeoutMs
+}
+
+func normalizeScriptDeliveryRequestedTimeoutMs(timeoutMs int) int {
+	if timeoutMs <= 0 {
+		return 0
+	}
+	if timeoutMs < minVirtualScriptTimeoutMs {
+		return minVirtualScriptTimeoutMs
+	}
+	return timeoutMs
+}
+
+func parseScriptDeliveryTimeoutMs(configData map[string]interface{}) int {
+	if len(configData) == 0 {
+		return 0
+	}
+	for _, key := range []string{"timeout_ms", "timeoutMs"} {
+		value, exists := configData[key]
+		if !exists || value == nil {
+			continue
+		}
+		return parseScriptDeliveryTimeoutValue(value)
+	}
+	return 0
+}
+
+func parseScriptDeliveryTimeoutValue(value interface{}) int {
+	switch typed := value.(type) {
+	case int:
+		return typed
+	case int8:
+		return int(typed)
+	case int16:
+		return int(typed)
+	case int32:
+		return int(typed)
+	case int64:
+		if typed > math.MaxInt {
+			return math.MaxInt
+		}
+		return int(typed)
+	case uint:
+		if typed > math.MaxInt {
+			return math.MaxInt
+		}
+		return int(typed)
+	case uint8:
+		return int(typed)
+	case uint16:
+		return int(typed)
+	case uint32:
+		return int(typed)
+	case uint64:
+		if typed > math.MaxInt {
+			return math.MaxInt
+		}
+		return int(typed)
+	case float32:
+		if typed <= 0 || math.IsNaN(float64(typed)) || math.IsInf(float64(typed), 0) {
+			return 0
+		}
+		if typed > math.MaxInt {
+			return math.MaxInt
+		}
+		return int(typed)
+	case float64:
+		if typed <= 0 || math.IsNaN(typed) || math.IsInf(typed, 0) {
+			return 0
+		}
+		if typed > math.MaxInt {
+			return math.MaxInt
+		}
+		return int(typed)
+	case json.Number:
+		if intValue, err := typed.Int64(); err == nil {
+			if intValue > math.MaxInt {
+				return math.MaxInt
+			}
+			return int(intValue)
+		}
+		if floatValue, err := typed.Float64(); err == nil {
+			return parseScriptDeliveryTimeoutValue(floatValue)
+		}
+	case string:
+		trimmed := strings.TrimSpace(typed)
+		if trimmed == "" {
+			return 0
+		}
+		if intValue, err := strconv.Atoi(trimmed); err == nil {
+			return intValue
+		}
+		if floatValue, err := strconv.ParseFloat(trimmed, 64); err == nil {
+			return parseScriptDeliveryTimeoutValue(floatValue)
+		}
+	}
+	return 0
 }
 
 // parseDeliveryResult 解析发货结果
