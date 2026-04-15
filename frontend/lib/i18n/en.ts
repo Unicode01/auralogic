@@ -2933,7 +2933,8 @@ export const enTranslations = {
       '// Define onDeliver(order, config) function\n// Return: { success: true, items: [{ content: "...", remark: "..." }] }',
     scriptConfigLabel: 'Script Config',
     scriptConfigPlaceholder: '{"api_key": "xxx", "api_url": "https://..."}',
-    scriptConfigDesc: 'Custom parameters passed to the script via config argument',
+    scriptConfigDesc:
+      'Custom parameters passed to the script via the config argument; supports timeout_ms to request a per-script timeout budget in milliseconds',
     scriptTestBtn: 'Test Script',
     scriptTesting: 'Testing...',
     scriptTestResult: 'Test Result',
@@ -3718,6 +3719,9 @@ export const enTranslations = {
     virtualDeliveryNewest: 'Newest First',
     virtualDeliveryOldest: 'Oldest First',
     virtualDeliveryOrderHint: 'Order in which virtual stock is selected when orders are placed',
+    virtualScriptTimeoutMaxMs: 'Virtual Script Timeout Cap (ms)',
+    virtualScriptTimeoutMaxMsHint:
+      'Host-level maximum execution time. A script can request a shorter or longer timeout with script_config.timeout_ms, but the effective timeout never exceeds this cap.',
     showVirtualStockRemark: 'Show Virtual Stock Remark to Users',
     showVirtualStockRemarkHint:
       'When enabled, users can see the remark/notes of virtual product stock items on the order detail page',

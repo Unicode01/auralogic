@@ -2762,7 +2762,8 @@ export const zhTranslations = {
       '// 定义 onDeliver(order, config) 函数\n// 返回: { success: true, items: [{ content: "...", remark: "..." }] }',
     scriptConfigLabel: '脚本配置',
     scriptConfigPlaceholder: '{"api_key": "xxx", "api_url": "https://..."}',
-    scriptConfigDesc: '传递给脚本的自定义参数，通过 config 参数访问',
+    scriptConfigDesc:
+      '传递给脚本的自定义参数，通过 config 参数访问；支持 timeout_ms 指定本脚本请求的超时上限（毫秒）',
     scriptTestBtn: '测试脚本',
     scriptTesting: '测试中...',
     scriptTestResult: '测试结果',
@@ -3505,6 +3506,9 @@ export const zhTranslations = {
     virtualDeliveryNewest: '先发新库存',
     virtualDeliveryOldest: '先发老库存',
     virtualDeliveryOrderHint: '虚拟商品下单时从库存中选取的顺序',
+    virtualScriptTimeoutMaxMs: '虚拟脚本发货超时上限（毫秒）',
+    virtualScriptTimeoutMaxMsHint:
+      '宿主允许的最大执行时长。脚本可在 script_config 中用 timeout_ms 请求更短或更长的超时，但最终不会超过这里。',
     showVirtualStockRemark: '向用户显示虚拟产品备注',
     showVirtualStockRemarkHint: '启用后，用户可以在订单详情页看到虚拟产品库存的备注信息',
     stockLevelLow: '库存紧张',

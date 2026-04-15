@@ -286,13 +286,14 @@ func (h *SettingsHandler) GetSettings(c *gin.Context) {
 		"email_rate_limit": h.cfg.EmailRateLimit,
 		"sms_rate_limit":   h.cfg.SMSRateLimit,
 		"order": gin.H{
-			"no_prefix":                 h.cfg.Order.NoPrefix,
-			"auto_cancel_hours":         h.cfg.Order.AutoCancelHours,
-			"currency":                  h.cfg.Order.Currency,
-			"max_order_items":           h.cfg.Order.MaxOrderItems,
-			"max_item_quantity":         h.cfg.Order.MaxItemQuantity,
-			"virtual_delivery_order":    h.cfg.Order.VirtualDeliveryOrder,
-			"show_virtual_stock_remark": h.cfg.Order.ShowVirtualStockRemark,
+			"no_prefix":                     h.cfg.Order.NoPrefix,
+			"auto_cancel_hours":             h.cfg.Order.AutoCancelHours,
+			"currency":                      h.cfg.Order.Currency,
+			"max_order_items":               h.cfg.Order.MaxOrderItems,
+			"max_item_quantity":             h.cfg.Order.MaxItemQuantity,
+			"virtual_delivery_order":        h.cfg.Order.VirtualDeliveryOrder,
+			"virtual_script_timeout_max_ms": h.cfg.Order.VirtualScriptTimeoutMaxMs,
+			"show_virtual_stock_remark":     h.cfg.Order.ShowVirtualStockRemark,
 			"high_concurrency_protection": gin.H{
 				"enabled":         h.cfg.Order.HighConcurrencyProtection.Enabled,
 				"mode":            h.cfg.Order.HighConcurrencyProtection.Mode,
@@ -565,6 +566,7 @@ type UpdateSettingsRequest struct {
 		MaxOrderItems                  int                                         `json:"max_order_items"`
 		MaxItemQuantity                int                                         `json:"max_item_quantity"`
 		VirtualDeliveryOrder           string                                      `json:"virtual_delivery_order"`
+		VirtualScriptTimeoutMaxMs      int                                         `json:"virtual_script_timeout_max_ms"`
 		ShowVirtualStockRemark         *bool                                       `json:"show_virtual_stock_remark"`
 		StockDisplay                   config.StockDisplayConfig                   `json:"stock_display"`
 		Invoice                        config.InvoiceConfig                        `json:"invoice"`
@@ -940,6 +942,7 @@ func (h *SettingsHandler) UpdateSettings(c *gin.Context) {
 			"max_order_items":                     req.Order.MaxOrderItems,
 			"max_item_quantity":                   req.Order.MaxItemQuantity,
 			"virtual_delivery_order":              req.Order.VirtualDeliveryOrder,
+			"virtual_script_timeout_max_ms":       req.Order.VirtualScriptTimeoutMaxMs,
 			"show_virtual_stock_remark":           showVirtualStockRemark,
 			"high_concurrency_protection": map[string]interface{}{
 				"enabled":         req.Order.HighConcurrencyProtection.Enabled,

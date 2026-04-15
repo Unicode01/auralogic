@@ -4172,6 +4172,8 @@ export default function SettingsPage() {
                       parseInt(formData.get('max_item_quantity') as string) || 9999,
                     currency: formData.get('currency'),
                     virtual_delivery_order: formData.get('virtual_delivery_order'),
+                    virtual_script_timeout_max_ms:
+                      parseInt(formData.get('virtual_script_timeout_max_ms') as string) || 10000,
                     show_virtual_stock_remark: showVirtualStockRemark,
                     high_concurrency_protection: {
                       enabled: formData.get('high_concurrency_enabled') === 'on',
@@ -4451,24 +4453,42 @@ export default function SettingsPage() {
 
                 <div className="mt-4 border-t border-border pt-4">
                   <h4 className="mb-3 font-medium">{t.admin.virtualDeliveryOrderTitle}</h4>
-                  <div>
-                    <Label htmlFor="virtual_delivery_order">{t.admin.virtualDeliveryOrder}</Label>
-                    <Select
-                      name="virtual_delivery_order"
-                      defaultValue={settingsData?.order?.virtual_delivery_order || 'random'}
-                    >
-                      <SelectTrigger id="virtual_delivery_order" className="mt-1.5">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="random">{t.admin.virtualDeliveryRandom}</SelectItem>
-                        <SelectItem value="newest">{t.admin.virtualDeliveryNewest}</SelectItem>
-                        <SelectItem value="oldest">{t.admin.virtualDeliveryOldest}</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {t.admin.virtualDeliveryOrderHint}
-                    </p>
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                    <div>
+                      <Label htmlFor="virtual_delivery_order">{t.admin.virtualDeliveryOrder}</Label>
+                      <Select
+                        name="virtual_delivery_order"
+                        defaultValue={settingsData?.order?.virtual_delivery_order || 'random'}
+                      >
+                        <SelectTrigger id="virtual_delivery_order" className="mt-1.5">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="random">{t.admin.virtualDeliveryRandom}</SelectItem>
+                          <SelectItem value="newest">{t.admin.virtualDeliveryNewest}</SelectItem>
+                          <SelectItem value="oldest">{t.admin.virtualDeliveryOldest}</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {t.admin.virtualDeliveryOrderHint}
+                      </p>
+                    </div>
+                    <div>
+                      <Label htmlFor="virtual_script_timeout_max_ms">
+                        {t.admin.virtualScriptTimeoutMaxMs}
+                      </Label>
+                      <Input
+                        id="virtual_script_timeout_max_ms"
+                        name="virtual_script_timeout_max_ms"
+                        type="number"
+                        min="100"
+                        defaultValue={settingsData?.order?.virtual_script_timeout_max_ms || 10000}
+                        className="mt-1.5"
+                      />
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {t.admin.virtualScriptTimeoutMaxMsHint}
+                      </p>
+                    </div>
                   </div>
                   <div className="mt-4 flex items-center justify-between">
                     <div>

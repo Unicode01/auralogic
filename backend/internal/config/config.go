@@ -322,7 +322,8 @@ type OrderConfig struct {
 	MaxItemQuantity                int                                  `json:"max_item_quantity"`         // 单个商品项最大数量，0表示使用默认值9999
 	ShowVirtualStockRemark         bool                                 `json:"show_virtual_stock_remark"` // 是否在用户侧显示虚拟产品备注
 	StockDisplay                   StockDisplayConfig                   `json:"stock_display"`
-	VirtualDeliveryOrder           string                               `json:"virtual_delivery_order"` // 虚拟库存发货顺序: random(随机), newest(先发新库存), oldest(先发老库存)
+	VirtualDeliveryOrder           string                               `json:"virtual_delivery_order"`        // 虚拟库存发货顺序: random(随机), newest(先发新库存), oldest(先发老库存)
+	VirtualScriptTimeoutMaxMs      int                                  `json:"virtual_script_timeout_max_ms"` // 虚拟脚本发货允许的最大执行时长
 	Invoice                        InvoiceConfig                        `json:"invoice"`
 	HighConcurrencyProtection      OrderHighConcurrencyProtectionConfig `json:"high_concurrency_protection"`
 }
@@ -681,6 +682,12 @@ func (c *Config) Validate() error {
 	}
 	if c.Order.VirtualDeliveryOrder == "" {
 		c.Order.VirtualDeliveryOrder = "random"
+	}
+	if c.Order.VirtualScriptTimeoutMaxMs <= 0 {
+		c.Order.VirtualScriptTimeoutMaxMs = 10000
+	}
+	if c.Order.VirtualScriptTimeoutMaxMs < 100 {
+		c.Order.VirtualScriptTimeoutMaxMs = 100
 	}
 	if c.Order.MaxOrderItems == 0 {
 		c.Order.MaxOrderItems = 100

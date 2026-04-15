@@ -86,6 +86,29 @@ func TestValidateNormalizesCORSOrigins(t *testing.T) {
 	}
 }
 
+func TestValidateDefaultsVirtualScriptTimeoutMax(t *testing.T) {
+	cfg := newValidTestConfig()
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("expected config to be valid, got %v", err)
+	}
+	if cfg.Order.VirtualScriptTimeoutMaxMs != 10000 {
+		t.Fatalf("expected virtual script timeout max default 10000, got %d", cfg.Order.VirtualScriptTimeoutMaxMs)
+	}
+}
+
+func TestValidateNormalizesVirtualScriptTimeoutMaxFloor(t *testing.T) {
+	cfg := newValidTestConfig()
+	cfg.Order.VirtualScriptTimeoutMaxMs = 1
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("expected config to be valid, got %v", err)
+	}
+	if cfg.Order.VirtualScriptTimeoutMaxMs != 100 {
+		t.Fatalf("expected virtual script timeout max to normalize to 100, got %d", cfg.Order.VirtualScriptTimeoutMaxMs)
+	}
+}
+
 func newValidTestConfig() Config {
 	return Config{
 		App: AppConfig{
