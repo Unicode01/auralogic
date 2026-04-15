@@ -26,10 +26,11 @@ type VirtualInventoryService struct {
 }
 
 func NewVirtualInventoryService(db *gorm.DB) *VirtualInventoryService {
+	cfg := config.GetConfig()
 	return &VirtualInventoryService{
 		db:                    db,
-		cfg:                   config.GetConfig(),
-		scriptDeliveryService: NewScriptDeliveryService(db),
+		cfg:                   cfg,
+		scriptDeliveryService: NewScriptDeliveryService(db, cfg),
 	}
 }
 

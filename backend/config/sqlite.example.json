@@ -161,6 +161,7 @@
             "high_stock_threshold": 50
         },
         "virtual_delivery_order": "random",
+        "virtual_script_timeout_max_ms": 10000,
         "high_concurrency_protection": {
             "enabled": false,
             "mode": "auto",
