@@ -22,10 +22,13 @@ import {
   Eye,
   EyeOff,
   Headphones,
+  ChevronDown,
+  ChevronUp,
+  PanelLeft,
 } from 'lucide-react'
 import { cn, formatDate, formatCurrency } from '@/lib/utils'
 import type { Order } from '@/types/order'
-import type { VirtualProductStock } from '@/types/product'
+import type { VirtualProductStock, VirtualStockInlineIframe } from '@/types/product'
 import { useLocale } from '@/hooks/use-locale'
 import { getTranslations } from '@/lib/i18n'
 import { PluginSlot } from '@/components/plugins/plugin-slot'
@@ -64,6 +67,98 @@ interface OrderDetailProps {
   pluginSlotPath?: string
 }
 
+function resolveVirtualStockInlineIframe(
+  stock: VirtualProductStock,
+  scope: 'admin' | 'public'
+): VirtualStockInlineIframe | null {
+  const rawPanel = stock.presentation?.inline_iframe
+  if (!rawPanel) {
+    return null
+  }
+
+  const html = typeof rawPanel.html === 'string' ? rawPanel.html.trim() : ''
+  const src = typeof rawPanel.src === 'string' ? rawPanel.src.trim() : ''
+  if (!html && !src) {
+    return null
+  }
+
+  const normalizedScope = String(rawPanel.scope || 'both')
+    .trim()
+    .toLowerCase()
+  const currentScope = scope === 'admin' ? 'admin' : 'user'
+  if (normalizedScope === 'admin' && currentScope !== 'admin') {
+    return null
+  }
+  if (normalizedScope === 'user' && currentScope !== 'user') {
+    return null
+  }
+
+  const rawHeight = Number(rawPanel.height)
+  const height = Number.isFinite(rawHeight)
+    ? Math.min(1200, Math.max(240, Math.round(rawHeight)))
+    : 420
+
+  return {
+    ...rawPanel,
+    html: html || undefined,
+    src: src || undefined,
+    title: typeof rawPanel.title === 'string' ? rawPanel.title.trim() || undefined : undefined,
+    button_label:
+      typeof rawPanel.button_label === 'string'
+        ? rawPanel.button_label.trim() || undefined
+        : undefined,
+    scope: normalizedScope || 'both',
+    height,
+  }
+}
+
+function InlineIframePanel({
+  iframe,
+  expanded,
+  onToggle,
+  fallbackTitle,
+  expandLabel,
+  collapseLabel,
+}: {
+  iframe: VirtualStockInlineIframe
+  expanded: boolean
+  onToggle: () => void
+  fallbackTitle: string
+  expandLabel: string
+  collapseLabel: string
+}) {
+  const title = iframe.title || fallbackTitle
+  const buttonLabel = expanded ? collapseLabel : iframe.button_label || expandLabel
+
+  return (
+    <div className="rounded-lg border border-border/70 bg-muted/20">
+      <div className="flex flex-wrap items-center justify-between gap-3 px-3 py-2.5">
+        <div className="flex min-w-0 items-center gap-2">
+          <PanelLeft className="h-4 w-4 shrink-0 text-muted-foreground" />
+          <span className="truncate text-sm font-medium">{title}</span>
+        </div>
+        <Button type="button" variant="outline" size="sm" onClick={onToggle}>
+          {expanded ? <ChevronUp className="mr-1.5 h-4 w-4" /> : <ChevronDown className="mr-1.5 h-4 w-4" />}
+          {buttonLabel}
+        </Button>
+      </div>
+      {expanded ? (
+        <div className="border-t border-border/70 bg-background/90 p-2">
+          <iframe
+            title={title}
+            className="w-full rounded-md border bg-background"
+            style={{ height: `${iframe.height || 420}px` }}
+            loading="lazy"
+            sandbox="allow-scripts allow-forms allow-popups allow-downloads"
+            srcDoc={iframe.html || undefined}
+            src={iframe.html ? undefined : iframe.src}
+          />
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
 export function OrderDetail({
   order,
   serials,
@@ -86,6 +181,7 @@ export function OrderDetail({
   const isDraft = order.status === 'draft'
   const isNeedResubmit = order.status === 'need_resubmit'
   const [showContent, setShowContent] = useState<Record<number, boolean>>({})
+  const [showInlineIframe, setShowInlineIframe] = useState<Record<number, boolean>>({})
   const orderItems = Array.isArray(order.items) ? order.items : []
   const serialGenerationStatus = String(
     order.serialGenerationStatus || order.serial_generation_status || ''
@@ -142,6 +238,10 @@ export function OrderDetail({
 
   const toggleContentVisibility = (id: number) => {
     setShowContent((prev) => ({ ...prev, [id]: !prev[id] }))
+  }
+
+  const toggleInlineIframeVisibility = (id: number) => {
+    setShowInlineIframe((prev) => ({ ...prev, [id]: !prev[id] }))
   }
 
   const copyToClipboard = (content: string) => {
@@ -673,61 +773,74 @@ export function OrderDetail({
                   <p>{t.order.virtualProductKeepSafe}</p>
                 </div>
 
-                {virtualStocks.map((stock) => (
-                  <div
-                    key={stock.id}
-                    className={cn('space-y-2 rounded-lg border p-3', !compactLayout && 'md:p-4')}
-                  >
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div className="flex min-w-0 flex-wrap items-center gap-1">
-                        <code
-                          className={cn(
-                            'break-all rounded bg-muted px-2 py-1 font-mono text-sm',
-                            !compactLayout && 'md:px-3 md:py-2 md:text-lg'
-                          )}
-                        >
-                          {showContent[stock.id] ? stock.content : '************'}
-                        </code>
-                        <div className="flex shrink-0 items-center">
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            className={cn('h-7 w-7 p-0', !compactLayout && 'md:h-8 md:w-8')}
-                            onClick={() => toggleContentVisibility(stock.id)}
-                            aria-label={`${showContent[stock.id] ? t.common.collapse : t.common.expand} ${t.order.virtualProductContent}`}
-                            title={`${showContent[stock.id] ? t.common.collapse : t.common.expand} ${t.order.virtualProductContent}`}
-                          >
-                            {showContent[stock.id] ? (
-                              <EyeOff className="h-4 w-4" />
-                            ) : (
-                              <Eye className="h-4 w-4" />
+                {virtualStocks.map((stock) => {
+                  const inlineIframe = resolveVirtualStockInlineIframe(stock, slotScope)
+                  return (
+                    <div
+                      key={stock.id}
+                      className={cn('space-y-2 rounded-lg border p-3', !compactLayout && 'md:p-4')}
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex min-w-0 flex-wrap items-center gap-1">
+                          <code
+                            className={cn(
+                              'break-all rounded bg-muted px-2 py-1 font-mono text-sm',
+                              !compactLayout && 'md:px-3 md:py-2 md:text-lg'
                             )}
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            className={cn('h-7 w-7 p-0', !compactLayout && 'md:h-8 md:w-8')}
-                            onClick={() => copyToClipboard(stock.content)}
-                            aria-label={`${t.common.copy} ${t.order.virtualProductContent}`}
-                            title={`${t.common.copy} ${t.order.virtualProductContent}`}
                           >
-                            <Copy className="h-4 w-4" />
-                          </Button>
+                            {showContent[stock.id] ? stock.content : '************'}
+                          </code>
+                          <div className="flex shrink-0 items-center">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className={cn('h-7 w-7 p-0', !compactLayout && 'md:h-8 md:w-8')}
+                              onClick={() => toggleContentVisibility(stock.id)}
+                              aria-label={`${showContent[stock.id] ? t.common.collapse : t.common.expand} ${t.order.virtualProductContent}`}
+                              title={`${showContent[stock.id] ? t.common.collapse : t.common.expand} ${t.order.virtualProductContent}`}
+                            >
+                              {showContent[stock.id] ? (
+                                <EyeOff className="h-4 w-4" />
+                              ) : (
+                                <Eye className="h-4 w-4" />
+                              )}
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className={cn('h-7 w-7 p-0', !compactLayout && 'md:h-8 md:w-8')}
+                              onClick={() => copyToClipboard(stock.content)}
+                              aria-label={`${t.common.copy} ${t.order.virtualProductContent}`}
+                              title={`${t.common.copy} ${t.order.virtualProductContent}`}
+                            >
+                              <Copy className="h-4 w-4" />
+                            </Button>
+                          </div>
                         </div>
                       </div>
+                      {showVirtualStockRemark && stock.remark && (
+                        <p className="text-sm text-muted-foreground">{stock.remark}</p>
+                      )}
+                      {inlineIframe ? (
+                        <InlineIframePanel
+                          iframe={inlineIframe}
+                          expanded={!!showInlineIframe[stock.id]}
+                          onToggle={() => toggleInlineIframeVisibility(stock.id)}
+                          fallbackTitle={t.order.virtualProductContent}
+                          expandLabel={t.common.expand}
+                          collapseLabel={t.common.collapse}
+                        />
+                      ) : null}
+                      {stock.delivered_at && (
+                        <div className="text-xs text-muted-foreground">
+                          {t.order.deliveryTime}: {formatDate(stock.delivered_at)}
+                        </div>
+                      )}
                     </div>
-                    {showVirtualStockRemark && stock.remark && (
-                      <p className="text-sm text-muted-foreground">{stock.remark}</p>
-                    )}
-                    {stock.delivered_at && (
-                      <div className="text-xs text-muted-foreground">
-                        {t.order.deliveryTime}: {formatDate(stock.delivered_at)}
-                      </div>
-                    )}
-                  </div>
-                ))}
+                  )
+                })}
 
                 <div className="mt-2 text-xs text-muted-foreground">
                   {t.order.totalItemsCount.replace('{count}', String(virtualStocks.length))}
