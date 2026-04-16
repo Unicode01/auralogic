@@ -56,6 +56,7 @@ func (s *PromoCodeService) Update(id uint, updates *models.PromoCode) error {
 	existing.MinOrderAmount = updates.MinOrderAmount
 	existing.TotalQuantity = updates.TotalQuantity
 	existing.ProductIDs = updates.ProductIDs
+	existing.ProductScope = updates.ProductScope
 	existing.Status = updates.Status
 	existing.ExpiresAt = updates.ExpiresAt
 
@@ -65,6 +66,24 @@ func (s *PromoCodeService) Update(id uint, updates *models.PromoCode) error {
 // GetByID 获取优惠码
 func (s *PromoCodeService) GetByID(id uint) (*models.PromoCode, error) {
 	return s.repo.FindByID(id)
+}
+
+// LookupByCode 根据优惠码查找，未找到时返回 found=false
+func (s *PromoCodeService) LookupByCode(code string) (*models.PromoCode, bool, error) {
+	normalized := strings.ToUpper(strings.TrimSpace(code))
+	if normalized == "" {
+		return nil, false, nil
+	}
+
+	promoCode, err := s.repo.FindByCode(normalized)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+
+	return promoCode, true, nil
 }
 
 // List 分页列表

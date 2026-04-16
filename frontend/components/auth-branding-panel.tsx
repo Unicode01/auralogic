@@ -1,4 +1,5 @@
 'use client'
+/* eslint-disable @next/next/no-img-element */
 
 import { useEffect, useLayoutEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
@@ -13,6 +14,7 @@ const CACHE_KEY = 'auth_branding_cache'
 type AuthBrandingCache = {
   app_name?: string
   primary_color?: string
+  logo_url?: string
   auth_branding?: {
     mode?: string
     title?: string
@@ -47,9 +49,7 @@ function readAuthBrandingCache(): AuthBrandingCache | null {
   return null
 }
 
-export function AuthBrandingPanel() {
-  const { locale } = useLocale()
-  const t = getTranslations(locale)
+function useAuthBrandingCache() {
   const [cachedBranding, setCachedBranding] = useState<AuthBrandingCache | null>(null)
 
   useLayoutEffect(() => {
@@ -71,6 +71,7 @@ export function AuthBrandingPanel() {
     const val: AuthBrandingCache = {
       app_name: d.app_name,
       primary_color: d.customization?.primary_color,
+      logo_url: d.customization?.logo_url,
       auth_branding: d.customization?.auth_branding,
     }
     setCachedBranding(val)
@@ -80,10 +81,40 @@ export function AuthBrandingPanel() {
     }
   }, [publicConfig])
 
-  const net = publicConfig?.data
-  const cached = cachedBranding
+  return {
+    net: publicConfig?.data,
+    cached: cachedBranding,
+  }
+}
+
+export function AuthMobileBrand() {
+  const { net, cached } = useAuthBrandingCache()
+  const appName = net?.app_name || cached?.app_name || 'AuraLogic'
+  const logoUrl = net?.customization?.logo_url || cached?.logo_url || ''
+
+  return (
+    <div className="text-center lg:hidden">
+      {logoUrl ? (
+        <img
+          src={logoUrl}
+          alt={appName}
+          className="mx-auto max-h-10 w-auto max-w-[180px] object-contain"
+        />
+      ) : (
+        <h1 className="text-2xl font-bold tracking-tight text-foreground">{appName}</h1>
+      )}
+    </div>
+  )
+}
+
+export function AuthBrandingPanel() {
+  const { locale } = useLocale()
+  const t = getTranslations(locale)
+  const { net, cached } = useAuthBrandingCache()
+
   const appName = net?.app_name || cached?.app_name || 'AuraLogic'
   const primaryColor = net?.customization?.primary_color || cached?.primary_color
+  const logoUrl = net?.customization?.logo_url || cached?.logo_url || ''
   const branding = net?.customization?.auth_branding || cached?.auth_branding
   const bgStyle = primaryColor ? { backgroundColor: `hsl(${primaryColor})` } : undefined
   const safeCustomHtml = useMemo(() => {
@@ -137,9 +168,17 @@ export function AuthBrandingPanel() {
       <div className="relative z-10 flex flex-col justify-between w-full p-12">
         <div className="space-y-6">
           <PluginSlot slot="auth.layout.branding.top" context={authBrandingPluginContext} />
-          <h1 className="text-3xl font-bold text-primary-foreground tracking-tight">
-            {appName}
-          </h1>
+          {logoUrl ? (
+            <img
+              src={logoUrl}
+              alt={appName}
+              className="max-h-12 w-auto max-w-[220px] object-contain"
+            />
+          ) : (
+            <h1 className="text-3xl font-bold text-primary-foreground tracking-tight">
+              {appName}
+            </h1>
+          )}
         </div>
         <div className="space-y-6">
           <h2 className="text-4xl font-bold text-primary-foreground leading-tight">

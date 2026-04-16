@@ -28,7 +28,7 @@ import { useRouter } from 'next/navigation'
 import { Suspense, useEffect, useState, useRef, useCallback } from 'react'
 import toast from 'react-hot-toast'
 import { useTheme } from '@/contexts/theme-context'
-import { AuthBrandingPanel } from '@/components/auth-branding-panel'
+import { AuthBrandingPanel, AuthMobileBrand } from '@/components/auth-branding-panel'
 import { PhoneInput } from '@/components/phone-input'
 import { PluginSlot } from '@/components/plugins/plugin-slot'
 
@@ -329,9 +329,7 @@ export default function RegisterPage() {
       <div className="flex flex-1 items-center justify-center bg-background p-6 sm:p-12">
         <div className="w-full max-w-sm space-y-4 sm:space-y-6">
           {/* Mobile logo */}
-          <div className="text-center lg:hidden">
-            <h1 className="text-2xl font-bold tracking-tight text-foreground">AuraLogic</h1>
-          </div>
+          <AuthMobileBrand />
 
           <Suspense fallback={null}>
             <PluginSlot slot="auth.register.top" context={authRegisterPluginContext} />

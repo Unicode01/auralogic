@@ -11,6 +11,7 @@ import {
   retryFailedEmails,
   getInventoryLogs,
 } from '@/lib/api'
+import { resolveClientAPIProxyURL } from '@/lib/api-base-url'
 import { DataTable } from '@/components/admin/data-table'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -26,7 +27,7 @@ import {
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useToast } from '@/hooks/use-toast'
-import { FileText, Mail, RefreshCw, Package, Smartphone } from 'lucide-react'
+import { Download, FileText, Mail, RefreshCw, Package, Smartphone } from 'lucide-react'
 import { formatDate } from '@/lib/utils'
 import { useLocale } from '@/hooks/use-locale'
 import { getTranslations } from '@/lib/i18n'
@@ -199,6 +200,30 @@ export default function LogsPage() {
   const toast = useToast()
   const resolveLogError = (error: unknown, fallback: string) =>
     resolveApiErrorMessage(error, t, fallback)
+  const readFetchErrorMessage = useCallback(
+    async (response: Response, fallback: string) => {
+      try {
+        const contentType = response.headers.get('content-type') || ''
+        if (contentType.includes('application/json')) {
+          const payload = await response.json()
+          return resolveApiErrorMessage(payload, t, fallback)
+        }
+
+        const text = (await response.text()).trim()
+        if (text) {
+          try {
+            return resolveApiErrorMessage(JSON.parse(text), t, fallback)
+          } catch {
+            return text
+          }
+        }
+      } catch {
+        // ignore parse errors and fall back to the provided message
+      }
+      return fallback
+    },
+    [t]
+  )
 
   // 操作日志查询
   const { data: operationLogs, isLoading: operationLoading } = useQuery({
@@ -247,6 +272,87 @@ export default function LogsPage() {
           : activeTab === 'sms'
             ? t.admin.smsLogs
             : t.admin.systemLogs
+  const handleExport = useCallback(() => {
+    let path = '/api/admin/logs/operations/export'
+    let fileName = `operation_logs_${new Date().toISOString().slice(0, 10)}.xlsx`
+    const params = new URLSearchParams()
+
+    switch (activeTab) {
+      case 'emails':
+        path = '/api/admin/logs/emails/export'
+        fileName = `email_logs_${new Date().toISOString().slice(0, 10)}.xlsx`
+        if (emailFilters.status) params.append('status', emailFilters.status)
+        if (emailFilters.event_type) params.append('event_type', emailFilters.event_type)
+        if (emailFilters.to_email) params.append('to_email', emailFilters.to_email)
+        if (emailFilters.start_date) params.append('start_date', emailFilters.start_date)
+        if (emailFilters.end_date) params.append('end_date', emailFilters.end_date)
+        break
+      case 'inventories':
+        path = '/api/admin/logs/inventories/export'
+        fileName = `inventory_logs_${new Date().toISOString().slice(0, 10)}.xlsx`
+        if (inventoryFilters.source) params.append('source', inventoryFilters.source)
+        if (inventoryFilters.type) params.append('type', inventoryFilters.type)
+        if (inventoryFilters.inventory_id)
+          params.append('inventory_id', inventoryFilters.inventory_id)
+        if (inventoryFilters.order_no) params.append('order_no', inventoryFilters.order_no)
+        if (inventoryFilters.start_date) params.append('start_date', inventoryFilters.start_date)
+        if (inventoryFilters.end_date) params.append('end_date', inventoryFilters.end_date)
+        break
+      case 'sms':
+        path = '/api/admin/logs/sms/export'
+        fileName = `sms_logs_${new Date().toISOString().slice(0, 10)}.xlsx`
+        if (smsFilters.status) params.append('status', smsFilters.status)
+        if (smsFilters.event_type) params.append('event_type', smsFilters.event_type)
+        if (smsFilters.phone) params.append('phone', smsFilters.phone)
+        if (smsFilters.start_date) params.append('start_date', smsFilters.start_date)
+        if (smsFilters.end_date) params.append('end_date', smsFilters.end_date)
+        break
+      case 'operations':
+      default:
+        if (operationFilters.action) params.append('action', operationFilters.action)
+        if (operationFilters.resource_type)
+          params.append('resource_type', operationFilters.resource_type)
+        if (operationFilters.resource_id) params.append('resource_id', operationFilters.resource_id)
+        if (operationFilters.order_no) params.append('order_no', operationFilters.order_no)
+        if (operationFilters.user_id) params.append('user_id', operationFilters.user_id)
+        if (operationFilters.start_date) params.append('start_date', operationFilters.start_date)
+        if (operationFilters.end_date) params.append('end_date', operationFilters.end_date)
+        break
+    }
+
+    const url = resolveClientAPIProxyURL(`${path}${params.toString() ? `?${params}` : ''}`)
+    fetch(url)
+      .then(async (res) => {
+        if (!res.ok) {
+          throw new Error(await readFetchErrorMessage(res, t.admin.exportFailed))
+        }
+        return res.blob()
+      })
+      .then((blob) => {
+        const blobUrl = window.URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = blobUrl
+        a.download = fileName
+        document.body.appendChild(a)
+        a.click()
+        document.body.removeChild(a)
+        window.URL.revokeObjectURL(blobUrl)
+        toast.success(t.admin.logsExportSuccess)
+      })
+      .catch((err) => {
+        toast.error(`${t.admin.exportFailed}: ${err.message}`)
+      })
+  }, [
+    activeTab,
+    emailFilters,
+    inventoryFilters,
+    operationFilters,
+    readFetchErrorMessage,
+    smsFilters,
+    t.admin.exportFailed,
+    t.admin.logsExportSuccess,
+    toast,
+  ])
   const activeLogFilters = (
     activeTab === 'operations'
       ? [
@@ -702,6 +808,12 @@ export default function LogsPage() {
               ? t.admin.logsFilterSummary.replace('{count}', String(activeLogFilters.length))
               : t.admin.logsFilterHint}
           </p>
+        </div>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={handleExport}>
+            <Download className="mr-2 h-4 w-4" />
+            {t.admin.exportCurrentLogs}
+          </Button>
         </div>
       </div>
 

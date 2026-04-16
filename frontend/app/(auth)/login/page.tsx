@@ -27,7 +27,7 @@ import { getPublicConfig, getCaptcha, sendLoginCode, sendPhoneCode } from '@/lib
 import { Suspense, useState, useEffect, useMemo, useRef } from 'react'
 import { useTheme } from '@/contexts/theme-context'
 import toast from 'react-hot-toast'
-import { AuthBrandingPanel } from '@/components/auth-branding-panel'
+import { AuthBrandingPanel, AuthMobileBrand } from '@/components/auth-branding-panel'
 import { PhoneInput } from '@/components/phone-input'
 import { PluginSlot } from '@/components/plugins/plugin-slot'
 import { PluginSlotBatchBoundary } from '@/lib/plugin-slot-batch'
@@ -507,9 +507,7 @@ export default function LoginPage() {
         <PluginSlotBatchBoundary scope="public" path="/login" items={loginBatchItems}>
           <div className="w-full max-w-sm space-y-6 sm:space-y-8">
             {/* Mobile logo */}
-            <div className="text-center lg:hidden">
-              <h1 className="text-2xl font-bold tracking-tight text-foreground">AuraLogic</h1>
-            </div>
+            <AuthMobileBrand />
 
             <Suspense fallback={null}>
               <PluginSlot slot="auth.login.top" context={authLoginPluginContext} />

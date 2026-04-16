@@ -1,4 +1,5 @@
 'use client'
+/* eslint-disable @next/next/no-img-element */
 
 import Link from 'next/link'
 import { useState, useEffect, useCallback, useRef, type ReactNode } from 'react'
@@ -55,7 +56,7 @@ import {
   Sun,
   Moon,
   Monitor,
-  Image,
+  Image as ImageIcon,
   Mic,
   Palette,
   Plus,
@@ -95,12 +96,143 @@ interface PageRule {
   enabled: boolean
 }
 
+const DEFAULT_PRIMARY_COLOR = '217.2 91% 60%'
+const DEFAULT_PRIMARY_COLOR_HEX = '#3b82f6'
+const LOGO_UPLOAD_MAX_BYTES = 512 * 1024
+const FAVICON_UPLOAD_MAX_BYTES = 128 * 1024
+const PRIMARY_COLOR_PRESETS = [
+  { value: DEFAULT_PRIMARY_COLOR, labelKey: 'blueDefault', hex: '#3b82f6' },
+  { value: '142.1 76.2% 36.3%', labelKey: 'green', hex: '#16a34a' },
+  { value: '346.8 77.2% 49.8%', labelKey: 'rose', hex: '#e11d48' },
+  { value: '262.1 83.3% 57.8%', labelKey: 'purple', hex: '#7c3aed' },
+  { value: '24.6 95% 53.1%', labelKey: 'orange', hex: '#f97316' },
+  { value: '0 72.2% 50.6%', labelKey: 'red', hex: '#dc2626' },
+] as const
+
 function formatBytes(bytes: number) {
   if (!Number.isFinite(bytes) || bytes <= 0) return '0 B'
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
   if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(Math.max(value, min), max)
+}
+
+function normalizeHexColor(value: string): string | null {
+  const trimmed = value.trim()
+  if (!trimmed) return null
+  const normalized = trimmed.startsWith('#') ? trimmed : `#${trimmed}`
+  return /^#[0-9a-fA-F]{6}$/.test(normalized) ? normalized.toLowerCase() : null
+}
+
+function hexToHslTriplet(hex: string): string {
+  const normalized = normalizeHexColor(hex) || DEFAULT_PRIMARY_COLOR_HEX
+  const raw = normalized.slice(1)
+  const r = parseInt(raw.slice(0, 2), 16) / 255
+  const g = parseInt(raw.slice(2, 4), 16) / 255
+  const b = parseInt(raw.slice(4, 6), 16) / 255
+  const max = Math.max(r, g, b)
+  const min = Math.min(r, g, b)
+  const lightness = (max + min) / 2
+
+  if (max === min) {
+    return `0 0% ${(lightness * 100).toFixed(1)}%`
+  }
+
+  const delta = max - min
+  const saturation =
+    lightness > 0.5 ? delta / (2 - max - min) : delta / (max + min)
+
+  let hue = 0
+  switch (max) {
+    case r:
+      hue = (g - b) / delta + (g < b ? 6 : 0)
+      break
+    case g:
+      hue = (b - r) / delta + 2
+      break
+    default:
+      hue = (r - g) / delta + 4
+      break
+  }
+  hue *= 60
+
+  return `${hue.toFixed(1)} ${(saturation * 100).toFixed(1)}% ${(lightness * 100).toFixed(1)}%`
+}
+
+function hslTripletToHex(value: string): string | null {
+  const parts = value
+    .trim()
+    .split(/\s+/)
+    .map((part) => part.trim())
+    .filter(Boolean)
+  if (parts.length < 3) {
+    return null
+  }
+
+  const hue = Number.parseFloat(parts[0])
+  const saturation = Number.parseFloat(parts[1].replace('%', ''))
+  const lightness = Number.parseFloat(parts[2].replace('%', ''))
+  if (![hue, saturation, lightness].every((item) => Number.isFinite(item))) {
+    return null
+  }
+
+  const h = ((hue % 360) + 360) % 360 / 360
+  const s = clamp(saturation, 0, 100) / 100
+  const l = clamp(lightness, 0, 100) / 100
+
+  if (s === 0) {
+    const gray = Math.round(l * 255)
+    const hex = gray.toString(16).padStart(2, '0')
+    return `#${hex}${hex}${hex}`
+  }
+
+  const hueToRgb = (p: number, q: number, t: number) => {
+    let normalized = t
+    if (normalized < 0) normalized += 1
+    if (normalized > 1) normalized -= 1
+    if (normalized < 1 / 6) return p + (q - p) * 6 * normalized
+    if (normalized < 1 / 2) return q
+    if (normalized < 2 / 3) return p + (q - p) * (2 / 3 - normalized) * 6
+    return p
+  }
+
+  const q = l < 0.5 ? l * (1 + s) : l + s - l * s
+  const p = 2 * l - q
+  const r = Math.round(hueToRgb(p, q, h + 1 / 3) * 255)
+  const g = Math.round(hueToRgb(p, q, h) * 255)
+  const b = Math.round(hueToRgb(p, q, h - 1 / 3) * 255)
+
+  return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`
+}
+
+function isSupportedImageFile(file: File) {
+  const type = file.type.toLowerCase()
+  if (type.startsWith('image/')) {
+    return true
+  }
+  const name = file.name.toLowerCase()
+  return ['.png', '.jpg', '.jpeg', '.webp', '.svg', '.ico'].some((suffix) =>
+    name.endsWith(suffix)
+  )
+}
+
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      if (typeof reader.result === 'string') {
+        resolve(reader.result)
+        return
+      }
+      reject(new Error('invalid file result'))
+    }
+    reader.onerror = () => reject(reader.error || new Error('file read failed'))
+    reader.readAsDataURL(file)
+  })
 }
 
 function PageRuleItem({
@@ -477,6 +609,8 @@ export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState('general')
   const [defaultTheme, setDefaultTheme] = useState('system')
   const [primaryColor, setPrimaryColor] = useState('')
+  const [logoUrl, setLogoUrl] = useState('')
+  const [faviconUrl, setFaviconUrl] = useState('')
   const [pageRules, setPageRules] = useState<PageRule[]>([])
   const [emailNotifications, setEmailNotifications] = useState<Record<string, boolean>>({})
   const [captchaProvider, setCaptchaProvider] = useState('none')
@@ -491,6 +625,8 @@ export default function SettingsPage() {
   const [pluginDefaultRuntime, setPluginDefaultRuntime] = useState('grpc')
   const [pluginSandboxLevel, setPluginSandboxLevel] = useState('balanced')
   const [pluginWorkerArgsText, setPluginWorkerArgsText] = useState('')
+  const logoFileInputRef = useRef<HTMLInputElement | null>(null)
+  const faviconFileInputRef = useRef<HTMLInputElement | null>(null)
   const queryClient = useQueryClient()
   const { resolvedTheme } = useTheme()
   const toast = useToast()
@@ -809,6 +945,11 @@ export default function SettingsPage() {
     : []
   const customHeadersConfigured = Boolean(settingsData?.sms?.custom_headers_configured)
   const captchaSecretConfigured = Boolean(settingsData?.security?.captcha?.secret_key_configured)
+  const resolvedPrimaryColor = primaryColor || DEFAULT_PRIMARY_COLOR
+  const resolvedPrimaryColorHex =
+    hslTripletToHex(resolvedPrimaryColor) || DEFAULT_PRIMARY_COLOR_HEX
+  const isLogoEmbedded = logoUrl.startsWith('data:image/')
+  const isFaviconEmbedded = faviconUrl.startsWith('data:image/')
   const adminSettingsPluginContext = {
     view: 'admin_settings',
     active_tab: activeTab,
@@ -831,6 +972,45 @@ export default function SettingsPage() {
     },
   }
 
+  const buildCustomizationPayload = useCallback(
+    (overrides: Record<string, any> = {}) => ({
+      _submitted: true,
+      primary_color: primaryColor,
+      logo_url: logoUrl,
+      favicon_url: faviconUrl,
+      page_rules: pageRules,
+      ...overrides,
+    }),
+    [faviconUrl, logoUrl, pageRules, primaryColor]
+  )
+
+  const handleBrandAssetUpload = useCallback(
+    async (file: File, kind: 'logo' | 'favicon') => {
+      if (!isSupportedImageFile(file)) {
+        toast.error(t.admin.brandAssetInvalidType)
+        return
+      }
+
+      const sizeLimit = kind === 'logo' ? LOGO_UPLOAD_MAX_BYTES : FAVICON_UPLOAD_MAX_BYTES
+      if (file.size > sizeLimit) {
+        toast.error(t.admin.brandAssetTooLarge.replace('{size}', formatBytes(sizeLimit)))
+        return
+      }
+
+      try {
+        const dataUrl = await readFileAsDataUrl(file)
+        if (kind === 'logo') {
+          setLogoUrl(dataUrl)
+        } else {
+          setFaviconUrl(dataUrl)
+        }
+      } catch {
+        toast.error(t.admin.brandAssetReadFailed)
+      }
+    },
+    [t.admin.brandAssetInvalidType, t.admin.brandAssetReadFailed, t.admin.brandAssetTooLarge, toast]
+  )
+
   // 当设置数据加载后，初始化默认主题和个性化配置
   useEffect(() => {
     if (settingsData?.app?.default_theme) {
@@ -838,6 +1018,12 @@ export default function SettingsPage() {
     }
     if (settingsData?.customization?.primary_color !== undefined) {
       setPrimaryColor(settingsData.customization.primary_color)
+    }
+    if (settingsData?.customization?.logo_url !== undefined) {
+      setLogoUrl(settingsData.customization.logo_url || '')
+    }
+    if (settingsData?.customization?.favicon_url !== undefined) {
+      setFaviconUrl(settingsData.customization.favicon_url || '')
     }
     if (settingsData?.customization?.page_rules) {
       setPageRules(settingsData.customization.page_rules)
@@ -4896,105 +5082,184 @@ export default function SettingsPage() {
                 <form
                   onSubmit={(e) => {
                     e.preventDefault()
-                    const formData = new FormData(e.currentTarget)
-                    handleSubmit('customization', {
-                      _submitted: true,
-                      primary_color: primaryColor,
-                      logo_url: formData.get('logo_url') || '',
-                      favicon_url: formData.get('favicon_url') || '',
-                      page_rules: pageRules,
-                    })
+                    handleSubmit('customization', buildCustomizationPayload())
                   }}
                   className="space-y-4"
                 >
                   <div>
                     <Label>{t.admin.primaryColorLabel}</Label>
-                    <Select value={primaryColor} onValueChange={setPrimaryColor}>
-                      <SelectTrigger className="mt-1.5">
-                        <SelectValue placeholder={t.admin.selectPrimaryColor} />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="217.2 91% 60%">
-                          <div className="flex items-center gap-2">
-                            <div
-                              className="h-4 w-4 rounded-full"
-                              style={{ background: 'hsl(217.2, 91%, 60%)' }}
+                    <div className="mt-2 flex flex-wrap items-center gap-3">
+                      <input
+                        type="color"
+                        value={resolvedPrimaryColorHex}
+                        onChange={(event) => setPrimaryColor(hexToHslTriplet(event.target.value))}
+                        aria-label={t.admin.pickCustomColor}
+                        className="h-10 w-14 cursor-pointer rounded border bg-background p-1"
+                      />
+                      <div className="flex flex-wrap gap-2">
+                        {PRIMARY_COLOR_PRESETS.map((preset) => {
+                          const selected = primaryColor === preset.value
+                          return (
+                            <button
+                              key={preset.value}
+                              type="button"
+                              onClick={() => setPrimaryColor(preset.value)}
+                              aria-label={t.admin[preset.labelKey]}
+                              title={t.admin[preset.labelKey]}
+                              className={`h-7 w-7 rounded-full border transition-transform hover:scale-105 ${
+                                selected ? 'border-foreground ring-2 ring-primary/30' : 'border-border'
+                              }`}
+                              style={{ backgroundColor: preset.hex }}
                             />
-                            {t.admin.blueDefault}
-                          </div>
-                        </SelectItem>
-                        <SelectItem value="142.1 76.2% 36.3%">
-                          <div className="flex items-center gap-2">
-                            <div
-                              className="h-4 w-4 rounded-full"
-                              style={{ background: 'hsl(142.1, 76.2%, 36.3%)' }}
-                            />
-                            {t.admin.green}
-                          </div>
-                        </SelectItem>
-                        <SelectItem value="346.8 77.2% 49.8%">
-                          <div className="flex items-center gap-2">
-                            <div
-                              className="h-4 w-4 rounded-full"
-                              style={{ background: 'hsl(346.8, 77.2%, 49.8%)' }}
-                            />
-                            {t.admin.rose}
-                          </div>
-                        </SelectItem>
-                        <SelectItem value="262.1 83.3% 57.8%">
-                          <div className="flex items-center gap-2">
-                            <div
-                              className="h-4 w-4 rounded-full"
-                              style={{ background: 'hsl(262.1, 83.3%, 57.8%)' }}
-                            />
-                            {t.admin.purple}
-                          </div>
-                        </SelectItem>
-                        <SelectItem value="24.6 95% 53.1%">
-                          <div className="flex items-center gap-2">
-                            <div
-                              className="h-4 w-4 rounded-full"
-                              style={{ background: 'hsl(24.6, 95%, 53.1%)' }}
-                            />
-                            {t.admin.orange}
-                          </div>
-                        </SelectItem>
-                        <SelectItem value="0 72.2% 50.6%">
-                          <div className="flex items-center gap-2">
-                            <div
-                              className="h-4 w-4 rounded-full"
-                              style={{ background: 'hsl(0, 72.2%, 50.6%)' }}
-                            />
-                            {t.admin.red}
-                          </div>
-                        </SelectItem>
-                      </SelectContent>
-                    </Select>
-                    <p className="mt-1 text-xs text-muted-foreground">{t.admin.primaryColorHint}</p>
+                          )
+                        })}
+                      </div>
+                      <Button type="button" variant="outline" size="sm" onClick={() => setPrimaryColor('')}>
+                        <RotateCcw className="mr-2 h-3.5 w-3.5" />
+                        {t.admin.resetPrimaryColor}
+                      </Button>
+                      <span className="text-xs text-muted-foreground">{resolvedPrimaryColorHex}</span>
+                    </div>
+                    <p className="mt-2 text-xs text-muted-foreground">{t.admin.primaryColorHint}</p>
                   </div>
 
-                  <div>
-                    <Label htmlFor="logo_url">Logo URL</Label>
-                    <Input
-                      id="logo_url"
-                      name="logo_url"
-                      defaultValue={settingsData?.customization?.logo_url || ''}
-                      placeholder="https://example.com/logo.png"
-                      className="mt-1.5"
-                    />
-                    <p className="mt-1 text-xs text-muted-foreground">{t.admin.logoUrlHint}</p>
-                  </div>
+                  <div className="grid gap-6 pt-1 md:grid-cols-2">
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <Label htmlFor="logo_url">{t.admin.logoImage}</Label>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            {t.admin.logoUploadHint.replace('{size}', formatBytes(LOGO_UPLOAD_MAX_BYTES))}
+                          </p>
+                        </div>
+                        <div className="flex h-11 min-w-20 items-center justify-center rounded-md border bg-muted/10 px-3">
+                          {logoUrl ? (
+                            <img
+                              src={logoUrl}
+                              alt={settingsData?.app?.name || 'Logo'}
+                              className="max-h-7 w-auto max-w-[96px] object-contain"
+                            />
+                          ) : (
+                            <ImageIcon className="h-4 w-4 text-muted-foreground" />
+                          )}
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => logoFileInputRef.current?.click()}
+                        >
+                          <FileUp className="mr-2 h-4 w-4" />
+                          {t.admin.uploadLogo}
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setLogoUrl('')}
+                          disabled={!logoUrl}
+                        >
+                          {t.admin.clearLogo}
+                        </Button>
+                        <input
+                          ref={logoFileInputRef}
+                          type="file"
+                          accept="image/png,image/jpeg,image/webp,image/svg+xml,image/x-icon,image/vnd.microsoft.icon"
+                          className="hidden"
+                          onChange={(event) => {
+                            const file = event.target.files?.[0]
+                            event.currentTarget.value = ''
+                            if (!file) {
+                              return
+                            }
+                            void handleBrandAssetUpload(file, 'logo')
+                          }}
+                        />
+                      </div>
+                      <div>
+                        <Input
+                          id="logo_url"
+                          value={isLogoEmbedded ? '' : logoUrl}
+                          onChange={(event) => setLogoUrl(event.target.value)}
+                          placeholder="https://example.com/logo.png"
+                        />
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {isLogoEmbedded ? t.admin.embeddedAssetHint : t.admin.logoUrlHint}
+                        </p>
+                      </div>
+                    </div>
 
-                  <div>
-                    <Label htmlFor="favicon_url">Favicon URL</Label>
-                    <Input
-                      id="favicon_url"
-                      name="favicon_url"
-                      defaultValue={settingsData?.customization?.favicon_url || ''}
-                      placeholder="https://example.com/favicon.ico"
-                      className="mt-1.5"
-                    />
-                    <p className="mt-1 text-xs text-muted-foreground">{t.admin.faviconUrlHint}</p>
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <Label htmlFor="favicon_url">{t.admin.faviconImage}</Label>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            {t.admin.faviconUploadHint.replace(
+                              '{size}',
+                              formatBytes(FAVICON_UPLOAD_MAX_BYTES)
+                            )}
+                          </p>
+                        </div>
+                        <div className="flex h-11 w-11 items-center justify-center rounded-md border bg-muted/10">
+                          {faviconUrl ? (
+                            <img
+                              src={faviconUrl}
+                              alt="Favicon"
+                              className="h-5 w-5 object-contain"
+                            />
+                          ) : (
+                            <ImageIcon className="h-4 w-4 text-muted-foreground" />
+                          )}
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => faviconFileInputRef.current?.click()}
+                        >
+                          <FileUp className="mr-2 h-4 w-4" />
+                          {t.admin.uploadFavicon}
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setFaviconUrl('')}
+                          disabled={!faviconUrl}
+                        >
+                          {t.admin.clearFavicon}
+                        </Button>
+                        <input
+                          ref={faviconFileInputRef}
+                          type="file"
+                          accept="image/png,image/jpeg,image/webp,image/svg+xml,image/x-icon,image/vnd.microsoft.icon"
+                          className="hidden"
+                          onChange={(event) => {
+                            const file = event.target.files?.[0]
+                            event.currentTarget.value = ''
+                            if (!file) {
+                              return
+                            }
+                            void handleBrandAssetUpload(file, 'favicon')
+                          }}
+                        />
+                      </div>
+                      <div>
+                        <Input
+                          id="favicon_url"
+                          value={isFaviconEmbedded ? '' : faviconUrl}
+                          onChange={(event) => setFaviconUrl(event.target.value)}
+                          placeholder="https://example.com/favicon.ico"
+                        />
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {isFaviconEmbedded ? t.admin.embeddedAssetHint : t.admin.faviconUrlHint}
+                        </p>
+                      </div>
+                    </div>
                   </div>
 
                   <Button type="submit" disabled={updateMutation.isPending}>
@@ -5018,14 +5283,12 @@ export default function SettingsPage() {
                 }
               }
               onSave={(data) => {
-                handleSubmit('customization', {
-                  _submitted: true,
-                  primary_color: primaryColor,
-                  logo_url: settingsData?.customization?.logo_url || '',
-                  favicon_url: settingsData?.customization?.favicon_url || '',
-                  page_rules: pageRules,
-                  auth_branding: data,
-                })
+                handleSubmit(
+                  'customization',
+                  buildCustomizationPayload({
+                    auth_branding: data,
+                  })
+                )
               }}
               isSaving={updateMutation.isPending}
               t={t}
@@ -5423,13 +5686,7 @@ export default function SettingsPage() {
                   type="button"
                   disabled={updateMutation.isPending}
                   onClick={() => {
-                    handleSubmit('customization', {
-                      _submitted: true,
-                      primary_color: primaryColor,
-                      logo_url: settingsData?.customization?.logo_url || '',
-                      favicon_url: settingsData?.customization?.favicon_url || '',
-                      page_rules: pageRules,
-                    })
+                    handleSubmit('customization', buildCustomizationPayload())
                   }}
                 >
                   <Save className="mr-2 h-4 w-4" />

@@ -24,6 +24,13 @@ type ProductHandler struct {
 	pluginManager           *service.PluginManagerService
 }
 
+type productListFilters struct {
+	Status     string
+	Category   string
+	Search     string
+	IsFeatured *bool
+}
+
 func NewProductHandler(productService *service.ProductService, virtualInventoryService *service.VirtualInventoryService, pluginManager *service.PluginManagerService) *ProductHandler {
 	return &ProductHandler{
 		productService:          productService,
@@ -469,6 +476,26 @@ func applyDeleteProductHookPayload(options *service.DeleteProductOptions, payloa
 		options.DeleteImages = value
 	}
 	return nil
+}
+
+func parseProductListFilters(c *gin.Context) productListFilters {
+	status := strings.TrimSpace(c.Query("status"))
+	category := strings.TrimSpace(c.Query("category"))
+	search := strings.TrimSpace(c.Query("search"))
+	isFeaturedStr := strings.TrimSpace(c.Query("is_featured"))
+
+	var isFeatured *bool
+	if isFeaturedStr != "" {
+		val := strings.EqualFold(isFeaturedStr, "true") || isFeaturedStr == "1"
+		isFeatured = &val
+	}
+
+	return productListFilters{
+		Status:     status,
+		Category:   category,
+		Search:     search,
+		IsFeatured: isFeatured,
+	}
 }
 
 // CreateProductRequest CreateProduct请求
@@ -995,24 +1022,131 @@ func (h *ProductHandler) GetProduct(c *gin.Context) {
 // ListProducts Product列表
 func (h *ProductHandler) ListProducts(c *gin.Context) {
 	page, limit := response.GetPagination(c)
-	status := c.Query("status")
-	category := c.Query("category")
-	search := c.Query("search")
-	isFeaturedStr := c.Query("is_featured")
+	filters := parseProductListFilters(c)
 
-	var isFeatured *bool
-	if isFeaturedStr != "" {
-		val := isFeaturedStr == "true"
-		isFeatured = &val
-	}
-
-	products, total, err := h.productService.ListProducts(page, limit, status, category, search, isFeatured, nil, false)
+	products, total, err := h.productService.ListProducts(
+		page,
+		limit,
+		filters.Status,
+		filters.Category,
+		filters.Search,
+		filters.IsFeatured,
+		nil,
+		false,
+	)
 	if err != nil {
 		response.InternalError(c, "Query failed")
 		return
 	}
 
 	response.Paginated(c, products, page, limit, total)
+}
+
+// ExportProducts 导出商品列表
+func (h *ProductHandler) ExportProducts(c *gin.Context) {
+	filters := parseProductListFilters(c)
+
+	products, total, err := h.productService.ListProducts(
+		1,
+		adminCSVExportMaxRows+1,
+		filters.Status,
+		filters.Category,
+		filters.Search,
+		filters.IsFeatured,
+		nil,
+		false,
+	)
+	if err != nil {
+		response.InternalError(c, "Query failed")
+		return
+	}
+	if total > int64(adminCSVExportMaxRows) {
+		response.BadRequest(c, fmt.Sprintf("Too many records to export (max %d). Please narrow the filters.", adminCSVExportMaxRows))
+		return
+	}
+
+	db := database.GetDB()
+	productIDs := make([]uint, 0, len(products))
+	for _, product := range products {
+		productIDs = append(productIDs, product.ID)
+	}
+
+	physicalBindingsByProductID := make(map[uint][]models.ProductInventoryBinding, len(productIDs))
+	virtualBindingsByProductID := make(map[uint][]models.ProductVirtualInventoryBinding, len(productIDs))
+
+	if db != nil && len(productIDs) > 0 {
+		var physicalBindings []models.ProductInventoryBinding
+		if err := db.Where("product_id IN ?", productIDs).
+			Preload("Inventory").
+			Order("created_at ASC").
+			Find(&physicalBindings).Error; err != nil {
+			response.InternalError(c, "Query failed")
+			return
+		}
+		for _, binding := range physicalBindings {
+			physicalBindingsByProductID[binding.ProductID] = append(physicalBindingsByProductID[binding.ProductID], binding)
+		}
+
+		var virtualBindings []models.ProductVirtualInventoryBinding
+		if err := db.Where("product_id IN ?", productIDs).
+			Preload("VirtualInventory").
+			Order("created_at ASC").
+			Find(&virtualBindings).Error; err != nil {
+			response.InternalError(c, "Query failed")
+			return
+		}
+		for _, binding := range virtualBindings {
+			virtualBindingsByProductID[binding.ProductID] = append(virtualBindingsByProductID[binding.ProductID], binding)
+		}
+	}
+
+	rows := make([][]string, 0, len(products))
+	for _, product := range products {
+		rows = append(rows, []string{
+			strconv.FormatUint(uint64(product.ID), 10),
+			product.SKU,
+			product.Name,
+			product.ProductCode,
+			string(product.ProductType),
+			product.Category,
+			csvJSONValue(product.Tags),
+			strconv.FormatInt(product.Price, 10),
+			strconv.FormatInt(product.OriginalPrice, 10),
+			strconv.Itoa(product.Stock),
+			strconv.Itoa(product.MaxPurchaseLimit),
+			string(product.Status),
+			strconv.Itoa(product.SortOrder),
+			strconv.FormatBool(product.IsFeatured),
+			strconv.FormatBool(product.IsRecommended),
+			product.InventoryMode,
+			strconv.FormatBool(product.AutoDelivery),
+			strconv.Itoa(product.ViewCount),
+			strconv.Itoa(product.SaleCount),
+			product.ShortDescription,
+			product.Description,
+			product.Remark,
+			csvJSONValue(product.Images),
+			csvJSONValue(product.Attributes),
+			csvJSONValue(buildProductExportPhysicalBindings(physicalBindingsByProductID[product.ID])),
+			csvJSONValue(buildProductExportVirtualBindings(virtualBindingsByProductID[product.ID])),
+			csvTimeValue(product.CreatedAt),
+			csvTimeValue(product.UpdatedAt),
+		})
+	}
+
+	logPayload := map[string]interface{}{
+		"count":    len(rows),
+		"status":   filters.Status,
+		"category": filters.Category,
+		"search":   filters.Search,
+		"format":   "xlsx",
+	}
+	if filters.IsFeatured != nil {
+		logPayload["is_featured"] = *filters.IsFeatured
+	}
+	logger.LogOperation(db, c, "export", "product", nil, logPayload)
+
+	writeXLSXAttachment(c, buildAdminXLSXFileName("products"), "Products", buildProductCSVHeaders(), rows)
 }
 
 // UpdateStatusRequest Update状态请求
@@ -1261,8 +1395,7 @@ func (h *ProductHandler) UpdateInventoryMode(c *gin.Context) {
 		}
 	}
 
-	product.InventoryMode = req.InventoryMode
-	if err := h.productService.UpdateProduct(uint(productID), product); err != nil {
+	if err := h.productService.UpdateInventoryMode(uint(productID), req.InventoryMode); err != nil {
 		if respondProductServiceError(c, err) {
 			return
 		}
