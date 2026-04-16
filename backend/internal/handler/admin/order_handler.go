@@ -483,6 +483,11 @@ func (h *OrderHandler) GetOrder(c *gin.Context) {
 			log.Printf("admin.get_order failed to load virtual stocks: order_no=%s err=%v", order.OrderNo, err)
 			warnings = append(warnings, "Failed to load order virtual stock")
 		} else if len(stockList) > 0 {
+			if !h.cfg.Order.EnableVirtualStockInlineIframe {
+				for i := range stockList {
+					stockList[i].Presentation = ""
+				}
+			}
 			virtualStocks = stockList
 		}
 	}

@@ -29,10 +29,24 @@ type ScriptDeliveryResult struct {
 	Message string               `json:"message,omitempty"`
 }
 
+type ScriptDeliveryPresentation struct {
+	InlineIframe *ScriptDeliveryInlineIframe `json:"inline_iframe,omitempty"`
+}
+
+type ScriptDeliveryInlineIframe struct {
+	Title       string `json:"title,omitempty"`
+	Height      int    `json:"height,omitempty"`
+	Scope       string `json:"scope,omitempty"`
+	ButtonLabel string `json:"button_label,omitempty"`
+	Src         string `json:"src,omitempty"`
+	HTML        string `json:"html,omitempty"`
+}
+
 // ScriptDeliveryItem 脚本发货的单个卡密项
 type ScriptDeliveryItem struct {
-	Content string `json:"content"`
-	Remark  string `json:"remark,omitempty"`
+	Content      string                      `json:"content"`
+	Remark       string                      `json:"remark,omitempty"`
+	Presentation *ScriptDeliveryPresentation `json:"presentation,omitempty"`
 }
 
 // ScriptDeliveryService JS脚本发货服务
@@ -452,6 +466,9 @@ func (s *ScriptDeliveryService) getConfig() *config.Config {
 const (
 	defaultVirtualScriptTimeoutMaxMs = 10000
 	minVirtualScriptTimeoutMs        = 100
+	defaultInlineIframeHeight        = 420
+	minInlineIframeHeight            = 240
+	maxInlineIframeHeight            = 1200
 )
 
 func normalizeVirtualScriptTimeoutMaxMs(timeoutMs int) int {
@@ -560,6 +577,120 @@ func parseScriptDeliveryTimeoutValue(value interface{}) int {
 	return 0
 }
 
+func normalizeScriptDeliveryPresentation(value interface{}) *ScriptDeliveryPresentation {
+	presentationMap, ok := value.(map[string]interface{})
+	if !ok {
+		return nil
+	}
+
+	inlineIframe := normalizeScriptDeliveryInlineIframe(
+		getScriptDeliveryObjectValue(presentationMap, "inline_iframe", "inlineIframe"),
+	)
+	if inlineIframe == nil {
+		return nil
+	}
+
+	return &ScriptDeliveryPresentation{
+		InlineIframe: inlineIframe,
+	}
+}
+
+func normalizeScriptDeliveryInlineIframe(value interface{}) *ScriptDeliveryInlineIframe {
+	inlineIframeMap, ok := value.(map[string]interface{})
+	if !ok {
+		return nil
+	}
+
+	src := strings.TrimSpace(getScriptDeliveryStringValue(inlineIframeMap, "src"))
+	html := strings.TrimSpace(getScriptDeliveryStringValue(inlineIframeMap, "html"))
+	if src != "" && !isSafeScriptDeliveryInlineIframeSrc(src) {
+		src = ""
+	}
+	if src == "" && html == "" {
+		return nil
+	}
+
+	return &ScriptDeliveryInlineIframe{
+		Title:       strings.TrimSpace(getScriptDeliveryStringValue(inlineIframeMap, "title")),
+		Height:      clampScriptDeliveryInlineIframeHeight(getScriptDeliveryIntValue(inlineIframeMap, "height")),
+		Scope:       normalizeScriptDeliveryInlineIframeScope(getScriptDeliveryStringValue(inlineIframeMap, "scope")),
+		ButtonLabel: strings.TrimSpace(getScriptDeliveryStringValue(inlineIframeMap, "button_label", "buttonLabel")),
+		Src:         src,
+		HTML:        html,
+	}
+}
+
+func getScriptDeliveryObjectValue(obj map[string]interface{}, keys ...string) interface{} {
+	for _, key := range keys {
+		value, exists := obj[key]
+		if exists && value != nil {
+			return value
+		}
+	}
+	return nil
+}
+
+func getScriptDeliveryStringValue(obj map[string]interface{}, keys ...string) string {
+	for _, key := range keys {
+		value, exists := obj[key]
+		if !exists || value == nil {
+			continue
+		}
+		if text, ok := value.(string); ok {
+			return text
+		}
+	}
+	return ""
+}
+
+func getScriptDeliveryIntValue(obj map[string]interface{}, keys ...string) int {
+	for _, key := range keys {
+		value, exists := obj[key]
+		if !exists || value == nil {
+			continue
+		}
+		return parseScriptDeliveryTimeoutValue(value)
+	}
+	return 0
+}
+
+func normalizeScriptDeliveryInlineIframeScope(scope string) string {
+	switch strings.ToLower(strings.TrimSpace(scope)) {
+	case "user", "admin", "both":
+		return strings.ToLower(strings.TrimSpace(scope))
+	default:
+		return "both"
+	}
+}
+
+func clampScriptDeliveryInlineIframeHeight(height int) int {
+	if height <= 0 {
+		return defaultInlineIframeHeight
+	}
+	if height < minInlineIframeHeight {
+		return minInlineIframeHeight
+	}
+	if height > maxInlineIframeHeight {
+		return maxInlineIframeHeight
+	}
+	return height
+}
+
+func isSafeScriptDeliveryInlineIframeSrc(src string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(src))
+	if err != nil {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(parsed.Scheme)) {
+	case "", "http", "https":
+		return true
+	case "javascript", "data", "file", "vbscript":
+		return false
+	default:
+		return true
+	}
+}
+
 // parseDeliveryResult 解析发货结果
 func (s *ScriptDeliveryService) parseDeliveryResult(result goja.Value, expectedQty int) (*ScriptDeliveryResult, error) {
 	if result == nil || goja.IsUndefined(result) || goja.IsNull(result) {
@@ -600,6 +731,9 @@ func (s *ScriptDeliveryService) parseDeliveryResult(result goja.Value, expectedQ
 					}
 					if remark, ok := itemMap["remark"].(string); ok {
 						di.Remark = remark
+					}
+					if presentation := normalizeScriptDeliveryPresentation(itemMap["presentation"]); presentation != nil {
+						di.Presentation = presentation
 					}
 					if di.Content != "" {
 						deliveryResult.Items = append(deliveryResult.Items, di)
