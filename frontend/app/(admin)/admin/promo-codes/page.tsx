@@ -1,13 +1,12 @@
 'use client'
 
-import { useDeferredValue, useState } from 'react'
+import { useDeferredValue, useRef, useState } from 'react'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import { getAdminPromoCodes, deletePromoCode } from '@/lib/api'
 import { DataTable } from '@/components/admin/data-table'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { Card, CardContent } from '@/components/ui/card'
-import { Plus, RefreshCw, Pencil, Trash2 } from 'lucide-react'
+import { Download, Plus, RefreshCw, Pencil, Trash2, Upload } from 'lucide-react'
 import Link from 'next/link'
 import toast from 'react-hot-toast'
 import { Input } from '@/components/ui/input'
@@ -32,9 +31,11 @@ import { useLocale } from '@/hooks/use-locale'
 import { getTranslations } from '@/lib/i18n'
 import { usePageTitle } from '@/hooks/use-page-title'
 import { resolveApiErrorMessage } from '@/lib/api-error'
+import { resolveClientAPIProxyURL } from '@/lib/api-base-url'
 import { PluginExtensionList } from '@/components/plugins/plugin-extension-list'
 import { PluginSlot } from '@/components/plugins/plugin-slot'
 import { usePluginExtensionBatch } from '@/lib/plugin-extension-batch'
+import { usePermission } from '@/hooks/use-permission'
 
 interface PromoCode {
   id: number
@@ -73,10 +74,37 @@ export default function AdminPromoCodesPage() {
   const [status, setStatus] = useState<string | undefined>()
   const [search, setSearch] = useState('')
   const [deleteId, setDeleteId] = useState<number | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const deferredSearch = useDeferredValue(search)
   const { locale } = useLocale()
+  const { hasPermission } = usePermission()
   const t = getTranslations(locale)
   usePageTitle(t.pageTitle.adminPromoCodes)
+  const canEditPromoCodes = hasPermission('product.edit')
+  const canDeletePromoCodes = hasPermission('product.delete')
+
+  const readFetchErrorMessage = async (response: Response, fallback: string) => {
+    try {
+      const contentType = response.headers.get('content-type') || ''
+      if (contentType.includes('application/json')) {
+        const payload = await response.json()
+        return resolveApiErrorMessage(payload, t, fallback)
+      }
+
+      const text = (await response.text()).trim()
+      if (text) {
+        try {
+          return resolveApiErrorMessage(JSON.parse(text), t, fallback)
+        } catch {
+          return text
+        }
+      }
+    } catch {
+      // ignore parse errors and fall back to the provided message
+    }
+
+    return fallback
+  }
 
   const statusConfig: Record<string, { label: string; color: string }> = {
     active: {
@@ -113,6 +141,100 @@ export default function AdminPromoCodesPage() {
       toast.error(resolveApiErrorMessage(error, t, t.promoCode.deleteFailed))
     },
   })
+
+  const importMutation = useMutation({
+    mutationFn: async (file: File) => {
+      const formData = new FormData()
+      formData.append('file', file)
+      formData.append('conflict_mode', 'upsert')
+
+      const response = await fetch(resolveClientAPIProxyURL('/api/admin/promo-codes/import'), {
+        method: 'POST',
+        body: formData,
+      })
+
+      if (!response.ok) {
+        throw new Error(await readFetchErrorMessage(response, t.admin.importFailed))
+      }
+
+      return response.json()
+    },
+    onSuccess: (data) => {
+      toast.dismiss()
+      const result = data?.data
+      if (result?.error_count > 0) {
+        toast.error(result.message || t.promoCode.importFailed, {
+          duration: 6000,
+        })
+        if (Array.isArray(result.errors) && result.errors.length > 0) {
+          console.error('Promo code import errors:', result.errors)
+        }
+      } else {
+        toast.success(result?.message || t.promoCode.importSuccess)
+      }
+      refetch()
+    },
+    onError: (error: unknown) => {
+      toast.dismiss()
+      toast.error(resolveApiErrorMessage(error, t, t.admin.importFailed))
+    },
+  })
+
+  const handleExport = () => {
+    const params = new URLSearchParams()
+    if (status && status !== 'all') params.append('status', status)
+    if (deferredSearch.trim()) params.append('search', deferredSearch.trim())
+
+    const url = resolveClientAPIProxyURL(`/api/admin/promo-codes/export?${params.toString()}`)
+
+    fetch(url)
+      .then(async (res) => {
+        if (!res.ok) {
+          throw new Error(await readFetchErrorMessage(res, t.admin.exportFailed))
+        }
+        return res.blob()
+      })
+      .then((blob) => {
+        const blobUrl = window.URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = blobUrl
+        a.download = `promo_codes_${new Date().toISOString().slice(0, 10)}.xlsx`
+        document.body.appendChild(a)
+        a.click()
+        document.body.removeChild(a)
+        window.URL.revokeObjectURL(blobUrl)
+        toast.success(t.promoCode.exportSuccess)
+      })
+      .catch((err: Error) => {
+        toast.error(`${t.admin.exportFailed}: ${err.message}`)
+      })
+  }
+
+  const handleImportClick = () => {
+    fileInputRef.current?.click()
+  }
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) {
+      return
+    }
+
+    if (!file.name.toLowerCase().endsWith('.xlsx')) {
+      toast.error(t.admin.fileFormatError)
+      if (fileInputRef.current) {
+        fileInputRef.current.value = ''
+      }
+      return
+    }
+
+    toast.loading(t.admin.importLoading)
+    importMutation.mutate(file)
+
+    if (fileInputRef.current) {
+      fileInputRef.current.value = ''
+    }
+  }
 
   const columns = [
     {
@@ -181,14 +303,18 @@ export default function AdminPromoCodesPage() {
         const rowExtensions = adminPromoCodeRowActionExtensions[String(promo.id)] || []
         return (
           <div className="flex items-center gap-2">
-            <Button asChild size="sm" variant="outline">
-              <Link href={`/admin/promo-codes/${promo.id}`}>
-                <Pencil className="h-4 w-4" />
-              </Link>
-            </Button>
-            <Button size="sm" variant="destructive" onClick={() => setDeleteId(promo.id)}>
-              <Trash2 className="h-4 w-4" />
-            </Button>
+            {canEditPromoCodes ? (
+              <Button asChild size="sm" variant="outline">
+                <Link href={`/admin/promo-codes/${promo.id}`}>
+                  <Pencil className="h-4 w-4" />
+                </Link>
+              </Button>
+            ) : null}
+            {canDeletePromoCodes ? (
+              <Button size="sm" variant="destructive" onClick={() => setDeleteId(promo.id)}>
+                <Trash2 className="h-4 w-4" />
+              </Button>
+            ) : null}
             {rowExtensions.length > 0 ? (
               <PluginExtensionList extensions={rowExtensions} display="inline" />
             ) : null}
@@ -253,13 +379,39 @@ export default function AdminPromoCodesPage() {
           <p className="mt-1 text-sm text-muted-foreground">
             {t.admin.totalRecords.replace('{count}', String(totalPromoCodes))}
           </p>
+          <p className="mt-2 text-xs text-muted-foreground">{t.promoCode.importHint}</p>
         </div>
         <div className="flex gap-2">
-          <Button asChild>
-            <Link href="/admin/promo-codes/new">
-              <Plus className="mr-2 h-4 w-4" />
-              {t.promoCode.addPromoCode}
-            </Link>
+          {canEditPromoCodes ? (
+            <Button asChild>
+              <Link href="/admin/promo-codes/new">
+                <Plus className="mr-2 h-4 w-4" />
+                {t.promoCode.addPromoCode}
+              </Link>
+            </Button>
+          ) : null}
+          {canEditPromoCodes ? (
+            <>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                className="hidden"
+                onChange={handleFileChange}
+              />
+              <Button
+                variant="outline"
+                onClick={handleImportClick}
+                disabled={importMutation.isPending}
+              >
+                <Upload className="mr-2 h-4 w-4" />
+                {t.promoCode.importPromoCodes}
+              </Button>
+            </>
+          ) : null}
+          <Button variant="outline" onClick={handleExport}>
+            <Download className="mr-2 h-4 w-4" />
+            {t.promoCode.exportPromoCodes}
           </Button>
           <Button variant="outline" onClick={() => refetch()}>
             <RefreshCw className="mr-2 h-4 w-4" />
@@ -344,7 +496,7 @@ export default function AdminPromoCodesPage() {
           <AlertDialogFooter>
             <AlertDialogCancel>{t.common.cancel}</AlertDialogCancel>
             <AlertDialogAction
-              onClick={() => deleteId && deleteMutation.mutate(deleteId)}
+              onClick={() => deleteId && canDeletePromoCodes && deleteMutation.mutate(deleteId)}
               className="bg-red-600 hover:bg-red-700"
             >
               {t.common.delete}

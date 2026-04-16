@@ -876,6 +876,10 @@ export async function getAdminProducts(params?: {
   return apiClient.get(`/api/admin/products?${query}`)
 }
 
+export async function getAdminProductCategories() {
+  return apiClient.get('/api/admin/products/categories')
+}
+
 export async function getAdminProduct(id: number) {
   return apiClient.get(`/api/admin/products/${id}`)
 }
