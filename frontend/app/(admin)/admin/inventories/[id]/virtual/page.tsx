@@ -138,6 +138,154 @@ function onDeliver(order, config) {
   return { success: true, items: items };
 }`
 
+const SCRIPT_EXAMPLE_INLINE_IFRAME_SRC = `// Return a delivery result with an inline iframe panel (src mode)
+// Requires:
+// 1. System setting "Enable Virtual Stock Inline iframe" = ON
+// 2. Current script inventory "Allow Inline iframe" = ON
+// 3. config.panel_url_base points to a page you control
+function onDeliver(order, config) {
+  var items = [];
+  var baseUrl = String(config.panel_url_base || "").trim();
+  if (!baseUrl) {
+    return { success: false, message: "config.panel_url_base is required" };
+  }
+
+  for (var i = 0; i < order.quantity; i++) {
+    var code = "PANEL-" + AuraLogic.utils.generateId();
+    var joiner = baseUrl.indexOf("?") >= 0 ? "&" : "?";
+    var panelUrl =
+      baseUrl +
+      joiner +
+      "order_no=" + encodeURIComponent(order.order_no) +
+      "&item_index=" + encodeURIComponent(String(i + 1)) +
+      "&content=" + encodeURIComponent(code);
+
+    items.push({
+      content: code,
+      remark: "Open the panel below for more actions",
+      presentation: {
+        inline_iframe: {
+          title: config.iframe_title || "Service Console",
+          height: config.iframe_height || 520,
+          scope: config.iframe_scope || "user",
+          button_label: config.button_label || "Open Panel",
+          src: panelUrl
+        }
+      }
+    });
+  }
+
+  return { success: true, items: items };
+}`
+
+const SCRIPT_EXAMPLE_INLINE_IFRAME_SRC_CONFIG = `{
+  "panel_url_base": "https://example.com/member/panel",
+  "iframe_title": "Service Console",
+  "iframe_height": 520,
+  "iframe_scope": "user",
+  "button_label": "Open Panel"
+}`
+
+const SCRIPT_EXAMPLE_INLINE_IFRAME_HTML = `// Return a delivery result with an inline iframe panel (html mode)
+// This example renders a self-contained interactive panel inside iframe.srcDoc.
+function _escapeHtml(value) {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function onDeliver(order, config) {
+  var items = [];
+
+  for (var i = 0; i < order.quantity; i++) {
+    var code = "HTML-" + AuraLogic.utils.generateId();
+    var safeCode = _escapeHtml(code);
+    var safeOrderNo = _escapeHtml(order.order_no);
+    var safeTitle = _escapeHtml(config.panel_title || "Inline Order Panel");
+    var safeAccent = _escapeHtml(config.accent_color || "#111827");
+
+    var html = [
+      "<!doctype html>",
+      "<html>",
+      "<head>",
+      "  <meta charset=\\"utf-8\\" />",
+      "  <meta name=\\"viewport\\" content=\\"width=device-width,initial-scale=1\\" />",
+      "  <title>" + safeTitle + "</title>",
+      "  <style>",
+      "    :root { color-scheme: light dark; }",
+      "    body { margin: 0; padding: 20px; font-family: ui-sans-serif, system-ui, sans-serif; background: #f5f7fb; color: #111827; }",
+      "    .card { background: #fff; border: 1px solid #e5e7eb; border-radius: 16px; padding: 18px; box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08); }",
+      "    .eyebrow { font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: #6b7280; }",
+      "    h1 { margin: 8px 0 12px; font-size: 20px; }",
+      "    .code { margin: 14px 0; padding: 14px; border-radius: 12px; background: #111827; color: #fff; font: 600 14px/1.5 ui-monospace, SFMono-Regular, monospace; word-break: break-all; }",
+      "    .meta { color: #4b5563; font-size: 13px; line-height: 1.6; }",
+      "    .actions { display: flex; gap: 10px; margin-top: 16px; flex-wrap: wrap; }",
+      "    button { border: 0; border-radius: 999px; padding: 10px 14px; background: " + safeAccent + "; color: #fff; cursor: pointer; font-weight: 600; }",
+      "    .ghost { background: #e5e7eb; color: #111827; }",
+      "    .toast { margin-top: 12px; font-size: 13px; color: #059669; min-height: 20px; }",
+      "  </style>",
+      "</head>",
+      "<body>",
+      "  <div class=\\"card\\">",
+      "    <div class=\\"eyebrow\\">Inline HTML</div>",
+      "    <h1>" + safeTitle + "</h1>",
+      "    <div class=\\"meta\\">Order: " + safeOrderNo + "<br/>Item: #" + (i + 1) + "</div>",
+      "    <div id=\\"code\\" class=\\"code\\">" + safeCode + "</div>",
+      "    <div class=\\"actions\\">",
+      "      <button onclick=\\"copyCode()\\">Copy Code</button>",
+      "      <button class=\\"ghost\\" onclick=\\"toggleTheme()\\">Toggle Theme</button>",
+      "    </div>",
+      "    <div id=\\"toast\\" class=\\"toast\\"></div>",
+      "  </div>",
+      "  <script>",
+      "    function copyCode() {",
+      "      var text = document.getElementById('code').textContent || '';",
+      "      navigator.clipboard.writeText(text).then(function () {",
+      "        document.getElementById('toast').textContent = 'Copied to clipboard';",
+      "      });",
+      "    }",
+      "    function toggleTheme() {",
+      "      var body = document.body;",
+      "      if (body.style.background === 'rgb(17, 24, 39)') {",
+      "        body.style.background = '#f5f7fb'; body.style.color = '#111827';",
+      "      } else {",
+      "        body.style.background = '#111827'; body.style.color = '#f9fafb';",
+      "      }",
+      "    }",
+      "  <\\/script>",
+      "</body>",
+      "</html>"
+    ].join("\\n");
+
+    items.push({
+      content: code,
+      remark: "Open the panel below for inline actions",
+      presentation: {
+        inline_iframe: {
+          title: config.panel_title || "Inline Order Panel",
+          height: config.iframe_height || 440,
+          scope: config.iframe_scope || "user",
+          button_label: config.button_label || "Open Inline Panel",
+          html: html
+        }
+      }
+    });
+  }
+
+  return { success: true, items: items };
+}`
+
+const SCRIPT_EXAMPLE_INLINE_IFRAME_HTML_CONFIG = `{
+  "panel_title": "Inline Order Panel",
+  "iframe_height": 440,
+  "iframe_scope": "user",
+  "button_label": "Open Inline Panel",
+  "accent_color": "#111827"
+}`
+
 const SCRIPT_EXAMPLE_EMBY_CONFIG = `{
   "server_url": "https://emby.example.com/emby",
   "api_key": "YOUR_EMBY_ADMIN_API_KEY",
@@ -439,6 +587,7 @@ export default function VirtualInventoryEditPage() {
     script_config: '',
     description: '',
     total_limit: 0,
+    allow_inline_iframe: false,
     is_active: true,
     notes: ''
   })
@@ -469,6 +618,7 @@ export default function VirtualInventoryEditPage() {
       script_config: inv.script_config || '',
       description: inv.description || '',
       total_limit: inv.total_limit || 0,
+      allow_inline_iframe: !!inv.allow_inline_iframe,
       is_active: inv.is_active ?? true,
       notes: inv.notes || ''
     })
@@ -602,6 +752,7 @@ export default function VirtualInventoryEditPage() {
       type: editForm.type,
       is_active: editForm.is_active,
       total_limit: Number(editForm.total_limit || 0),
+      allow_inline_iframe: Boolean(editForm.allow_inline_iframe),
       description_length: editForm.description.length,
       notes_length: editForm.notes.length,
       script_length: editForm.script.length,
@@ -874,6 +1025,20 @@ export default function VirtualInventoryEditPage() {
               </div>
             )}
           </div>
+          {editForm.type === 'script' && (
+            <div className="flex items-center justify-between rounded-lg border border-border/70 bg-muted/20 px-3 py-3">
+              <div className="pr-4">
+                <Label>{t.admin.allowInlineIframe}</Label>
+                <p className="text-xs text-muted-foreground">{t.admin.allowInlineIframeHint}</p>
+              </div>
+              <Switch
+                checked={editForm.allow_inline_iframe}
+                onCheckedChange={(checked) =>
+                  setEditForm({ ...editForm, allow_inline_iframe: checked })
+                }
+              />
+            </div>
+          )}
           <div className="space-y-2">
             <Label htmlFor="description">{t.admin.descriptionLabel}</Label>
             <Textarea
@@ -948,6 +1113,26 @@ export default function VirtualInventoryEditPage() {
                       toast.success(t.admin.scriptExampleInserted)
                     }}>
                       {t.admin.scriptExampleOrder}
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => {
+                      setEditForm({
+                        ...editForm,
+                        script: SCRIPT_EXAMPLE_INLINE_IFRAME_SRC,
+                        script_config: SCRIPT_EXAMPLE_INLINE_IFRAME_SRC_CONFIG,
+                      })
+                      toast.success(t.admin.scriptExampleInserted)
+                    }}>
+                      {t.admin.scriptExampleInlineIframeSrc}
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => {
+                      setEditForm({
+                        ...editForm,
+                        script: SCRIPT_EXAMPLE_INLINE_IFRAME_HTML,
+                        script_config: SCRIPT_EXAMPLE_INLINE_IFRAME_HTML_CONFIG,
+                      })
+                      toast.success(t.admin.scriptExampleInserted)
+                    }}>
+                      {t.admin.scriptExampleInlineIframeHtml}
                     </DropdownMenuItem>
                     <DropdownMenuItem onClick={() => {
                       setEditForm({ ...editForm, script: SCRIPT_EXAMPLE_EMBY_REGISTER, script_config: SCRIPT_EXAMPLE_EMBY_CONFIG })

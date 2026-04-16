@@ -23,8 +23,9 @@ type VirtualProductStock struct {
 	VirtualInventory   *VirtualInventory `gorm:"foreignKey:VirtualInventoryID" json:"virtual_inventory,omitempty"`
 
 	// 虚拟商品内容
-	Content string `gorm:"type:text;not null" json:"content"`         // 卡密/激活码内容
-	Remark  string `gorm:"type:varchar(500)" json:"remark,omitempty"` // 备注信息
+	Content      string `gorm:"type:text;not null" json:"content"`         // 卡密/激活码内容
+	Remark       string `gorm:"type:varchar(500)" json:"remark,omitempty"` // 备注信息
+	Presentation JSON   `gorm:"type:text" json:"presentation,omitempty"`
 
 	// 状态
 	Status VirtualProductStockStatus `gorm:"type:varchar(20);not null;default:'available';index:idx_virtual_inventory_status" json:"status"`

@@ -208,10 +208,11 @@ func (h *SettingsHandler) GetPublicConfig(c *gin.Context) {
 		"serial": gin.H{
 			"enabled": h.cfg.Serial.Enabled,
 		},
-		"auto_cancel_hours":         h.cfg.Order.AutoCancelHours,
-		"invoice_enabled":           h.cfg.Order.Invoice.Enabled,
-		"show_virtual_stock_remark": h.cfg.Order.ShowVirtualStockRemark,
-		"smtp_enabled":              h.cfg.SMTP.Enabled,
+		"auto_cancel_hours":                  h.cfg.Order.AutoCancelHours,
+		"invoice_enabled":                    h.cfg.Order.Invoice.Enabled,
+		"show_virtual_stock_remark":          h.cfg.Order.ShowVirtualStockRemark,
+		"enable_virtual_stock_inline_iframe": h.cfg.Order.EnableVirtualStockInlineIframe,
+		"smtp_enabled":                       h.cfg.SMTP.Enabled,
 		"captcha": gin.H{
 			"provider":                 h.cfg.Security.Captcha.Provider,
 			"site_key":                 h.cfg.Security.Captcha.SiteKey,
@@ -286,14 +287,15 @@ func (h *SettingsHandler) GetSettings(c *gin.Context) {
 		"email_rate_limit": h.cfg.EmailRateLimit,
 		"sms_rate_limit":   h.cfg.SMSRateLimit,
 		"order": gin.H{
-			"no_prefix":                     h.cfg.Order.NoPrefix,
-			"auto_cancel_hours":             h.cfg.Order.AutoCancelHours,
-			"currency":                      h.cfg.Order.Currency,
-			"max_order_items":               h.cfg.Order.MaxOrderItems,
-			"max_item_quantity":             h.cfg.Order.MaxItemQuantity,
-			"virtual_delivery_order":        h.cfg.Order.VirtualDeliveryOrder,
-			"virtual_script_timeout_max_ms": h.cfg.Order.VirtualScriptTimeoutMaxMs,
-			"show_virtual_stock_remark":     h.cfg.Order.ShowVirtualStockRemark,
+			"no_prefix":                          h.cfg.Order.NoPrefix,
+			"auto_cancel_hours":                  h.cfg.Order.AutoCancelHours,
+			"currency":                           h.cfg.Order.Currency,
+			"max_order_items":                    h.cfg.Order.MaxOrderItems,
+			"max_item_quantity":                  h.cfg.Order.MaxItemQuantity,
+			"virtual_delivery_order":             h.cfg.Order.VirtualDeliveryOrder,
+			"virtual_script_timeout_max_ms":      h.cfg.Order.VirtualScriptTimeoutMaxMs,
+			"show_virtual_stock_remark":          h.cfg.Order.ShowVirtualStockRemark,
+			"enable_virtual_stock_inline_iframe": h.cfg.Order.EnableVirtualStockInlineIframe,
 			"high_concurrency_protection": gin.H{
 				"enabled":         h.cfg.Order.HighConcurrencyProtection.Enabled,
 				"mode":            h.cfg.Order.HighConcurrencyProtection.Mode,
@@ -568,6 +570,7 @@ type UpdateSettingsRequest struct {
 		VirtualDeliveryOrder           string                                      `json:"virtual_delivery_order"`
 		VirtualScriptTimeoutMaxMs      int                                         `json:"virtual_script_timeout_max_ms"`
 		ShowVirtualStockRemark         *bool                                       `json:"show_virtual_stock_remark"`
+		EnableVirtualStockInlineIframe *bool                                       `json:"enable_virtual_stock_inline_iframe"`
 		StockDisplay                   config.StockDisplayConfig                   `json:"stock_display"`
 		Invoice                        config.InvoiceConfig                        `json:"invoice"`
 		HighConcurrencyProtection      config.OrderHighConcurrencyProtectionConfig `json:"high_concurrency_protection"`
@@ -932,6 +935,10 @@ func (h *SettingsHandler) UpdateSettings(c *gin.Context) {
 		if req.Order.ShowVirtualStockRemark != nil {
 			showVirtualStockRemark = *req.Order.ShowVirtualStockRemark
 		}
+		enableVirtualStockInlineIframe := false
+		if req.Order.EnableVirtualStockInlineIframe != nil {
+			enableVirtualStockInlineIframe = *req.Order.EnableVirtualStockInlineIframe
+		}
 		currentConfig["order"] = map[string]interface{}{
 			"no_prefix":                           req.Order.NoPrefix,
 			"auto_cancel_hours":                   req.Order.AutoCancelHours,
@@ -944,6 +951,7 @@ func (h *SettingsHandler) UpdateSettings(c *gin.Context) {
 			"virtual_delivery_order":              req.Order.VirtualDeliveryOrder,
 			"virtual_script_timeout_max_ms":       req.Order.VirtualScriptTimeoutMaxMs,
 			"show_virtual_stock_remark":           showVirtualStockRemark,
+			"enable_virtual_stock_inline_iframe":  enableVirtualStockInlineIframe,
 			"high_concurrency_protection": map[string]interface{}{
 				"enabled":         req.Order.HighConcurrencyProtection.Enabled,
 				"mode":            req.Order.HighConcurrencyProtection.Mode,

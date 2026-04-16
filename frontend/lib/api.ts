@@ -2575,6 +2575,8 @@ export interface VirtualInventory {
   script: string
   script_config: string
   description: string
+  total_limit: number
+  allow_inline_iframe: boolean
   is_active: boolean
   notes: string
   total: number
@@ -2606,6 +2608,8 @@ export async function createVirtualInventory(data: {
   script?: string
   script_config?: string
   description?: string
+  total_limit?: number
+  allow_inline_iframe?: boolean
   is_active?: boolean
   notes?: string
 }) {
@@ -2627,6 +2631,8 @@ export async function updateVirtualInventory(
     script?: string
     script_config?: string
     description?: string
+    total_limit?: number
+    allow_inline_iframe?: boolean
     is_active?: boolean
     notes?: string
   }
