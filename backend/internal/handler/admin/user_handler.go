@@ -91,6 +91,55 @@ func userToResponse(user *models.User) gin.H {
 	return resp
 }
 
+func parseUserListFilters(c *gin.Context) (repository.UserListFilters, string, bool) {
+	filters := repository.UserListFilters{
+		Search:  strings.TrimSpace(c.Query("search")),
+		Role:    strings.TrimSpace(c.Query("role")),
+		Locale:  strings.TrimSpace(c.Query("locale")),
+		Country: strings.TrimSpace(c.Query("country")),
+	}
+
+	var ok bool
+	filters.IsActive, ok = parseOptionalBoolQuery(c.Query("is_active"))
+	if !ok {
+		return filters, "Invalid is_active parameter", false
+	}
+	filters.EmailVerified, ok = parseOptionalBoolQuery(c.Query("email_verified"))
+	if !ok {
+		return filters, "Invalid email_verified parameter", false
+	}
+	filters.EmailNotifyMarketing, ok = parseOptionalBoolQuery(c.Query("email_notify_marketing"))
+	if !ok {
+		return filters, "Invalid email_notify_marketing parameter", false
+	}
+	filters.SMSNotifyMarketing, ok = parseOptionalBoolQuery(c.Query("sms_notify_marketing"))
+	if !ok {
+		return filters, "Invalid sms_notify_marketing parameter", false
+	}
+	filters.HasPhone, ok = parseOptionalBoolQuery(c.Query("has_phone"))
+	if !ok {
+		return filters, "Invalid has_phone parameter", false
+	}
+
+	return filters, "", true
+}
+
+func (h *UserHandler) loadAdminPermissionMap(userIDs []uint) map[uint][]string {
+	result := make(map[uint][]string)
+	if len(userIDs) == 0 {
+		return result
+	}
+
+	var permissions []models.AdminPermission
+	if err := h.db.Where("user_id IN ?", userIDs).Find(&permissions).Error; err != nil {
+		return result
+	}
+	for _, item := range permissions {
+		result[item.UserID] = append([]string(nil), item.Permissions...)
+	}
+	return result
+}
+
 // CreateUser CreateUser
 func (h *UserHandler) CreateUser(c *gin.Context) {
 	var req struct {
@@ -271,52 +320,25 @@ func (h *UserHandler) CreateUser(c *gin.Context) {
 // ListUsers - Get user list
 func (h *UserHandler) ListUsers(c *gin.Context) {
 	page, limit := response.GetPagination(c)
-	search := strings.TrimSpace(c.Query("search"))
-	role := strings.TrimSpace(c.Query("role"))
-	locale := strings.TrimSpace(c.Query("locale"))
-	country := strings.TrimSpace(c.Query("country"))
-
-	isActive, ok := parseOptionalBoolQuery(c.Query("is_active"))
+	filters, errMsg, ok := parseUserListFilters(c)
 	if !ok {
-		response.BadRequest(c, "Invalid is_active parameter")
-		return
-	}
-	emailVerified, ok := parseOptionalBoolQuery(c.Query("email_verified"))
-	if !ok {
-		response.BadRequest(c, "Invalid email_verified parameter")
-		return
-	}
-	emailNotifyMarketing, ok := parseOptionalBoolQuery(c.Query("email_notify_marketing"))
-	if !ok {
-		response.BadRequest(c, "Invalid email_notify_marketing parameter")
-		return
-	}
-	smsNotifyMarketing, ok := parseOptionalBoolQuery(c.Query("sms_notify_marketing"))
-	if !ok {
-		response.BadRequest(c, "Invalid sms_notify_marketing parameter")
-		return
-	}
-	hasPhone, ok := parseOptionalBoolQuery(c.Query("has_phone"))
-	if !ok {
-		response.BadRequest(c, "Invalid has_phone parameter")
+		response.BadRequest(c, errMsg)
 		return
 	}
 
-	users, total, err := h.userRepo.List(page, limit, repository.UserListFilters{
-		Search:               search,
-		Role:                 role,
-		IsActive:             isActive,
-		EmailVerified:        emailVerified,
-		EmailNotifyMarketing: emailNotifyMarketing,
-		SMSNotifyMarketing:   smsNotifyMarketing,
-		HasPhone:             hasPhone,
-		Locale:               locale,
-		Country:              country,
-	})
+	users, total, err := h.userRepo.List(page, limit, filters)
 	if err != nil {
 		response.InternalError(c, "Query failed")
 		return
 	}
+
+	userIDs := make([]uint, 0, len(users))
+	for _, user := range users {
+		if user.IsAdmin() {
+			userIDs = append(userIDs, user.ID)
+		}
+	}
+	permissionMap := h.loadAdminPermissionMap(userIDs)
 
 	// 为管理员用户附加权限信息
 	result := make([]gin.H, 0, len(users))
@@ -326,18 +348,110 @@ func (h *UserHandler) ListUsers(c *gin.Context) {
 
 		// 如果是管理员，获取权限
 		if user.IsAdmin() {
-			var perm models.AdminPermission
-			if err := h.db.Where("user_id = ?", user.ID).First(&perm).Error; err == nil {
-				item["permissions"] = perm.Permissions
-			} else {
-				item["permissions"] = []string{}
+			permissions := permissionMap[user.ID]
+			if permissions == nil {
+				permissions = []string{}
 			}
+			item["permissions"] = permissions
 		}
 
 		result = append(result, item)
 	}
 
 	response.Paginated(c, result, page, limit, total)
+}
+
+func (h *UserHandler) ExportUsers(c *gin.Context) {
+	filters, errMsg, ok := parseUserListFilters(c)
+	if !ok {
+		response.BadRequest(c, errMsg)
+		return
+	}
+
+	users, total, err := h.userRepo.List(1, adminCSVExportMaxRows+1, filters)
+	if err != nil {
+		response.InternalError(c, "Query failed")
+		return
+	}
+	if total > adminCSVExportMaxRows {
+		response.BadRequest(c, "Too many records to export (max "+strconv.Itoa(adminCSVExportMaxRows)+"). Please narrow the filters.")
+		return
+	}
+
+	userIDs := make([]uint, 0, len(users))
+	for _, user := range users {
+		if user.IsAdmin() {
+			userIDs = append(userIDs, user.ID)
+		}
+	}
+	permissionMap := h.loadAdminPermissionMap(userIDs)
+
+	rows := make([][]string, 0, len(users))
+	for _, user := range users {
+		phone := ""
+		if user.Phone != nil {
+			phone = strings.TrimSpace(*user.Phone)
+		}
+		rows = append(rows, []string{
+			strconv.FormatUint(uint64(user.ID), 10),
+			user.UUID,
+			user.Email,
+			phone,
+			user.Name,
+			user.Role,
+			strconv.FormatBool(user.IsActive),
+			strconv.FormatBool(user.EmailVerified),
+			user.Locale,
+			user.Country,
+			strconv.FormatInt(user.TotalOrderCount, 10),
+			strconv.FormatInt(user.TotalSpentMinor, 10),
+			strconv.FormatBool(user.EmailNotifyOrder),
+			strconv.FormatBool(user.EmailNotifyTicket),
+			strconv.FormatBool(user.EmailNotifyMarketing),
+			strconv.FormatBool(user.SMSNotifyMarketing),
+			csvTimePtrValue(user.LastLoginAt),
+			csvTimeValue(user.CreatedAt),
+			csvTimeValue(user.UpdatedAt),
+			strings.Join(permissionMap[user.ID], ","),
+		})
+	}
+
+	logger.LogOperation(h.db, c, "export", "user", nil, map[string]interface{}{
+		"count":                  len(rows),
+		"role":                   filters.Role,
+		"search":                 filters.Search,
+		"locale":                 filters.Locale,
+		"country":                filters.Country,
+		"is_active":              filters.IsActive,
+		"email_verified":         filters.EmailVerified,
+		"email_notify_marketing": filters.EmailNotifyMarketing,
+		"sms_notify_marketing":   filters.SMSNotifyMarketing,
+		"has_phone":              filters.HasPhone,
+		"format":                 "xlsx",
+	})
+
+	writeXLSXAttachment(c, buildAdminXLSXFileName("users"), "Users", []string{
+		"ID",
+		"UUID",
+		"Email",
+		"Phone",
+		"Name",
+		"Role",
+		"Is Active",
+		"Email Verified",
+		"Locale",
+		"Country",
+		"Total Order Count",
+		"Total Spent Minor",
+		"Email Notify Order",
+		"Email Notify Ticket",
+		"Email Notify Marketing",
+		"SMS Notify Marketing",
+		"Last Login At",
+		"Created At",
+		"Updated At",
+		"Permissions",
+	}, rows)
 }
 
 // ListUserCountries returns distinct country codes from users.

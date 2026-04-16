@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   KnowledgeArticle,
@@ -20,6 +20,7 @@ import { getTranslations } from '@/lib/i18n'
 import { useLocale } from '@/hooks/use-locale'
 import { usePageTitle } from '@/hooks/use-page-title'
 import { resolveApiErrorMessage } from '@/lib/api-error'
+import { resolveClientAPIProxyURL } from '@/lib/api-base-url'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -57,6 +58,7 @@ import {
 import { MarkdownMessage } from '@/components/ui/markdown-message'
 import {
   ChevronRight,
+  Download,
   FileText,
   FolderTree,
   Loader2,
@@ -65,10 +67,12 @@ import {
   Save,
   Search,
   Trash2,
+  Upload,
   X,
 } from 'lucide-react'
 import { PluginSlot } from '@/components/plugins/plugin-slot'
 import { usePluginExtensionBatch } from '@/lib/plugin-extension-batch'
+import { usePermission } from '@/hooks/use-permission'
 
 interface CategoryFormData {
   name: string
@@ -152,11 +156,35 @@ function buildAdminKnowledgeArticleRowSummary(article: KnowledgeArticle) {
 export default function AdminKnowledgePage() {
   const queryClient = useQueryClient()
   const { locale } = useLocale()
+  const { hasPermission } = usePermission()
   const t = getTranslations(locale)
   usePageTitle(t.pageTitle.adminKnowledge)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const canEditKnowledge = hasPermission('knowledge.edit')
   const formatKnowledgeError = (error: unknown, fallback: string) => {
     const detail = resolveApiErrorMessage(error, t, fallback)
     return detail === fallback ? fallback : `${fallback}: ${detail}`
+  }
+  const readFetchErrorMessage = async (response: Response, fallback: string) => {
+    try {
+      const contentType = response.headers.get('content-type') || ''
+      if (contentType.includes('application/json')) {
+        const payload = await response.json()
+        return resolveApiErrorMessage(payload, t, fallback)
+      }
+
+      const text = (await response.text()).trim()
+      if (text) {
+        try {
+          return resolveApiErrorMessage(JSON.parse(text), t, fallback)
+        } catch {
+          return text
+        }
+      }
+    } catch {
+      // ignore parse errors and fall back to the provided message
+    }
+    return fallback
   }
 
   // Category dialog state
@@ -321,6 +349,94 @@ export default function AdminKnowledgePage() {
     },
   })
 
+  const importMutation = useMutation({
+    mutationFn: async (file: File) => {
+      const formData = new FormData()
+      formData.append('file', file)
+      formData.append('conflict_mode', 'upsert')
+
+      const response = await fetch(resolveClientAPIProxyURL('/api/admin/knowledge/import'), {
+        method: 'POST',
+        body: formData,
+      })
+
+      if (!response.ok) {
+        throw new Error(await readFetchErrorMessage(response, t.knowledge.importFailed))
+      }
+
+      return response.json()
+    },
+    onSuccess: (data) => {
+      toast.dismiss()
+      const result = data?.data
+      toast.success(result?.message || t.knowledge.importSuccess, {
+        duration: 4000,
+      })
+      queryClient.invalidateQueries({ queryKey: ['adminKnowledgeCategories'] })
+      queryClient.invalidateQueries({ queryKey: ['adminKnowledgeArticles'] })
+      queryClient.invalidateQueries({ queryKey: ['adminKnowledgeArticle'] })
+      refetchCategories()
+      refetchArticles()
+      if (selectedArticleId) {
+        refetchSelectedArticle()
+      }
+    },
+    onError: (error: unknown) => {
+      toast.dismiss()
+      toast.error(formatKnowledgeError(error, t.knowledge.importFailed))
+    },
+  })
+
+  const handleExportKnowledge = () => {
+    fetch(resolveClientAPIProxyURL('/api/admin/knowledge/export'))
+      .then(async (res) => {
+        if (!res.ok) {
+          throw new Error(await readFetchErrorMessage(res, t.admin.exportFailed))
+        }
+        return res.blob()
+      })
+      .then((blob) => {
+        const blobUrl = window.URL.createObjectURL(blob)
+        const anchor = document.createElement('a')
+        anchor.href = blobUrl
+        anchor.download = `knowledge_package_${new Date().toISOString().slice(0, 10)}.json`
+        document.body.appendChild(anchor)
+        anchor.click()
+        document.body.removeChild(anchor)
+        window.URL.revokeObjectURL(blobUrl)
+        toast.success(t.knowledge.exportSuccess)
+      })
+      .catch((err: Error) => {
+        toast.error(`${t.admin.exportFailed}: ${err.message}`)
+      })
+  }
+
+  const handleImportKnowledgeClick = () => {
+    fileInputRef.current?.click()
+  }
+
+  const handleKnowledgeFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) {
+      return
+    }
+
+    if (!file.name.toLowerCase().endsWith('.json')) {
+      toast.error(t.knowledge.jsonFileFormatError)
+      if (fileInputRef.current) {
+        fileInputRef.current.value = ''
+      }
+      return
+    }
+
+    toast.loading(t.admin.importLoading)
+    importMutation.mutate(file)
+
+    if (fileInputRef.current) {
+      fileInputRef.current.value = ''
+    }
+  }
+
   const createArticleMutation = useMutation({
     mutationFn: (data: ArticleFormData) =>
       createKnowledgeArticle({
@@ -387,10 +503,7 @@ export default function AdminKnowledgePage() {
   )
   const selectedArticle = selectedArticleData?.data as KnowledgeArticle | undefined
   const editorNotFound =
-    editorMode === 'edit' &&
-    !isEditorLoading &&
-    !selectedArticleLoadFailed &&
-    !selectedArticle
+    editorMode === 'edit' && !isEditorLoading && !selectedArticleLoadFailed && !selectedArticle
   const articleContentCharCount = articleForm.content.length
   const articleContentLineCount = articleForm.content
     ? articleForm.content.split(/\r?\n/).length
@@ -661,6 +774,30 @@ export default function AdminKnowledgePage() {
         <div>
           <h1 className="text-lg font-bold md:text-xl">{t.admin.knowledgeManagement}</h1>
           <p className="mt-1 text-sm text-muted-foreground">{articleRangeSummary}</p>
+          <p className="mt-2 text-xs text-muted-foreground">{t.knowledge.importHint}</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".json,application/json"
+            className="hidden"
+            onChange={handleKnowledgeFileChange}
+          />
+          {canEditKnowledge ? (
+            <Button
+              variant="outline"
+              onClick={handleImportKnowledgeClick}
+              disabled={importMutation.isPending}
+            >
+              <Upload className="mr-1.5 h-4 w-4" />
+              {t.knowledge.importKnowledge}
+            </Button>
+          ) : null}
+          <Button variant="outline" onClick={handleExportKnowledge}>
+            <Download className="mr-1.5 h-4 w-4" />
+            {t.knowledge.exportKnowledge}
+          </Button>
         </div>
       </div>
 

@@ -15,6 +15,7 @@ import {
   getVirtualInventories,
   getPublicConfig,
 } from '@/lib/api'
+import { resolveClientAPIProxyURL } from '@/lib/api-base-url'
 import { DataTable } from '@/components/admin/data-table'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -55,7 +56,18 @@ import {
 } from '@/components/ui/select'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Textarea } from '@/components/ui/textarea'
-import { Search, UserPlus, Shield, Trash2, Edit, ShoppingBag, Plus, X, Copy } from 'lucide-react'
+import {
+  Search,
+  UserPlus,
+  Shield,
+  Trash2,
+  Edit,
+  ShoppingBag,
+  Plus,
+  X,
+  Copy,
+  Download,
+} from 'lucide-react'
 import { getRoleColor } from '@/lib/role-utils'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
@@ -149,6 +161,27 @@ export default function AdminUsersPage() {
   }
   const resolveAdminError = (error: unknown, fallback: string) =>
     resolveApiErrorMessage(error, t, fallback)
+  const readFetchErrorMessage = async (response: Response, fallback: string) => {
+    try {
+      const contentType = response.headers.get('content-type') || ''
+      if (contentType.includes('application/json')) {
+        const payload = await response.json()
+        return resolveApiErrorMessage(payload, t, fallback)
+      }
+
+      const text = (await response.text()).trim()
+      if (text) {
+        try {
+          return resolveApiErrorMessage(JSON.parse(text), t, fallback)
+        } catch {
+          return text
+        }
+      }
+    } catch {
+      // ignore parse errors and fall back to the provided message
+    }
+    return fallback
+  }
   const canViewUsers = hasPermission('user.view')
   const deferredSearch = useDeferredValue(search)
 
@@ -159,6 +192,51 @@ export default function AdminUsersPage() {
   const cleanFilterLabel = (label: string) =>
     label.replace(/^筛选[:：]\s*/u, '').replace(/^Filter:\s*/u, '')
   const roleFilter = viewMode === 'users' ? 'users' : viewMode === 'admins' ? 'admins' : undefined
+  const handleExport = () => {
+    const params = new URLSearchParams()
+    if (search) params.append('search', search)
+    if (roleFilter) params.append('role', roleFilter)
+
+    const isActive = parseTriState(statusFilter)
+    const emailVerified = parseTriState(verifiedFilter)
+    const emailNotifyMarketing = parseTriState(emailMarketingFilter)
+    const smsNotifyMarketing = parseTriState(smsMarketingFilter)
+    const hasPhone = parseTriState(hasPhoneFilter)
+
+    if (isActive !== undefined) params.append('is_active', String(isActive))
+    if (emailVerified !== undefined) params.append('email_verified', String(emailVerified))
+    if (emailNotifyMarketing !== undefined)
+      params.append('email_notify_marketing', String(emailNotifyMarketing))
+    if (smsNotifyMarketing !== undefined)
+      params.append('sms_notify_marketing', String(smsNotifyMarketing))
+    if (hasPhone !== undefined) params.append('has_phone', String(hasPhone))
+    if (localeFilter) params.append('locale', localeFilter)
+
+    const prefix = viewMode === 'admins' ? 'admins' : viewMode === 'users' ? 'users' : 'all_users'
+    const url = resolveClientAPIProxyURL(`/api/admin/users/export?${params.toString()}`)
+
+    fetch(url)
+      .then(async (res) => {
+        if (!res.ok) {
+          throw new Error(await readFetchErrorMessage(res, t.admin.exportFailed))
+        }
+        return res.blob()
+      })
+      .then((blob) => {
+        const blobUrl = window.URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = blobUrl
+        a.download = `${prefix}_${new Date().toISOString().slice(0, 10)}.xlsx`
+        document.body.appendChild(a)
+        a.click()
+        document.body.removeChild(a)
+        window.URL.revokeObjectURL(blobUrl)
+        toast.success(t.admin.usersExportSuccess)
+      })
+      .catch((err) => {
+        toast.error(`${t.admin.exportFailed}: ${err.message}`)
+      })
+  }
 
   const { data: usersData, isLoading: usersLoading } = useQuery({
     queryKey: [
@@ -654,6 +732,12 @@ export default function AdminUsersPage() {
       <div className="flex items-center justify-between">
         <h1 className="text-3xl font-bold">{t.admin.userManagement}</h1>
         <div className="flex gap-2">
+          {canViewUsers ? (
+            <Button variant="outline" onClick={handleExport}>
+              <Download className="mr-2 h-4 w-4" />
+              {t.admin.exportUsers}
+            </Button>
+          ) : null}
           <Dialog open={openUser} onOpenChange={setOpenUser}>
             <DialogTrigger asChild>
               <Button variant="outline">

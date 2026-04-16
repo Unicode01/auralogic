@@ -1,11 +1,13 @@
 package admin
 
 import (
+	"fmt"
 	"log"
 	"strconv"
 	"strings"
 
 	"auralogic/internal/models"
+	"auralogic/internal/pkg/logger"
 	"auralogic/internal/pkg/response"
 	"auralogic/internal/service"
 	"github.com/gin-gonic/gin"
@@ -87,15 +89,12 @@ func (h *AnnouncementHandler) dispatchAnnouncement(announcement *models.Announce
 	}
 }
 
-// ListAnnouncements 公告列表
-func (h *AnnouncementHandler) ListAnnouncements(c *gin.Context) {
-	page, limit := response.GetPagination(c)
-	search := c.Query("search")
-	mandatory := c.Query("is_mandatory") // "true" / "false" / ""
+func (h *AnnouncementHandler) buildAnnouncementListQuery(c *gin.Context) *gorm.DB {
+	search := strings.TrimSpace(c.Query("search"))
+	mandatory := strings.TrimSpace(c.Query("is_mandatory"))
 	category := normalizeAnnouncementCategory(c.Query("category"))
 
 	query := h.db.Model(&models.Announcement{})
-
 	if search != "" {
 		query = query.Where("title LIKE ?", "%"+search+"%")
 	}
@@ -107,6 +106,14 @@ func (h *AnnouncementHandler) ListAnnouncements(c *gin.Context) {
 	if category != "" {
 		query = query.Where("category = ?", category)
 	}
+
+	return query
+}
+
+// ListAnnouncements 公告列表
+func (h *AnnouncementHandler) ListAnnouncements(c *gin.Context) {
+	page, limit := response.GetPagination(c)
+	query := h.buildAnnouncementListQuery(c)
 
 	var total int64
 	query.Count(&total)
@@ -121,6 +128,84 @@ func (h *AnnouncementHandler) ListAnnouncements(c *gin.Context) {
 	}
 
 	response.Paginated(c, announcements, page, limit, total)
+}
+
+// ExportAnnouncements 导出公告
+func (h *AnnouncementHandler) ExportAnnouncements(c *gin.Context) {
+	query := h.buildAnnouncementListQuery(c)
+
+	var announcements []models.Announcement
+	if err := query.Order("id DESC").Limit(adminCSVExportMaxRows + 1).Find(&announcements).Error; err != nil {
+		response.InternalError(c, "Query failed")
+		return
+	}
+	if len(announcements) > adminCSVExportMaxRows {
+		response.BadRequest(c, fmt.Sprintf("Too many records to export (max %d). Please narrow the filters.", adminCSVExportMaxRows))
+		return
+	}
+
+	announcementIDs := make([]uint, 0, len(announcements))
+	for _, item := range announcements {
+		announcementIDs = append(announcementIDs, item.ID)
+	}
+
+	readCountByAnnouncementID := make(map[uint]int64, len(announcementIDs))
+	if len(announcementIDs) > 0 {
+		var rows []struct {
+			AnnouncementID uint  `gorm:"column:announcement_id"`
+			Cnt            int64 `gorm:"column:cnt"`
+		}
+		if err := h.db.Model(&models.AnnouncementRead{}).
+			Select("announcement_id, COUNT(*) as cnt").
+			Where("announcement_id IN ?", announcementIDs).
+			Group("announcement_id").
+			Scan(&rows).Error; err != nil {
+			response.InternalError(c, "Query failed")
+			return
+		}
+		for _, row := range rows {
+			readCountByAnnouncementID[row.AnnouncementID] = row.Cnt
+		}
+	}
+
+	rows := make([][]string, 0, len(announcements))
+	for _, item := range announcements {
+		rows = append(rows, []string{
+			strconv.FormatUint(uint64(item.ID), 10),
+			item.Title,
+			item.Content,
+			item.Category,
+			strconv.FormatBool(item.SendEmail),
+			strconv.FormatBool(item.SendSMS),
+			strconv.FormatBool(item.IsMandatory),
+			strconv.FormatBool(item.RequireFullRead),
+			strconv.FormatInt(readCountByAnnouncementID[item.ID], 10),
+			csvTimeValue(item.CreatedAt),
+			csvTimeValue(item.UpdatedAt),
+		})
+	}
+
+	logger.LogOperation(h.db, c, "export", "announcement", nil, map[string]interface{}{
+		"count":        len(rows),
+		"search":       strings.TrimSpace(c.Query("search")),
+		"is_mandatory": strings.TrimSpace(c.Query("is_mandatory")),
+		"category":     strings.TrimSpace(c.Query("category")),
+		"format":       "xlsx",
+	})
+
+	writeXLSXAttachment(c, buildAdminXLSXFileName("announcements"), "Announcements", []string{
+		"ID",
+		"Title",
+		"Content",
+		"Category",
+		"Send Email",
+		"Send SMS",
+		"Is Mandatory",
+		"Require Full Read",
+		"Read Count",
+		"Created At",
+		"Updated At",
+	}, rows)
 }
 
 // CreateAnnouncement 创建公告
