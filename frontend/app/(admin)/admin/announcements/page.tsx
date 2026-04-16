@@ -30,12 +30,13 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import toast from 'react-hot-toast'
-import { FileText, Loader2, Megaphone, Pencil, Plus, Save, Trash2, X } from 'lucide-react'
+import { Download, FileText, Loader2, Megaphone, Pencil, Plus, Save, Trash2, X } from 'lucide-react'
 import { useLocale } from '@/hooks/use-locale'
 import { getTranslations } from '@/lib/i18n'
 import { usePageTitle } from '@/hooks/use-page-title'
 import { MarkdownMessage } from '@/components/ui/markdown-message'
 import { resolveApiErrorMessage } from '@/lib/api-error'
+import { resolveClientAPIProxyURL } from '@/lib/api-base-url'
 import { PluginExtensionList } from '@/components/plugins/plugin-extension-list'
 import { PluginSlot } from '@/components/plugins/plugin-slot'
 import { usePluginExtensionBatch } from '@/lib/plugin-extension-batch'
@@ -100,6 +101,27 @@ export default function AdminAnnouncementsPage() {
   const { locale } = useLocale()
   const t = getTranslations(locale)
   usePageTitle(t.pageTitle.adminAnnouncements)
+  const readFetchErrorMessage = async (response: Response, fallback: string) => {
+    try {
+      const contentType = response.headers.get('content-type') || ''
+      if (contentType.includes('application/json')) {
+        const payload = await response.json()
+        return resolveApiErrorMessage(payload, t, fallback)
+      }
+
+      const text = (await response.text()).trim()
+      if (text) {
+        try {
+          return resolveApiErrorMessage(JSON.parse(text), t, fallback)
+        } catch {
+          return text
+        }
+      }
+    } catch {
+      // ignore parse errors and fall back to the provided message
+    }
+    return fallback
+  }
 
   const [page, setPage] = useState(1)
   const [deleteId, setDeleteId] = useState<number | null>(null)
@@ -313,6 +335,30 @@ export default function AdminAnnouncementsPage() {
     }
   }
 
+  const handleExportAnnouncements = () => {
+    fetch(resolveClientAPIProxyURL('/api/admin/announcements/export'))
+      .then(async (res) => {
+        if (!res.ok) {
+          throw new Error(await readFetchErrorMessage(res, t.admin.exportFailed))
+        }
+        return res.blob()
+      })
+      .then((blob) => {
+        const blobUrl = window.URL.createObjectURL(blob)
+        const anchor = document.createElement('a')
+        anchor.href = blobUrl
+        anchor.download = `announcements_${new Date().toISOString().slice(0, 10)}.xlsx`
+        document.body.appendChild(anchor)
+        anchor.click()
+        document.body.removeChild(anchor)
+        window.URL.revokeObjectURL(blobUrl)
+        toast.success(t.announcement.exportSuccess)
+      })
+      .catch((err: Error) => {
+        toast.error(`${t.admin.exportFailed}: ${err.message}`)
+      })
+  }
+
   return (
     <div className="flex min-h-[calc(100dvh-4rem)] flex-col gap-4">
       <PluginSlot slot="admin.announcements.top" context={adminAnnouncementsPluginContext} />
@@ -320,6 +366,12 @@ export default function AdminAnnouncementsPage() {
         <div>
           <h1 className="text-lg font-bold md:text-xl">{t.admin.announcementManagement}</h1>
           <p className="mt-1 text-sm text-muted-foreground">{rangeSummary}</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outline" onClick={handleExportAnnouncements}>
+            <Download className="mr-1.5 h-4 w-4" />
+            {t.announcement.exportAnnouncements}
+          </Button>
         </div>
       </div>
 
@@ -346,7 +398,9 @@ export default function AdminAnnouncementsPage() {
                     <Megaphone className="mx-auto h-10 w-10 text-muted-foreground" />
                     <div className="space-y-1">
                       <p className="text-sm font-medium">{t.announcement.loadFailed}</p>
-                      <p className="text-xs text-muted-foreground">{t.announcement.loadFailedDesc}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {t.announcement.loadFailedDesc}
+                      </p>
                     </div>
                     <div className="flex justify-center">
                       <Button size="sm" variant="outline" onClick={() => refetchAnnouncements()}>
@@ -432,9 +486,7 @@ export default function AdminAnnouncementsPage() {
                             <Trash2 className="h-4 w-4" />
                           </Button>
                           <PluginExtensionList
-                            extensions={
-                              adminAnnouncementRowActionExtensions[String(item.id)] || []
-                            }
+                            extensions={adminAnnouncementRowActionExtensions[String(item.id)] || []}
                             display="inline"
                           />
                         </div>
@@ -500,13 +552,13 @@ export default function AdminAnnouncementsPage() {
             <>
               <CardHeader className="min-w-0 pb-3">
                 <div className="flex items-start justify-between gap-4">
-                    <div className="space-y-2">
-                      <CardTitle className="text-base">
-                        {editorMode === 'create'
-                          ? t.announcement.addAnnouncement
-                          : t.announcement.editAnnouncement}
-                      </CardTitle>
-                      <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+                  <div className="space-y-2">
+                    <CardTitle className="text-base">
+                      {editorMode === 'create'
+                        ? t.announcement.addAnnouncement
+                        : t.announcement.editAnnouncement}
+                    </CardTitle>
+                    <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
                       {editorMode === 'edit' ? (
                         <>
                           {selectedId ? <span>#{selectedId}</span> : null}
@@ -526,12 +578,12 @@ export default function AdminAnnouncementsPage() {
                           {hasUnsavedChanges ? <span>{t.announcement.unsavedChanges}</span> : null}
                         </>
                       )}
-                     </div>
-                      <PluginSlot
-                        slot="admin.announcements.editor.meta.after"
-                        context={{ ...adminAnnouncementsPluginContext, section: 'editor_meta' }}
-                      />
                     </div>
+                    <PluginSlot
+                      slot="admin.announcements.editor.meta.after"
+                      context={{ ...adminAnnouncementsPluginContext, section: 'editor_meta' }}
+                    />
+                  </div>
                   <div className="flex items-center gap-2">
                     <Button type="button" variant="outline" size="sm" onClick={handleCloseEditor}>
                       <X className="mr-1.5 h-4 w-4" />
@@ -583,7 +635,9 @@ export default function AdminAnnouncementsPage() {
                     <FileText className="h-10 w-10 text-muted-foreground" />
                     <div className="space-y-1">
                       <p className="text-sm font-medium">{t.announcement.announcementNotFound}</p>
-                      <p className="text-xs text-muted-foreground">{t.announcement.announcementDetail}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {t.announcement.announcementDetail}
+                      </p>
                     </div>
                     <Button type="button" size="sm" variant="outline" onClick={handleCloseEditor}>
                       {t.common.back}

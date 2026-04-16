@@ -1,4 +1,5 @@
 'use client'
+/* eslint-disable @next/next/no-img-element */
 
 import { Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
@@ -206,6 +207,8 @@ export function UserSidebar({ className, guestMode = false, compact = false }: U
 
   const ticketEnabled = publicConfigData?.data?.ticket?.enabled ?? true
   const serialEnabled = publicConfigData?.data?.serial?.enabled ?? true
+  const appName = publicConfigData?.data?.app_name || 'AuraLogic'
+  const logoUrl = publicConfigData?.data?.customization?.logo_url || ''
   const pluginPlatformEnabled = resolvePluginPlatformEnabled(publicConfigData?.data, true)
   const baseMenuItems = useMemo(
     () =>
@@ -376,7 +379,15 @@ export function UserSidebar({ className, guestMode = false, compact = false }: U
       <div className={getSidebarContainerClass(compact, className)}>
         {!compact ? (
           <div className={getSidebarHeaderClass(compact)}>
-            <h2 className="text-lg font-bold">AuraLogic</h2>
+            {logoUrl ? (
+              <img
+                src={logoUrl}
+                alt={appName}
+                className="max-h-8 w-auto max-w-[168px] object-contain"
+              />
+            ) : (
+              <h2 className="text-lg font-bold">{appName}</h2>
+            )}
             <p className="text-sm text-muted-foreground">
               {guestMode
                 ? `${defaultT.auth.login} / ${defaultT.auth.register}`
@@ -460,7 +471,15 @@ export function UserSidebar({ className, guestMode = false, compact = false }: U
     <div className={getSidebarContainerClass(compact, className)}>
       {!compact ? (
         <div className={getSidebarHeaderClass(compact)}>
-          <h2 className="text-lg font-bold">AuraLogic</h2>
+          {logoUrl ? (
+            <img
+              src={logoUrl}
+              alt={appName}
+              className="max-h-8 w-auto max-w-[168px] object-contain"
+            />
+          ) : (
+            <h2 className="text-lg font-bold">{appName}</h2>
+          )}
           <p className="text-sm text-muted-foreground">
             {guestMode ? `${t.auth.login} / ${t.auth.register}` : t.sidebar.welcome}
           </p>

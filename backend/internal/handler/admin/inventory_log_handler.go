@@ -1,11 +1,15 @@
 package admin
 
 import (
+	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"auralogic/internal/models"
+	"auralogic/internal/pkg/logger"
 	"auralogic/internal/pkg/response"
+	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
 
@@ -17,9 +21,7 @@ func NewInventoryLogHandler(db *gorm.DB) *InventoryLogHandler {
 	return &InventoryLogHandler{db: db}
 }
 
-// ListInventoryLogs getInventory日志列表
-func (h *InventoryLogHandler) ListInventoryLogs(c *gin.Context) {
-	page, limit := response.GetPagination(c)
+func (h *InventoryLogHandler) buildInventoryLogQuery(c *gin.Context) *gorm.DB {
 	source := c.Query("source")
 	inventoryID := c.Query("inventory_id")
 	logType := c.Query("type")
@@ -27,17 +29,10 @@ func (h *InventoryLogHandler) ListInventoryLogs(c *gin.Context) {
 	startDate := c.Query("start_date")
 	endDate := c.Query("end_date")
 
-	var logs []models.InventoryLog
-	var total int64
-
 	query := h.db.Model(&models.InventoryLog{})
-
-	// 来源筛选
 	if source != "" {
 		query = query.Where("source = ?", source)
 	}
-
-	// 过滤条件
 	if inventoryID != "" {
 		query = query.Where("inventory_id = ?", inventoryID)
 	}
@@ -54,11 +49,20 @@ func (h *InventoryLogHandler) ListInventoryLogs(c *gin.Context) {
 	}
 	if endDate != "" {
 		if t, err := time.Parse("2006-01-02", endDate); err == nil {
-			// 包含当天结束时间
-			t = t.Add(24*time.Hour - time.Second)
-			query = query.Where("created_at <= ?", t)
+			query = query.Where("created_at <= ?", t.Add(24*time.Hour-time.Second))
 		}
 	}
+	return query
+}
+
+// ListInventoryLogs getInventory日志列表
+func (h *InventoryLogHandler) ListInventoryLogs(c *gin.Context) {
+	page, limit := response.GetPagination(c)
+
+	var logs []models.InventoryLog
+	var total int64
+
+	query := h.buildInventoryLogQuery(c)
 
 	// get总数
 	if err := query.Count(&total).Error; err != nil {
@@ -74,6 +78,68 @@ func (h *InventoryLogHandler) ListInventoryLogs(c *gin.Context) {
 	}
 
 	response.Paginated(c, logs, page, limit, total)
+}
+
+func (h *InventoryLogHandler) ExportInventoryLogs(c *gin.Context) {
+	query := h.buildInventoryLogQuery(c)
+
+	var logs []models.InventoryLog
+	if err := query.Order("created_at DESC").Limit(adminCSVExportMaxRows + 1).Find(&logs).Error; err != nil {
+		response.InternalError(c, "Query failed")
+		return
+	}
+	if len(logs) > adminCSVExportMaxRows {
+		response.BadRequest(c, fmt.Sprintf("Too many records to export (max %d). Please narrow the filters.", adminCSVExportMaxRows))
+		return
+	}
+
+	rows := make([][]string, 0, len(logs))
+	for _, item := range logs {
+		rows = append(rows, []string{
+			strconv.FormatUint(uint64(item.ID), 10),
+			item.Source,
+			strconv.FormatUint(uint64(item.InventoryID), 10),
+			strconv.FormatUint(uint64(item.ProductID), 10),
+			item.Type,
+			strconv.Itoa(item.Quantity),
+			strconv.Itoa(item.BeforeStock),
+			strconv.Itoa(item.AfterStock),
+			item.OrderNo,
+			item.BatchNo,
+			item.Operator,
+			item.Reason,
+			item.Notes,
+			csvTimeValue(item.CreatedAt),
+		})
+	}
+
+	logger.LogOperation(h.db, c, "export", "inventory_log", nil, map[string]interface{}{
+		"count":        len(rows),
+		"source":       strings.TrimSpace(c.Query("source")),
+		"inventory_id": strings.TrimSpace(c.Query("inventory_id")),
+		"type":         strings.TrimSpace(c.Query("type")),
+		"order_no":     strings.TrimSpace(c.Query("order_no")),
+		"start_date":   strings.TrimSpace(c.Query("start_date")),
+		"end_date":     strings.TrimSpace(c.Query("end_date")),
+		"format":       "xlsx",
+	})
+
+	writeXLSXAttachment(c, buildAdminXLSXFileName("inventory_logs"), "Inventory Logs", []string{
+		"ID",
+		"Source",
+		"Inventory ID",
+		"Product ID",
+		"Type",
+		"Quantity",
+		"Before Stock",
+		"After Stock",
+		"Order No",
+		"Batch No",
+		"Operator",
+		"Reason",
+		"Notes",
+		"Created At",
+	}, rows)
 }
 
 // GetInventoryLogStatistics getInventory日志统计

@@ -2,11 +2,14 @@ package admin
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
+	"strconv"
 	"strings"
 	"time"
 
 	"auralogic/internal/models"
+	"auralogic/internal/pkg/logger"
 	"auralogic/internal/pkg/response"
 	"auralogic/internal/service"
 	"github.com/gin-gonic/gin"
@@ -92,9 +95,7 @@ func buildJSONContainsStringPairPattern(key, value string) string {
 	return "%" + escapeLikePattern(string(keyJSON)+":"+string(valueJSON)) + "%"
 }
 
-// ListOperationLogs get操作日志列表
-func (h *LogHandler) ListOperationLogs(c *gin.Context) {
-	page, limit := response.GetPagination(c)
+func (h *LogHandler) buildOperationLogQuery(c *gin.Context) (*gorm.DB, error) {
 	action := c.Query("action")
 	resourceType := c.Query("resource_type")
 	resourceID := strings.TrimSpace(c.Query("resource_id"))
@@ -103,12 +104,8 @@ func (h *LogHandler) ListOperationLogs(c *gin.Context) {
 	startDate := c.Query("start_date")
 	endDate := c.Query("end_date")
 
-	var logs []models.OperationLog
-	var total int64
-
 	query := h.db.Model(&models.OperationLog{}).Preload("User")
 
-	// 过滤条件
 	if action != "" {
 		query = query.Where("action = ?", action)
 	}
@@ -122,8 +119,7 @@ func (h *LogHandler) ListOperationLogs(c *gin.Context) {
 		orderNoPattern := buildJSONContainsStringPairPattern("order_no", orderNo)
 		var matchedOrderIDs []uint
 		if err := h.db.Model(&models.Order{}).Where("order_no = ?", orderNo).Pluck("id", &matchedOrderIDs).Error; err != nil {
-			response.InternalError(c, "Query failed")
-			return
+			return nil, err
 		}
 		if len(matchedOrderIDs) > 0 {
 			query = query.Where(
@@ -146,10 +142,92 @@ func (h *LogHandler) ListOperationLogs(c *gin.Context) {
 	}
 	if endDate != "" {
 		if t, err := time.Parse("2006-01-02", endDate); err == nil {
-			// 包含当天结束时间
-			t = t.Add(24*time.Hour - time.Second)
-			query = query.Where("created_at <= ?", t)
+			query = query.Where("created_at <= ?", t.Add(24*time.Hour-time.Second))
 		}
+	}
+
+	return query, nil
+}
+
+func (h *LogHandler) buildEmailLogQuery(c *gin.Context) *gorm.DB {
+	status := c.Query("status")
+	eventType := c.Query("event_type")
+	toEmail := c.Query("to_email")
+	batchID := c.Query("batch_id")
+	startDate := c.Query("start_date")
+	endDate := c.Query("end_date")
+
+	query := h.db.Model(&models.EmailLog{}).Preload("User").Preload("Order").Preload("Batch")
+	if status != "" {
+		query = query.Where("status = ?", status)
+	}
+	if eventType != "" {
+		query = query.Where("event_type = ?", eventType)
+	}
+	if toEmail != "" {
+		query = query.Where("to_email LIKE ?", "%"+toEmail+"%")
+	}
+	if batchID != "" {
+		query = query.Where("batch_id = ?", batchID)
+	}
+	if startDate != "" {
+		if t, err := time.Parse("2006-01-02", startDate); err == nil {
+			query = query.Where("created_at >= ?", t)
+		}
+	}
+	if endDate != "" {
+		if t, err := time.Parse("2006-01-02", endDate); err == nil {
+			query = query.Where("created_at <= ?", t.Add(24*time.Hour-time.Second))
+		}
+	}
+	return query
+}
+
+func (h *LogHandler) buildSMSLogQuery(c *gin.Context) *gorm.DB {
+	status := c.Query("status")
+	eventType := c.Query("event_type")
+	phone := c.Query("phone")
+	batchID := c.Query("batch_id")
+	startDate := c.Query("start_date")
+	endDate := c.Query("end_date")
+
+	query := h.db.Model(&models.SmsLog{}).Preload("User").Preload("Batch")
+	if status != "" {
+		query = query.Where("status = ?", status)
+	}
+	if eventType != "" {
+		query = query.Where("event_type = ?", eventType)
+	}
+	if phone != "" {
+		query = query.Where("phone LIKE ?", "%"+phone+"%")
+	}
+	if batchID != "" {
+		query = query.Where("batch_id = ?", batchID)
+	}
+	if startDate != "" {
+		if t, err := time.Parse("2006-01-02", startDate); err == nil {
+			query = query.Where("created_at >= ?", t)
+		}
+	}
+	if endDate != "" {
+		if t, err := time.Parse("2006-01-02", endDate); err == nil {
+			query = query.Where("created_at <= ?", t.Add(24*time.Hour-time.Second))
+		}
+	}
+	return query
+}
+
+// ListOperationLogs get操作日志列表
+func (h *LogHandler) ListOperationLogs(c *gin.Context) {
+	page, limit := response.GetPagination(c)
+
+	var logs []models.OperationLog
+	var total int64
+
+	query, err := h.buildOperationLogQuery(c)
+	if err != nil {
+		response.InternalError(c, "Query failed")
+		return
 	}
 
 	// get总数
@@ -171,42 +249,11 @@ func (h *LogHandler) ListOperationLogs(c *gin.Context) {
 // ListEmailLogs get邮件日志列表
 func (h *LogHandler) ListEmailLogs(c *gin.Context) {
 	page, limit := response.GetPagination(c)
-	status := c.Query("status")
-	eventType := c.Query("event_type")
-	toEmail := c.Query("to_email")
-	batchID := c.Query("batch_id")
-	startDate := c.Query("start_date")
-	endDate := c.Query("end_date")
 
 	var logs []models.EmailLog
 	var total int64
 
-	query := h.db.Model(&models.EmailLog{}).Preload("User").Preload("Order").Preload("Batch")
-
-	// 过滤条件
-	if status != "" {
-		query = query.Where("status = ?", status)
-	}
-	if eventType != "" {
-		query = query.Where("event_type = ?", eventType)
-	}
-	if toEmail != "" {
-		query = query.Where("to_email LIKE ?", "%"+toEmail+"%")
-	}
-	if batchID != "" {
-		query = query.Where("batch_id = ?", batchID)
-	}
-	if startDate != "" {
-		if t, err := time.Parse("2006-01-02", startDate); err == nil {
-			query = query.Where("created_at >= ?", t)
-		}
-	}
-	if endDate != "" {
-		if t, err := time.Parse("2006-01-02", endDate); err == nil {
-			t = t.Add(24*time.Hour - time.Second)
-			query = query.Where("created_at <= ?", t)
-		}
-	}
+	query := h.buildEmailLogQuery(c)
 
 	// get总数
 	if err := query.Count(&total).Error; err != nil {
@@ -227,41 +274,11 @@ func (h *LogHandler) ListEmailLogs(c *gin.Context) {
 // ListSmsLogs get短信日志列表
 func (h *LogHandler) ListSmsLogs(c *gin.Context) {
 	page, limit := response.GetPagination(c)
-	status := c.Query("status")
-	eventType := c.Query("event_type")
-	phone := c.Query("phone")
-	batchID := c.Query("batch_id")
-	startDate := c.Query("start_date")
-	endDate := c.Query("end_date")
 
 	var logs []models.SmsLog
 	var total int64
 
-	query := h.db.Model(&models.SmsLog{}).Preload("User").Preload("Batch")
-
-	if status != "" {
-		query = query.Where("status = ?", status)
-	}
-	if eventType != "" {
-		query = query.Where("event_type = ?", eventType)
-	}
-	if phone != "" {
-		query = query.Where("phone LIKE ?", "%"+phone+"%")
-	}
-	if batchID != "" {
-		query = query.Where("batch_id = ?", batchID)
-	}
-	if startDate != "" {
-		if t, err := time.Parse("2006-01-02", startDate); err == nil {
-			query = query.Where("created_at >= ?", t)
-		}
-	}
-	if endDate != "" {
-		if t, err := time.Parse("2006-01-02", endDate); err == nil {
-			t = t.Add(24*time.Hour - time.Second)
-			query = query.Where("created_at <= ?", t)
-		}
-	}
+	query := h.buildSMSLogQuery(c)
 
 	if err := query.Count(&total).Error; err != nil {
 		response.InternalError(c, "Query failed")
@@ -285,6 +302,251 @@ func (h *LogHandler) ListSmsLogs(c *gin.Context) {
 	}
 
 	response.Paginated(c, items, page, limit, total)
+}
+
+func (h *LogHandler) ExportOperationLogs(c *gin.Context) {
+	query, err := h.buildOperationLogQuery(c)
+	if err != nil {
+		response.InternalError(c, "Query failed")
+		return
+	}
+
+	var logs []models.OperationLog
+	if err := query.Order("created_at DESC").Limit(adminCSVExportMaxRows + 1).Find(&logs).Error; err != nil {
+		response.InternalError(c, "Query failed")
+		return
+	}
+	if len(logs) > adminCSVExportMaxRows {
+		response.BadRequest(c, fmt.Sprintf("Too many records to export (max %d). Please narrow the filters.", adminCSVExportMaxRows))
+		return
+	}
+
+	rows := make([][]string, 0, len(logs))
+	for _, item := range logs {
+		userID := ""
+		if item.UserID != nil {
+			userID = strconv.FormatUint(uint64(*item.UserID), 10)
+		}
+		userEmail := ""
+		if item.User != nil {
+			userEmail = item.User.Email
+		}
+		resourceID := ""
+		if item.ResourceID != nil {
+			resourceID = strconv.FormatUint(uint64(*item.ResourceID), 10)
+		}
+		rows = append(rows, []string{
+			strconv.FormatUint(uint64(item.ID), 10),
+			userID,
+			userEmail,
+			item.OperatorName,
+			item.Action,
+			item.ResourceType,
+			resourceID,
+			csvJSONValue(item.Details),
+			item.IPAddress,
+			item.UserAgent,
+			csvTimeValue(item.CreatedAt),
+		})
+	}
+
+	logger.LogOperation(h.db, c, "export", "operation_log", nil, map[string]interface{}{
+		"count":         len(rows),
+		"action":        strings.TrimSpace(c.Query("action")),
+		"resource_type": strings.TrimSpace(c.Query("resource_type")),
+		"resource_id":   strings.TrimSpace(c.Query("resource_id")),
+		"order_no":      strings.TrimSpace(c.Query("order_no")),
+		"user_id":       strings.TrimSpace(c.Query("user_id")),
+		"start_date":    strings.TrimSpace(c.Query("start_date")),
+		"end_date":      strings.TrimSpace(c.Query("end_date")),
+		"format":        "xlsx",
+	})
+
+	writeXLSXAttachment(c, buildAdminXLSXFileName("operation_logs"), "Operation Logs", []string{
+		"ID",
+		"User ID",
+		"User Email",
+		"Operator",
+		"Action",
+		"Resource Type",
+		"Resource ID",
+		"Details",
+		"IP Address",
+		"User Agent",
+		"Created At",
+	}, rows)
+}
+
+func (h *LogHandler) ExportEmailLogs(c *gin.Context) {
+	query := h.buildEmailLogQuery(c)
+
+	var logs []models.EmailLog
+	if err := query.Order("created_at DESC").Limit(adminCSVExportMaxRows + 1).Find(&logs).Error; err != nil {
+		response.InternalError(c, "Query failed")
+		return
+	}
+	if len(logs) > adminCSVExportMaxRows {
+		response.BadRequest(c, fmt.Sprintf("Too many records to export (max %d). Please narrow the filters.", adminCSVExportMaxRows))
+		return
+	}
+
+	rows := make([][]string, 0, len(logs))
+	for _, item := range logs {
+		userID := ""
+		userEmail := ""
+		if item.UserID != nil {
+			userID = strconv.FormatUint(uint64(*item.UserID), 10)
+		}
+		if item.User != nil {
+			userEmail = item.User.Email
+		}
+		orderID := ""
+		orderNo := ""
+		if item.OrderID != nil {
+			orderID = strconv.FormatUint(uint64(*item.OrderID), 10)
+		}
+		if item.Order != nil {
+			orderNo = item.Order.OrderNo
+		}
+		batchID := ""
+		batchNo := ""
+		if item.BatchID != nil {
+			batchID = strconv.FormatUint(uint64(*item.BatchID), 10)
+		}
+		if item.Batch != nil {
+			batchNo = item.Batch.BatchNo
+		}
+		rows = append(rows, []string{
+			strconv.FormatUint(uint64(item.ID), 10),
+			item.ToEmail,
+			item.Subject,
+			item.EventType,
+			userID,
+			userEmail,
+			orderID,
+			orderNo,
+			batchID,
+			batchNo,
+			string(item.Status),
+			item.ErrorMessage,
+			strconv.Itoa(item.RetryCount),
+			csvTimePtrValue(item.ExpireAt),
+			csvTimePtrValue(item.SentAt),
+			csvTimeValue(item.CreatedAt),
+			csvTimeValue(item.UpdatedAt),
+		})
+	}
+
+	logger.LogOperation(h.db, c, "export", "email_log", nil, map[string]interface{}{
+		"count":      len(rows),
+		"status":     strings.TrimSpace(c.Query("status")),
+		"event_type": strings.TrimSpace(c.Query("event_type")),
+		"to_email":   strings.TrimSpace(c.Query("to_email")),
+		"batch_id":   strings.TrimSpace(c.Query("batch_id")),
+		"start_date": strings.TrimSpace(c.Query("start_date")),
+		"end_date":   strings.TrimSpace(c.Query("end_date")),
+		"format":     "xlsx",
+	})
+
+	writeXLSXAttachment(c, buildAdminXLSXFileName("email_logs"), "Email Logs", []string{
+		"ID",
+		"To Email",
+		"Subject",
+		"Event Type",
+		"User ID",
+		"User Email",
+		"Order ID",
+		"Order No",
+		"Batch ID",
+		"Batch No",
+		"Status",
+		"Error Message",
+		"Retry Count",
+		"Expire At",
+		"Sent At",
+		"Created At",
+		"Updated At",
+	}, rows)
+}
+
+func (h *LogHandler) ExportSmsLogs(c *gin.Context) {
+	query := h.buildSMSLogQuery(c)
+
+	var logs []models.SmsLog
+	if err := query.Order("created_at DESC").Limit(adminCSVExportMaxRows + 1).Find(&logs).Error; err != nil {
+		response.InternalError(c, "Query failed")
+		return
+	}
+	if len(logs) > adminCSVExportMaxRows {
+		response.BadRequest(c, fmt.Sprintf("Too many records to export (max %d). Please narrow the filters.", adminCSVExportMaxRows))
+		return
+	}
+
+	rows := make([][]string, 0, len(logs))
+	for _, item := range logs {
+		userID := ""
+		userEmail := ""
+		if item.UserID != nil {
+			userID = strconv.FormatUint(uint64(*item.UserID), 10)
+		}
+		if item.User != nil {
+			userEmail = item.User.Email
+		}
+		batchID := ""
+		batchNo := ""
+		if item.BatchID != nil {
+			batchID = strconv.FormatUint(uint64(*item.BatchID), 10)
+		}
+		if item.Batch != nil {
+			batchNo = item.Batch.BatchNo
+		}
+		rows = append(rows, []string{
+			strconv.FormatUint(uint64(item.ID), 10),
+			item.Phone,
+			models.MaskContent(item.Content),
+			item.EventType,
+			userID,
+			userEmail,
+			batchID,
+			batchNo,
+			item.Provider,
+			string(item.Status),
+			item.ErrorMessage,
+			csvTimePtrValue(item.ExpireAt),
+			csvTimePtrValue(item.SentAt),
+			csvTimeValue(item.CreatedAt),
+			csvTimeValue(item.UpdatedAt),
+		})
+	}
+
+	logger.LogOperation(h.db, c, "export", "sms_log", nil, map[string]interface{}{
+		"count":      len(rows),
+		"status":     strings.TrimSpace(c.Query("status")),
+		"event_type": strings.TrimSpace(c.Query("event_type")),
+		"phone":      strings.TrimSpace(c.Query("phone")),
+		"batch_id":   strings.TrimSpace(c.Query("batch_id")),
+		"start_date": strings.TrimSpace(c.Query("start_date")),
+		"end_date":   strings.TrimSpace(c.Query("end_date")),
+		"format":     "xlsx",
+	})
+
+	writeXLSXAttachment(c, buildAdminXLSXFileName("sms_logs"), "SMS Logs", []string{
+		"ID",
+		"Phone",
+		"Content",
+		"Event Type",
+		"User ID",
+		"User Email",
+		"Batch ID",
+		"Batch No",
+		"Provider",
+		"Status",
+		"Error Message",
+		"Expire At",
+		"Sent At",
+		"Created At",
+		"Updated At",
+	}, rows)
 }
 
 // GetLogStatistics get日志统计Info

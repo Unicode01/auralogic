@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { OrderStatusBadge } from './order-status-badge'
 import type { Order } from '@/types/order'
-import { formatDate, formatCurrency } from '@/lib/utils'
+import { cn, formatDate, formatCurrency } from '@/lib/utils'
 import {
   Package,
   Truck,
@@ -185,7 +185,24 @@ export function OrderCard({
   const orderNo = order.orderNo || order.order_no || ''
   const { orderItems, isDraft, isNeedResubmit, isPendingPayment, isVirtualOnly, needsFilling } =
     getOrderCardFlags(order)
+  const isPrivacyProtected = Boolean(order.privacyProtected || order.privacy_protected)
+  const isSharedToSupport = Boolean(order.sharedToSupport || order.shared_to_support)
+  const needsFillingMessage = isDraft ? t.order.fillShippingPrompt : t.order.needResubmitShort
+  const needsFillingBadgeLabel = isDraft ? t.order.fillShippingShort : t.order.needResubmitShort
+  const pendingPaymentMessage = t.order.pendingPaymentPrompt
+  const pendingPaymentBadgeLabel = t.order.status.pending_payment
+  const shouldHidePrimaryStatusBadge = needsFilling || isPendingPayment
+  const hasHeaderBadges =
+    !shouldHidePrimaryStatusBadge ||
+    needsFilling ||
+    isPendingPayment ||
+    isPrivacyProtected ||
+    isSharedToSupport
   const [isGettingToken, setIsGettingToken] = useState(false)
+  const headerStatusBadgeClassName =
+    'h-5 shrink-0 rounded px-1.5 text-[11px] font-medium shadow-none'
+  const headerMetaBadgeClassName =
+    'flex h-5 w-5 shrink-0 items-center justify-center rounded border border-border/60 bg-transparent p-0 text-muted-foreground'
 
   const handleFillForm = async (e: React.MouseEvent) => {
     e.preventDefault()
@@ -223,62 +240,81 @@ export function OrderCard({
   return (
     <Card
       data-order-no={orderNo}
-      className={`flex h-full flex-col transition-all hover:shadow-lg ${
+      className={`flex h-full flex-col border-border/70 shadow-none transition-colors ${
         needsFilling
-          ? 'border-amber-500/30 bg-amber-500/10 dark:border-amber-500/40 dark:bg-amber-950/20'
+          ? 'border-amber-300/60 bg-amber-50/20 dark:border-amber-800/50 dark:bg-amber-950/10'
           : isPendingPayment
-            ? 'border-amber-500/30 bg-amber-500/10 dark:border-amber-500/40 dark:bg-amber-950/20'
+            ? 'border-orange-300/60 bg-orange-50/20 dark:border-orange-800/50 dark:bg-orange-950/10'
             : ''
-      } ${highlighted ? 'border-primary shadow-lg shadow-primary/10 ring-2 ring-primary/70' : ''}`}
+      } ${highlighted ? 'border-primary ring-2 ring-primary/70' : 'hover:border-border/90'}`}
     >
-      <CardHeader className="pb-3">
+      <CardHeader className="pb-2">
         <div className="space-y-2">
-          <div className="flex items-center justify-between gap-2">
-            <OrderStatusBadge status={order.status} />
-            <div className="flex items-center gap-1">
-              {needsFilling && (
-                <Badge
-                  variant="outline"
-                  className="border-amber-300 bg-amber-50 text-amber-600 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300"
-                  title={isDraft ? t.order.fillShippingPrompt : t.order.needResubmitShort}
-                >
-                  <AlertCircle className="h-3 w-3" />
-                  <span className="sr-only">
-                    {isDraft ? t.order.fillShippingPrompt : t.order.needResubmitShort}
-                  </span>
-                </Badge>
-              )}
-              {isPendingPayment && (
-                <Badge
-                  variant="outline"
-                  className="border-amber-300 bg-amber-50 text-amber-600 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300"
-                  title={t.order.pendingPaymentPrompt}
-                >
-                  <CreditCard className="h-3 w-3" />
-                  <span className="sr-only">{t.order.pendingPaymentPrompt}</span>
-                </Badge>
-              )}
-              {(order.privacyProtected || order.privacy_protected) && (
-                <Badge
-                  variant="outline"
-                  className="flex items-center gap-1"
-                  title={t.order.privacyProtected}
-                >
-                  <Shield className="h-3 w-3" />
-                  <span className="sr-only">{t.order.privacyProtected}</span>
-                </Badge>
-              )}
-              {(order.sharedToSupport || order.shared_to_support) && (
-                <Badge
-                  variant="secondary"
-                  className="flex items-center gap-1"
-                  title={t.order.sharedToSupport}
-                >
-                  <Headphones className="h-3 w-3" />
-                  <span className="sr-only">{t.order.sharedToSupport}</span>
-                </Badge>
-              )}
+          <div className="flex min-w-0 items-start justify-between gap-3">
+            <div className="min-w-0 flex-1 space-y-1.5">
+              <h3 className="min-w-0 truncate text-sm font-semibold text-foreground">
+                {orderNo}
+              </h3>
+              <p className="text-xs text-muted-foreground">
+                {formatDate(order.createdAt || order.created_at || '')}
+              </p>
             </div>
+            {hasHeaderBadges ? (
+              <div className="flex max-w-[58%] shrink-0 flex-wrap items-center justify-end gap-1">
+                {!shouldHidePrimaryStatusBadge ? (
+                  <OrderStatusBadge status={order.status} className={headerStatusBadgeClassName} />
+                ) : null}
+                {needsFilling && (
+                  <Badge
+                    variant="outline"
+                    className={cn(
+                      headerStatusBadgeClassName,
+                      'gap-1 border-amber-300 bg-transparent text-amber-700 dark:border-amber-800 dark:text-amber-300'
+                    )}
+                    title={needsFillingMessage}
+                  >
+                    <AlertCircle className="h-3 w-3" />
+                    <span className="max-w-[8rem] truncate">{needsFillingBadgeLabel}</span>
+                  </Badge>
+                )}
+                {isPendingPayment && (
+                  <Badge
+                    variant="outline"
+                    className={cn(
+                      headerStatusBadgeClassName,
+                      'gap-1 border-orange-300 bg-transparent text-orange-700 dark:border-orange-800 dark:text-orange-300'
+                    )}
+                    title={pendingPaymentMessage}
+                  >
+                    <CreditCard className="h-3 w-3" />
+                    <span className="max-w-[8rem] truncate">{pendingPaymentBadgeLabel}</span>
+                  </Badge>
+                )}
+                {isPrivacyProtected && (
+                  <Badge
+                    variant="outline"
+                    className={headerMetaBadgeClassName}
+                    title={t.order.privacyProtected}
+                  >
+                    <Shield className="h-3 w-3" />
+                    <span className="sr-only">{t.order.privacyProtected}</span>
+                  </Badge>
+                )}
+                {isSharedToSupport && (
+                  <Badge
+                    variant="secondary"
+                    className={cn(
+                      headerMetaBadgeClassName,
+                      'border-sky-300/70 text-sky-700 dark:border-sky-800/70 dark:text-sky-300'
+                    )}
+                    title={t.order.sharedToSupport}
+                  >
+                    <Headphones className="h-3 w-3" />
+                    <span className="sr-only">{t.order.sharedToSupport}</span>
+                  </Badge>
+                )}
+              </div>
+            ) : null}
           </div>
           {pluginSlotNamespace ? (
             <PluginSlot
@@ -287,12 +323,6 @@ export function OrderCard({
               context={{ ...orderCardPluginContext, section: 'badges' }}
             />
           ) : null}
-          <div>
-            <h3 className="truncate text-sm font-semibold">{orderNo}</h3>
-            <p className="text-xs text-muted-foreground">
-              {formatDate(order.createdAt || order.created_at || '')}
-            </p>
-          </div>
         </div>
       </CardHeader>
 
@@ -300,10 +330,10 @@ export function OrderCard({
         {/* 商品列表 */}
         <div className="space-y-2">
           {orderItems.slice(0, 1).map((item, index) => (
-            <div key={index} className="flex items-start gap-2">
+            <div key={index} className="flex items-start gap-3">
               {/* 商品图片 */}
               {item.imageUrl || item.image_url ? (
-                <div className="h-16 w-16 flex-shrink-0 overflow-hidden rounded bg-muted">
+                <div className="h-16 w-16 flex-shrink-0 overflow-hidden rounded-md bg-muted">
                   <img
                     src={item.imageUrl || item.image_url || ''}
                     alt={item.name}
@@ -320,20 +350,20 @@ export function OrderCard({
                   </div>
                 </div>
               ) : (
-                <div className="flex h-16 w-16 flex-shrink-0 items-center justify-center rounded bg-muted">
+                <div className="flex h-16 w-16 flex-shrink-0 items-center justify-center rounded-md bg-muted">
                   <Package className="h-8 w-8 text-muted-foreground" />
                 </div>
               )}
 
               {/* 商品信息 */}
               <div className="min-w-0 flex-1">
-                <p className="mb-1 line-clamp-2 text-sm font-medium">{item.name}</p>
+                <p className="mb-1 line-clamp-2 text-sm font-medium leading-5">{item.name}</p>
                 {item.attributes && Object.keys(item.attributes).length > 0 && (
                   <div className="mb-1 flex flex-wrap gap-1">
                     {Object.entries(item.attributes)
                       .slice(0, 2)
                       .map(([key, value]) => (
-                        <Badge key={key} variant="secondary" className="text-xs">
+                        <Badge key={key} variant="secondary" className="rounded px-1.5 text-xs">
                           {key}: {value as string}
                         </Badge>
                       ))}
@@ -384,9 +414,9 @@ export function OrderCard({
 
         {/* 虚拟商品已发货提示 */}
         {isVirtualOnly && order.status === 'shipped' && (
-          <div className="mt-auto flex items-start gap-2 rounded border-t bg-green-500/10 p-2 dark:bg-green-950/20">
+          <div className="mt-auto flex items-start gap-2 border-t pt-2">
             <Key className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-green-600 dark:text-green-400" />
-            <p className="text-xs leading-tight text-green-700 dark:text-green-300">
+            <p className="text-xs leading-5 text-green-700 dark:text-green-300">
               {t.order.virtualProductShipped}
             </p>
           </div>
@@ -394,20 +424,20 @@ export function OrderCard({
 
         {/* 草稿提示（仅实物商品） */}
         {needsFilling && (
-          <div className="mt-auto flex items-start gap-2 rounded border-t bg-amber-500/10 p-2 dark:bg-amber-950/20">
+          <div className="mt-auto flex items-start gap-2 border-t pt-2">
             <FileEdit className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-amber-600 dark:text-amber-400" />
-            <p className="text-xs leading-tight text-amber-700 dark:text-amber-300">
-              {isDraft ? t.order.fillShippingPrompt : t.order.needResubmitShort}
+            <p className="text-xs leading-5 text-amber-700 dark:text-amber-300">
+              {needsFillingMessage}
             </p>
           </div>
         )}
 
         {/* 待付款提示 */}
         {isPendingPayment && (
-          <div className="mt-auto flex items-start gap-2 rounded border-t bg-amber-500/10 p-2 dark:bg-amber-950/20">
-            <CreditCard className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-amber-600 dark:text-amber-400" />
-            <p className="text-xs leading-tight text-amber-700 dark:text-amber-300">
-              {t.order.pendingPaymentPrompt}
+          <div className="mt-auto flex items-start gap-2 border-t pt-2">
+            <CreditCard className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-orange-600 dark:text-orange-400" />
+            <p className="text-xs leading-5 text-orange-700 dark:text-orange-300">
+              {pendingPaymentMessage}
             </p>
           </div>
         )}
@@ -424,7 +454,12 @@ export function OrderCard({
         <div className="flex w-full gap-2">
           {needsFilling ? (
             <>
-              <Button size="sm" className="flex-1" onClick={handleFillForm} disabled={isGettingToken}>
+              <Button
+                size="sm"
+                className="flex-1"
+                onClick={handleFillForm}
+                disabled={isGettingToken}
+              >
                 {isGettingToken ? (
                   <>
                     <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
