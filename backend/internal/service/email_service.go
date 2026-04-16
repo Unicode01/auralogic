@@ -662,6 +662,7 @@ func (s *EmailService) ProcessDelayedEmails() {
 }
 
 func (s *EmailService) processDelayedEmailsLoop(stopChan <-chan struct{}) {
+	defer recoverBackgroundServicePanic("email.processDelayedEmailsLoop")
 	if !s.IsEnabled() || cache.RedisClient == nil {
 		return
 	}
@@ -715,6 +716,7 @@ func (s *EmailService) ProcessEmailQueue() {
 }
 
 func (s *EmailService) processEmailQueueLoop(stopChan <-chan struct{}) {
+	defer recoverBackgroundServicePanic("email.processEmailQueueLoop")
 	if !s.IsEnabled() || cache.RedisClient == nil {
 		log.Println("Email service is disabled")
 		return

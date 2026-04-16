@@ -59,6 +59,7 @@ func (s *PluginManagerService) persistPluginExecutionRecord(execution *models.Pl
 }
 
 func (s *PluginManagerService) pluginExecutionPersistLoop(stopChan <-chan struct{}, queue <-chan *models.PluginExecution) {
+	defer recoverBackgroundServicePanic("plugin_manager.pluginExecutionPersistLoop")
 	if s == nil || queue == nil {
 		return
 	}

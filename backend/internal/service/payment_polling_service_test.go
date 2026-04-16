@@ -120,3 +120,34 @@ func TestPaymentPollingAddToQueueRebindsExistingTaskToLatestPaymentMethod(t *tes
 		t.Fatalf("expected persisted payment method id %d, got %d", pm2.ID, persistedPayload.PaymentMethodID)
 	}
 }
+
+func TestPaymentPollingSafeCheckPaymentStatusRecoversFromPanic(t *testing.T) {
+	svc := &PaymentPollingService{
+		taskMap:        make(map[uint]*PollingTask),
+		userTaskCounts: make(map[uint]int),
+		wakeupChan:     make(chan struct{}, 1),
+	}
+	task := &PollingTask{
+		OrderID:         123,
+		UserID:          456,
+		PaymentMethodID: 789,
+		RetryCount:      2,
+		index:           -1,
+	}
+	svc.taskMap[task.OrderID] = task
+	svc.userTaskCounts[task.UserID] = 1
+
+	shouldContinue, newInterval := svc.safeCheckPaymentStatus(task)
+	if shouldContinue {
+		t.Fatalf("expected recovered panic task to stop retrying")
+	}
+	if newInterval != 0 {
+		t.Fatalf("expected zero interval after recovered panic, got %d", newInterval)
+	}
+	if _, exists := svc.taskMap[task.OrderID]; exists {
+		t.Fatalf("expected panic task to be removed from queue")
+	}
+	if count := svc.userTaskCounts[task.UserID]; count != 0 {
+		t.Fatalf("expected user task count to be decremented, got %d", count)
+	}
+}

@@ -134,6 +134,7 @@ func (s *TicketAutoCloseService) Stop() {
 
 // closeLoop 自动关闭循环
 func (s *TicketAutoCloseService) closeLoop(stopChan <-chan struct{}, doneChan chan struct{}) {
+	defer recoverBackgroundServicePanic("ticket_auto_close.closeLoop")
 	defer close(doneChan)
 
 	// 启动时执行一次

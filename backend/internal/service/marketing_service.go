@@ -164,6 +164,7 @@ func (s *MarketingService) ProcessQueue() {
 }
 
 func (s *MarketingService) processQueueLoop(stopChan <-chan struct{}) {
+	defer recoverBackgroundServicePanic("marketing.processQueueLoop")
 	if cache.RedisClient == nil {
 		log.Println("Marketing queue worker not started: redis client is not initialized")
 		return
