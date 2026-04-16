@@ -1,7 +1,7 @@
 'use client'
 /* eslint-disable @next/next/no-img-element */
 
-import { useDeferredValue, useState } from 'react'
+import { useDeferredValue, useRef, useState } from 'react'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import {
   getAdminProducts,
@@ -12,7 +12,6 @@ import {
 import { DataTable } from '@/components/admin/data-table'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { Card, CardContent } from '@/components/ui/card'
 import {
   Plus,
   RefreshCw,
@@ -23,6 +22,8 @@ import {
   ShoppingBag,
   Package,
   Database,
+  Download,
+  Upload,
 } from 'lucide-react'
 import Link from 'next/link'
 import toast from 'react-hot-toast'
@@ -45,11 +46,12 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
-import { Product, ProductStatus } from '@/types/product'
+import { Product } from '@/types/product'
 import { useLocale } from '@/hooks/use-locale'
 import { getTranslations } from '@/lib/i18n'
 import { usePageTitle } from '@/hooks/use-page-title'
 import { resolveApiErrorMessage } from '@/lib/api-error'
+import { resolveClientAPIProxyURL } from '@/lib/api-base-url'
 import { PluginExtensionList } from '@/components/plugins/plugin-extension-list'
 import { PluginSlot } from '@/components/plugins/plugin-slot'
 import { usePluginExtensionBatch } from '@/lib/plugin-extension-batch'
@@ -73,7 +75,25 @@ function buildAdminProductRowSummary(product: Product) {
   }
 }
 
+type ProductImportResult = {
+  message?: string
+  error_count?: number
+}
+
+function normalizeProductImportResult(result: unknown): ProductImportResult | null {
+  if (!result || typeof result !== 'object') {
+    return null
+  }
+
+  const payload = result as Record<string, unknown>
+  return {
+    message: typeof payload.message === 'string' ? payload.message : undefined,
+    error_count: Number(payload.error_count || 0),
+  }
+}
+
 export default function AdminProductsPage() {
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
   const [page, setPage] = useState(1)
   const [status, setStatus] = useState<string | undefined>()
   const [category, setCategory] = useState<string | undefined>()
@@ -84,9 +104,32 @@ export default function AdminProductsPage() {
   const { locale } = useLocale()
   const t = getTranslations(locale)
   usePageTitle(t.pageTitle.adminProducts)
+
   const formatAdminError = (error: unknown, fallback: string) => {
     const detail = resolveApiErrorMessage(error, t, fallback)
     return detail === fallback ? fallback : `${fallback}: ${detail}`
+  }
+
+  const readFetchErrorMessage = async (response: Response, fallback: string) => {
+    try {
+      const contentType = response.headers.get('content-type') || ''
+      if (contentType.includes('application/json')) {
+        const payload = await response.json()
+        return resolveApiErrorMessage(payload, t, fallback)
+      }
+
+      const text = (await response.text()).trim()
+      if (text) {
+        try {
+          return resolveApiErrorMessage(JSON.parse(text), t, fallback)
+        } catch {
+          return text
+        }
+      }
+    } catch {
+      // Ignore parse errors and fall back to the provided message.
+    }
+    return fallback
   }
 
   const statusConfig: Record<string, { label: string; color: string }> = {
@@ -116,7 +159,6 @@ export default function AdminProductsPage() {
       }),
   })
 
-  // 删除商品
   const deleteMutation = useMutation({
     mutationFn: deleteProduct,
     onSuccess: () => {
@@ -129,7 +171,6 @@ export default function AdminProductsPage() {
     },
   })
 
-  // 切换精选状态
   const toggleFeaturedMutation = useMutation({
     mutationFn: toggleProductFeatured,
     onSuccess: () => {
@@ -141,7 +182,6 @@ export default function AdminProductsPage() {
     },
   })
 
-  // 更新商品状态
   const updateStatusMutation = useMutation({
     mutationFn: ({ id, status }: { id: number; status: string }) => updateProductStatus(id, status),
     onSuccess: () => {
@@ -150,6 +190,39 @@ export default function AdminProductsPage() {
     },
     onError: (error: unknown) => {
       toast.error(formatAdminError(error, t.admin.operationFailed))
+    },
+  })
+
+  const importMutation = useMutation({
+    mutationFn: async (file: File) => {
+      const formData = new FormData()
+      formData.append('file', file)
+      formData.append('conflict_mode', 'upsert')
+
+      const response = await fetch(resolveClientAPIProxyURL('/api/admin/products/import'), {
+        method: 'POST',
+        body: formData,
+      })
+
+      if (!response.ok) {
+        throw new Error(await readFetchErrorMessage(response, t.admin.importFailed))
+      }
+
+      return (await response.json()) as { data?: unknown }
+    },
+    onSuccess: (data) => {
+      toast.dismiss()
+      const result = normalizeProductImportResult(data?.data)
+      if (result?.error_count) {
+        toast.error(result.message || t.admin.importFailed, { duration: 6000 })
+      } else {
+        toast.success(result?.message || t.admin.productsImportSuccess)
+      }
+      refetch()
+    },
+    onError: (error: unknown) => {
+      toast.dismiss()
+      toast.error(resolveApiErrorMessage(error, t, t.admin.importFailed))
     },
   })
 
@@ -208,6 +281,65 @@ export default function AdminProductsPage() {
     items: adminProductRowActionItems,
     enabled: products.length > 0,
   })
+
+  const handleExport = () => {
+    const params = new URLSearchParams()
+    if (status) params.append('status', status)
+    if (category) params.append('category', category)
+    if (deferredSearch.trim()) params.append('search', deferredSearch.trim())
+
+    const url = resolveClientAPIProxyURL(
+      `/api/admin/products/export${params.toString() ? `?${params.toString()}` : ''}`
+    )
+
+    fetch(url)
+      .then(async (res) => {
+        if (!res.ok) {
+          throw new Error(await readFetchErrorMessage(res, t.admin.exportFailed))
+        }
+        return res.blob()
+      })
+      .then((blob) => {
+        const blobUrl = window.URL.createObjectURL(blob)
+        const anchor = document.createElement('a')
+        anchor.href = blobUrl
+        anchor.download = `products_${new Date().toISOString().slice(0, 10)}.xlsx`
+        document.body.appendChild(anchor)
+        anchor.click()
+        document.body.removeChild(anchor)
+        window.URL.revokeObjectURL(blobUrl)
+        toast.success(t.admin.productsExportSuccess)
+      })
+      .catch((err: Error) => {
+        toast.error(`${t.admin.exportFailed}: ${err.message}`)
+      })
+  }
+
+  const handleImportClick = () => {
+    fileInputRef.current?.click()
+  }
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) {
+      return
+    }
+
+    if (!file.name.toLowerCase().endsWith('.xlsx')) {
+      toast.error(t.admin.fileFormatError)
+      if (fileInputRef.current) {
+        fileInputRef.current.value = ''
+      }
+      return
+    }
+
+    toast.loading(t.admin.importLoading)
+    importMutation.mutate(file)
+
+    if (fileInputRef.current) {
+      fileInputRef.current.value = ''
+    }
+  }
 
   const columns = [
     {
@@ -274,18 +406,18 @@ export default function AdminProductsPage() {
       header: t.admin.status,
       cell: ({ row }: { row: { original: Product } }) => {
         const product = row.original
-        const status = product.status
-        const config = statusConfig[status] || defaultStatusConfig
+        const productStatus = product.status
+        const config = statusConfig[productStatus] || defaultStatusConfig
         return (
           <Badge
             className={`${config.color} cursor-pointer transition-opacity hover:opacity-80`}
             onClick={() =>
               updateStatusMutation.mutate({
                 id: product.id,
-                status: status === 'active' ? 'inactive' : 'active',
+                status: productStatus === 'active' ? 'inactive' : 'active',
               })
             }
-            title={status === 'active' ? t.admin.takeOffSale : t.admin.putOnSale}
+            title={productStatus === 'active' ? t.admin.takeOffSale : t.admin.putOnSale}
           >
             {config.label}
           </Badge>
@@ -348,6 +480,7 @@ export default function AdminProductsPage() {
       },
     },
   ]
+
   const deleteTarget = deleteId ? products.find((item: Product) => item.id === deleteId) : null
 
   return (
@@ -360,12 +493,27 @@ export default function AdminProductsPage() {
             {t.admin.totalRecords.replace('{count}', String(totalProducts))}
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <Button asChild>
             <Link href="/admin/products/new">
               <Plus className="mr-2 h-4 w-4" />
               {t.admin.addProduct}
             </Link>
+          </Button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            className="hidden"
+            onChange={handleFileChange}
+          />
+          <Button variant="outline" onClick={handleImportClick} disabled={importMutation.isPending}>
+            <Upload className="mr-2 h-4 w-4" />
+            {t.admin.importProducts}
+          </Button>
+          <Button variant="outline" onClick={handleExport}>
+            <Download className="mr-2 h-4 w-4" />
+            {t.admin.exportProducts}
           </Button>
           <Button variant="outline" onClick={() => refetch()}>
             <RefreshCw className="mr-2 h-4 w-4" />
@@ -374,7 +522,6 @@ export default function AdminProductsPage() {
         </div>
       </div>
 
-      {/* 筛选器 */}
       <PluginSlot
         slot="admin.products.filters"
         context={{ ...adminProductsPluginContext, section: 'filters' }}
@@ -427,7 +574,6 @@ export default function AdminProductsPage() {
         }}
       />
 
-      {/* 删除确认对话框 */}
       <AlertDialog open={deleteId !== null} onOpenChange={() => setDeleteId(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>

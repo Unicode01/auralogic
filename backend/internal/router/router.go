@@ -99,7 +99,7 @@ func SetupRouter(
 	userPaymentMethodHandler := userHandler.NewPaymentMethodHandler(db, paymentPollingService, pluginManagerService, cfg)
 	userTicketHandler := userHandler.NewTicketHandler(db, emailService, pluginManagerService)
 	adminTicketHandler := adminHandler.NewTicketHandler(db, emailService, pluginManagerService)
-	adminPromoCodeHandler := adminHandler.NewPromoCodeHandler(promoCodeService, pluginManagerService)
+	adminPromoCodeHandler := adminHandler.NewPromoCodeHandler(promoCodeService, pluginManagerService, db)
 	userPromoCodeHandler := userHandler.NewPromoCodeHandler(promoCodeService, pluginManagerService)
 	adminKnowledgeHandler := adminHandler.NewKnowledgeHandler(db, pluginManagerService)
 	adminAnnouncementHandler := adminHandler.NewAnnouncementHandler(db, emailService, smsService, pluginManagerService)
@@ -392,6 +392,7 @@ func SetupRouter(
 		users.Use(middleware.AuthMiddleware(), middleware.RequireAdmin())
 		{
 			users.GET("", middleware.RequirePermission("user.view"), adminUserHandler.ListUsers)
+			users.GET("/export", middleware.RequirePermission("user.view"), adminUserHandler.ExportUsers)
 			users.GET("/countries", middleware.RequirePermission("user.view"), adminUserHandler.ListUserCountries)
 			users.POST("", middleware.RequirePermission("user.edit"), adminUserHandler.CreateUser)
 			users.GET("/:id", middleware.RequirePermission("user.view"), adminUserHandler.GetUser)
@@ -405,6 +406,9 @@ func SetupRouter(
 		products.Use(middleware.AuthMiddleware(), middleware.RequireAdmin())
 		{
 			products.GET("", middleware.RequirePermission("product.view"), adminProductHandler.ListProducts)
+			products.GET("/export", middleware.RequirePermission("product.view"), adminProductHandler.ExportProducts)
+			products.GET("/import-template", middleware.RequirePermission("product.edit"), adminProductHandler.DownloadProductImportTemplate)
+			products.POST("/import", middleware.RequirePermission("product.edit"), adminProductHandler.ImportProducts)
 			products.POST("", middleware.RequirePermission("product.edit"), adminProductHandler.CreateProduct)
 			products.GET("/categories", middleware.RequirePermission("product.view"), adminProductHandler.GetCategories)
 			products.GET("/:id", middleware.RequirePermission("product.view"), adminProductHandler.GetProduct)
@@ -476,11 +480,15 @@ func SetupRouter(
 		logs.Use(middleware.AuthMiddleware(), middleware.RequireAdmin())
 		{
 			logs.GET("/operations", middleware.RequirePermission("system.logs"), adminLogHandler.ListOperationLogs)
+			logs.GET("/operations/export", middleware.RequirePermission("system.logs"), adminLogHandler.ExportOperationLogs)
 			logs.GET("/emails", middleware.RequirePermission("system.logs"), adminLogHandler.ListEmailLogs)
+			logs.GET("/emails/export", middleware.RequirePermission("system.logs"), adminLogHandler.ExportEmailLogs)
 			logs.GET("/sms", middleware.RequirePermission("system.logs"), adminLogHandler.ListSmsLogs)
+			logs.GET("/sms/export", middleware.RequirePermission("system.logs"), adminLogHandler.ExportSmsLogs)
 			logs.GET("/statistics", middleware.RequirePermission("system.logs"), adminLogHandler.GetLogStatistics)
 			logs.POST("/emails/retry", middleware.RequirePermission("system.logs"), adminLogHandler.RetryFailedEmails)
 			logs.GET("/inventories", middleware.RequirePermission("system.logs"), adminInventoryLogHandler.ListInventoryLogs)
+			logs.GET("/inventories/export", middleware.RequirePermission("system.logs"), adminInventoryLogHandler.ExportInventoryLogs)
 			logs.GET("/inventories/statistics", middleware.RequirePermission("system.logs"), adminInventoryLogHandler.GetInventoryLogStatistics)
 		}
 
@@ -528,6 +536,8 @@ func SetupRouter(
 		promoCodesAdmin.Use(middleware.AuthMiddleware(), middleware.RequireAdmin())
 		{
 			promoCodesAdmin.GET("", middleware.RequirePermission("product.view"), adminPromoCodeHandler.ListPromoCodes)
+			promoCodesAdmin.GET("/export", middleware.RequirePermission("product.view"), adminPromoCodeHandler.ExportPromoCodes)
+			promoCodesAdmin.POST("/import", middleware.RequirePermission("product.edit"), adminPromoCodeHandler.ImportPromoCodes)
 			promoCodesAdmin.POST("", middleware.RequirePermission("product.edit"), adminPromoCodeHandler.CreatePromoCode)
 			promoCodesAdmin.GET("/:id", middleware.RequirePermission("product.view"), adminPromoCodeHandler.GetPromoCode)
 			promoCodesAdmin.PUT("/:id", middleware.RequirePermission("product.edit"), adminPromoCodeHandler.UpdatePromoCode)
@@ -620,6 +630,8 @@ func SetupRouter(
 		knowledgeAdmin := adminAPI.Group("/knowledge")
 		knowledgeAdmin.Use(middleware.AuthMiddleware(), middleware.RequireAdmin())
 		{
+			knowledgeAdmin.GET("/export", middleware.RequirePermission("knowledge.view"), adminKnowledgeHandler.ExportKnowledge)
+			knowledgeAdmin.POST("/import", middleware.RequirePermission("knowledge.edit"), adminKnowledgeHandler.ImportKnowledge)
 			// 分类管理
 			knowledgeAdmin.GET("/categories", middleware.RequirePermission("knowledge.view"), adminKnowledgeHandler.ListCategories)
 			knowledgeAdmin.POST("/categories", middleware.RequirePermission("knowledge.edit"), adminKnowledgeHandler.CreateCategory)
@@ -638,6 +650,7 @@ func SetupRouter(
 		announcementsAdmin.Use(middleware.AuthMiddleware(), middleware.RequireAdmin())
 		{
 			announcementsAdmin.GET("", middleware.RequirePermission("announcement.view"), adminAnnouncementHandler.ListAnnouncements)
+			announcementsAdmin.GET("/export", middleware.RequirePermission("announcement.view"), adminAnnouncementHandler.ExportAnnouncements)
 			announcementsAdmin.POST("", middleware.RequirePermission("announcement.edit"), adminAnnouncementHandler.CreateAnnouncement)
 			announcementsAdmin.GET("/:id", middleware.RequirePermission("announcement.view"), adminAnnouncementHandler.GetAnnouncement)
 			announcementsAdmin.PUT("/:id", middleware.RequirePermission("announcement.edit"), adminAnnouncementHandler.UpdateAnnouncement)

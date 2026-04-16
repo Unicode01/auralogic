@@ -346,6 +346,22 @@ func (s *ProductService) UpdateProductStatus(id uint, status models.ProductStatu
 	return s.productRepo.Update(product)
 }
 
+func (s *ProductService) UpdateInventoryMode(id uint, mode string) error {
+	product, err := s.productRepo.FindByID(id)
+	if err != nil {
+		return ErrProductNotFound
+	}
+
+	switch mode {
+	case string(models.InventoryModeFixed), string(models.InventoryModeRandom):
+		product.InventoryMode = mode
+	default:
+		return bizerr.New("product.inventoryModeInvalid", "Inventory mode is invalid")
+	}
+
+	return s.productRepo.Update(product)
+}
+
 // UpdateStock Update inventory
 func (s *ProductService) UpdateStock(id uint, stock int) error {
 	if stock < 0 {
