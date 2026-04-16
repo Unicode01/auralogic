@@ -299,7 +299,7 @@ func (s *PluginManagerService) Start() {
 
 	s.startPluginAuditLogWorker(stopChan)
 	s.startPluginExecutionPersistWorker(stopChan)
-	go s.executionRetentionLoop(stopChan)
+	go runBackgroundServiceWithStopChan("plugin_manager.executionRetentionLoop", stopChan, s.executionRetentionLoop)
 	if !s.isPluginPlatformEnabled() {
 		log.Println("PluginManagerService runtime skipped: plugin platform disabled by config")
 		return
@@ -311,7 +311,7 @@ func (s *PluginManagerService) Start() {
 	}
 
 	// 启动健康检查循环
-	go s.healthCheckLoop(stopChan)
+	go runBackgroundServiceWithStopChan("plugin_manager.healthCheckLoop", stopChan, s.healthCheckLoop)
 	log.Println("PluginManagerService started")
 }
 
@@ -462,7 +462,6 @@ func (s *PluginManagerService) registerPluginWithTrigger(plugin *models.Plugin, 
 
 // healthCheckLoop 健康检查循环
 func (s *PluginManagerService) healthCheckLoop(stopChan <-chan struct{}) {
-	defer recoverBackgroundServicePanic("plugin_manager.healthCheckLoop")
 	ticker := time.NewTicker(s.healthCheckTick)
 	defer ticker.Stop()
 
@@ -1285,7 +1284,9 @@ func (s *PluginManagerService) startPluginAuditLogWorker(stopChan <-chan struct{
 	s.auditLogWorkerWG.Add(1)
 	go func(stopSignal <-chan struct{}, auditQueue <-chan pluginExecutionAuditEntry) {
 		defer s.auditLogWorkerWG.Done()
-		s.pluginExecutionAuditLoop(stopSignal, auditQueue)
+		runBackgroundServiceWithStopChan("plugin_manager.pluginExecutionAuditLoop", stopSignal, func(stopChan <-chan struct{}) {
+			s.pluginExecutionAuditLoop(stopChan, auditQueue)
+		})
 	}(stopChan, queue)
 }
 
@@ -1315,7 +1316,6 @@ func (s *PluginManagerService) tryEnqueuePluginExecutionAuditEntry(entry pluginE
 }
 
 func (s *PluginManagerService) pluginExecutionAuditLoop(stopChan <-chan struct{}, queue <-chan pluginExecutionAuditEntry) {
-	defer recoverBackgroundServicePanic("plugin_manager.pluginExecutionAuditLoop")
 	if queue == nil {
 		return
 	}

@@ -27,7 +27,9 @@ func (s *PluginManagerService) startPluginExecutionPersistWorker(stopChan <-chan
 	s.executionPersistWorkerWG.Add(1)
 	go func(stopSignal <-chan struct{}, persistQueue <-chan *models.PluginExecution) {
 		defer s.executionPersistWorkerWG.Done()
-		s.pluginExecutionPersistLoop(stopSignal, persistQueue)
+		runBackgroundServiceWithStopChan("plugin_manager.pluginExecutionPersistLoop", stopSignal, func(stopChan <-chan struct{}) {
+			s.pluginExecutionPersistLoop(stopChan, persistQueue)
+		})
 	}(stopChan, queue)
 }
 
@@ -59,7 +61,6 @@ func (s *PluginManagerService) persistPluginExecutionRecord(execution *models.Pl
 }
 
 func (s *PluginManagerService) pluginExecutionPersistLoop(stopChan <-chan struct{}, queue <-chan *models.PluginExecution) {
-	defer recoverBackgroundServicePanic("plugin_manager.pluginExecutionPersistLoop")
 	if s == nil || queue == nil {
 		return
 	}

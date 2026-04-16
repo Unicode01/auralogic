@@ -13,7 +13,6 @@ const (
 )
 
 func (s *PluginManagerService) executionRetentionLoop(stopChan <-chan struct{}) {
-	defer recoverBackgroundServicePanic("plugin_manager.executionRetentionLoop")
 	if s == nil || s.db == nil {
 		return
 	}

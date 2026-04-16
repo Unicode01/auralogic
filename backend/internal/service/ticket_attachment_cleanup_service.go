@@ -56,7 +56,10 @@ func (s *TicketAttachmentCleanupService) Start() {
 		"check_interval": s.checkInterval.String(),
 	})
 
-	go s.cleanupLoop(stopChan, doneChan)
+	go func() {
+		defer close(doneChan)
+		runBackgroundServiceWithStopChan("ticket_attachment_cleanup.cleanupLoop", stopChan, s.cleanupLoop)
+	}()
 }
 
 // Stop 停止清理服务
@@ -79,10 +82,7 @@ func (s *TicketAttachmentCleanupService) Stop() {
 }
 
 // cleanupLoop 清理循环
-func (s *TicketAttachmentCleanupService) cleanupLoop(stopChan <-chan struct{}, doneChan chan struct{}) {
-	defer recoverBackgroundServicePanic("ticket_attachment_cleanup.cleanupLoop")
-	defer close(doneChan)
-
+func (s *TicketAttachmentCleanupService) cleanupLoop(stopChan <-chan struct{}) {
 	// 启动时执行一次
 	s.cleanExpiredAttachments()
 

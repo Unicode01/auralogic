@@ -172,7 +172,10 @@ func (s *OrderCancelService) Start() {
 		"check_interval":    s.checkInterval.String(),
 	})
 
-	go s.cancelLoop(stopChan, doneChan)
+	go func() {
+		defer close(doneChan)
+		runBackgroundServiceWithStopChan("order_cancel.cancelLoop", stopChan, s.cancelLoop)
+	}()
 }
 
 // Stop 停止自动取消服务
@@ -195,10 +198,7 @@ func (s *OrderCancelService) Stop() {
 }
 
 // cancelLoop 取消循环
-func (s *OrderCancelService) cancelLoop(stopChan <-chan struct{}, doneChan chan struct{}) {
-	defer recoverBackgroundServicePanic("order_cancel.cancelLoop")
-	defer close(doneChan)
-
+func (s *OrderCancelService) cancelLoop(stopChan <-chan struct{}) {
 	// 启动时立即执行一次
 	s.cancelExpiredOrders()
 

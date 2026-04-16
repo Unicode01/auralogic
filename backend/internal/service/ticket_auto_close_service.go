@@ -110,7 +110,10 @@ func (s *TicketAutoCloseService) Start() {
 		"check_interval":   s.checkInterval.String(),
 	})
 
-	go s.closeLoop(stopChan, doneChan)
+	go func() {
+		defer close(doneChan)
+		runBackgroundServiceWithStopChan("ticket_auto_close.closeLoop", stopChan, s.closeLoop)
+	}()
 }
 
 // Stop 停止自动关闭服务
@@ -133,10 +136,7 @@ func (s *TicketAutoCloseService) Stop() {
 }
 
 // closeLoop 自动关闭循环
-func (s *TicketAutoCloseService) closeLoop(stopChan <-chan struct{}, doneChan chan struct{}) {
-	defer recoverBackgroundServicePanic("ticket_auto_close.closeLoop")
-	defer close(doneChan)
-
+func (s *TicketAutoCloseService) closeLoop(stopChan <-chan struct{}) {
 	// 启动时执行一次
 	s.closeInactiveTickets()
 

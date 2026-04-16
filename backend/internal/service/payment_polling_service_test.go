@@ -2,6 +2,7 @@ package service
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -27,6 +28,7 @@ func newPaymentPollingServiceTestDB(t *testing.T) (*PaymentPollingService, *gorm
 		&models.OperationLog{},
 		&models.Order{},
 		&models.PaymentMethod{},
+		&models.OrderPaymentMethod{},
 		&models.PaymentPollingTask{},
 	); err != nil {
 		t.Fatalf("auto migrate: %v", err)
@@ -149,5 +151,109 @@ func TestPaymentPollingSafeCheckPaymentStatusRecoversFromPanic(t *testing.T) {
 	}
 	if count := svc.userTaskCounts[task.UserID]; count != 0 {
 		t.Fatalf("expected user task count to be decremented, got %d", count)
+	}
+}
+
+func TestPaymentPollingRecoverTasksRemovesQuotaSkippedPersistedRows(t *testing.T) {
+	svc, db := newPaymentPollingServiceTestDB(t)
+	svc.maxTasksGlobal = 1
+
+	userID := uint(7)
+	pm := &models.PaymentMethod{Name: "USDT", Enabled: true, PollInterval: 30}
+	if err := db.Create(pm).Error; err != nil {
+		t.Fatalf("create payment method: %v", err)
+	}
+
+	order1 := &models.Order{
+		OrderNo:     "ORDER-POLL-RECOVER-1",
+		UserID:      &userID,
+		Status:      models.OrderStatusPendingPayment,
+		TotalAmount: 100,
+		Currency:    "CNY",
+	}
+	order2 := &models.Order{
+		OrderNo:     "ORDER-POLL-RECOVER-2",
+		UserID:      &userID,
+		Status:      models.OrderStatusPendingPayment,
+		TotalAmount: 200,
+		Currency:    "CNY",
+	}
+	if err := db.Create(order1).Error; err != nil {
+		t.Fatalf("create order1: %v", err)
+	}
+	if err := db.Create(order2).Error; err != nil {
+		t.Fatalf("create order2: %v", err)
+	}
+
+	for _, orderID := range []uint{order1.ID, order2.ID} {
+		if err := db.Create(&models.OrderPaymentMethod{
+			OrderID:         orderID,
+			PaymentMethodID: pm.ID,
+		}).Error; err != nil {
+			t.Fatalf("create order payment method for %d: %v", orderID, err)
+		}
+	}
+
+	now := time.Now()
+	createPersistedTask := func(orderID uint) {
+		payload, err := json.Marshal(PollingTask{
+			OrderID:         orderID,
+			UserID:          userID,
+			PaymentMethodID: pm.ID,
+			AddedAt:         now,
+			NextCheckAt:     now,
+			CheckInterval:   pm.PollInterval,
+		})
+		if err != nil {
+			t.Fatalf("marshal task payload: %v", err)
+		}
+		if err := db.Create(&models.PaymentPollingTask{
+			OrderID: orderID,
+			Data:    string(payload),
+		}).Error; err != nil {
+			t.Fatalf("create persisted task for %d: %v", orderID, err)
+		}
+	}
+	createPersistedTask(order1.ID)
+	createPersistedTask(order2.ID)
+
+	svc.recoverTasks()
+
+	if len(svc.taskMap) != 1 {
+		t.Fatalf("expected exactly one recovered task in memory, got %d", len(svc.taskMap))
+	}
+
+	remainingQueuedOrderID := uint(0)
+	for orderID := range svc.taskMap {
+		remainingQueuedOrderID = orderID
+	}
+
+	var persisted []models.PaymentPollingTask
+	if err := db.Order("order_id ASC").Find(&persisted).Error; err != nil {
+		t.Fatalf("load persisted tasks: %v", err)
+	}
+	if len(persisted) != 1 {
+		t.Fatalf("expected exactly one persisted task after cleanup, got %d", len(persisted))
+	}
+	if persisted[0].OrderID != remainingQueuedOrderID {
+		t.Fatalf("expected persisted task order id %d to match queued order id %d", persisted[0].OrderID, remainingQueuedOrderID)
+	}
+}
+
+func TestShouldRetryPaymentFinalizeError(t *testing.T) {
+	if !shouldRetryPaymentFinalizeError(&orderHighConcurrencyBusyError{
+		HotPath:     orderHotPathConfirmPaymentResult,
+		Mode:        "memory",
+		MaxInFlight: 1,
+	}) {
+		t.Fatalf("expected high concurrency busy error to be retryable")
+	}
+
+	if !shouldRetryPaymentFinalizeError(errors.New("database is locked")) {
+		t.Fatalf("expected transient database lock error to be retryable")
+	}
+
+	if shouldRetryPaymentFinalizeError(errors.New("script delivery failed: invalid payload")) {
+		t.Fatalf("expected deterministic script failure to stop retrying")
 	}
 }

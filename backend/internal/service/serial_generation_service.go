@@ -65,7 +65,10 @@ func (s *SerialGenerationService) Start() {
 	if err := s.recoverTasks(); err != nil {
 		log.Printf("serial generation recover tasks failed: %v", err)
 	}
-	go s.runLoop(stopChan, doneChan)
+	go func() {
+		defer close(doneChan)
+		runBackgroundServiceWithStopChan("serial_generation.runLoop", stopChan, s.runLoop)
+	}()
 	s.NotifyOrderQueued(0)
 }
 
@@ -177,10 +180,7 @@ func (s *SerialGenerationService) recoverTasks() error {
 		}).Error
 }
 
-func (s *SerialGenerationService) runLoop(stopChan <-chan struct{}, doneChan chan<- struct{}) {
-	defer recoverBackgroundServicePanic("serial_generation.runLoop")
-	defer close(doneChan)
-
+func (s *SerialGenerationService) runLoop(stopChan <-chan struct{}) {
 	for {
 		select {
 		case <-stopChan:

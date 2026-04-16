@@ -64,7 +64,7 @@ func (s *MarketingService) Start() {
 
 	go func() {
 		defer s.workerWG.Done()
-		s.processQueueLoop(stopChan)
+		runBackgroundServiceWithStopChan("marketing.processQueueLoop", stopChan, s.processQueueLoop)
 	}()
 }
 
@@ -160,11 +160,10 @@ func (s *MarketingService) EnqueueBatch(batchID uint) error {
 }
 
 func (s *MarketingService) ProcessQueue() {
-	s.processQueueLoop(nil)
+	runBackgroundServiceWithStopChan("marketing.processQueueLoop", nil, s.processQueueLoop)
 }
 
 func (s *MarketingService) processQueueLoop(stopChan <-chan struct{}) {
-	defer recoverBackgroundServicePanic("marketing.processQueueLoop")
 	if cache.RedisClient == nil {
 		log.Println("Marketing queue worker not started: redis client is not initialized")
 		return

@@ -175,7 +175,10 @@ func (s *PaymentPollingService) Start() {
 	s.resetQueueState()
 	// 从数据库恢复未完成的轮询任务
 	s.recoverTasks()
-	go s.timeWheelLoop(stopChan, doneChan)
+	go func() {
+		defer close(doneChan)
+		runBackgroundServiceWithStopChan("payment_polling.timeWheelLoop", stopChan, s.timeWheelLoop)
+	}()
 }
 
 // Stop 停止轮询服务
@@ -638,10 +641,7 @@ func (s *PaymentPollingService) wakeup() {
 }
 
 // timeWheelLoop 时间轮主循环
-func (s *PaymentPollingService) timeWheelLoop(stopChan <-chan struct{}, doneChan chan struct{}) {
-	defer recoverBackgroundServicePanic("payment_polling.timeWheelLoop")
-	defer close(doneChan)
-
+func (s *PaymentPollingService) timeWheelLoop(stopChan <-chan struct{}) {
 	for {
 		s.runPendingQueueBackfillIfNeeded()
 
@@ -883,6 +883,14 @@ func (s *PaymentPollingService) checkPaymentStatus(task *PollingTask) (bool, int
 		// 付款成功，更新订单状态
 		if finalizeErr := s.handlePaymentSuccess(task, &order, &pm, result, "payment_polling"); finalizeErr == nil {
 			return false, 0
+		} else if !shouldRetryPaymentFinalizeError(finalizeErr) {
+			logger.LogPaymentOperation(s.db, "payment_polling_finalize_stopped", task.OrderID, map[string]interface{}{
+				"error":             finalizeErr.Error(),
+				"payment_method_id": pm.ID,
+				"retry_count":       task.RetryCount,
+			})
+			s.removeFromQueue(task.OrderID)
+			return false, 0
 		}
 		return true, newInterval
 	}
@@ -1045,6 +1053,34 @@ func (s *PaymentPollingService) handlePaymentSuccess(task *PollingTask, order *m
 	// 从队列移除
 	s.removeFromQueue(task.OrderID)
 	return nil
+}
+
+func shouldRetryPaymentFinalizeError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if isOrderHighConcurrencyBusyError(err) {
+		return true
+	}
+
+	lowerErr := strings.ToLower(err.Error())
+	retryableFragments := []string{
+		"database is locked",
+		"deadlock",
+		"lock wait timeout",
+		"timeout",
+		"temporarily unavailable",
+		"connection reset",
+		"connection refused",
+		"broken pipe",
+		"too many connections",
+	}
+	for _, fragment := range retryableFragments {
+		if strings.Contains(lowerErr, fragment) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *PaymentPollingService) syncUserConsumptionStatsBestEffort(
@@ -1288,10 +1324,12 @@ func (s *PaymentPollingService) recoverTasks() {
 
 	recoveredCount := 0
 	removedCount := 0
+	deferredBackfillCount := 0
 	parsedTasks := make([]PollingTask, 0, len(records))
 	orderIDs := make([]uint, 0, len(records))
 	paymentMethodIDs := make([]uint, 0, len(records))
 	invalidOrderIDs := make([]uint, 0)
+	backfillOrderIDs := make([]uint, 0)
 
 	for _, record := range records {
 		var task PollingTask
@@ -1368,6 +1406,8 @@ func (s *PaymentPollingService) recoverTasks() {
 
 		if added, err := s.addRecoveredTask(s.cloneTask(&task)); err != nil {
 			if isPaymentPollingQueueQuotaError(err) {
+				backfillOrderIDs = append(backfillOrderIDs, task.OrderID)
+				deferredBackfillCount++
 				continue
 			}
 			invalidOrderIDs = append(invalidOrderIDs, task.OrderID)
@@ -1381,15 +1421,19 @@ func (s *PaymentPollingService) recoverTasks() {
 	if len(invalidOrderIDs) > 0 {
 		s.removeTasksFromDB(invalidOrderIDs)
 	}
+	if len(backfillOrderIDs) > 0 {
+		s.removeTasksFromDB(backfillOrderIDs)
+	}
 
 	// 扫描所有待付款订单，确保都在队列中
 	addedCount := s.scanPendingPaymentOrders()
 
-	if recoveredCount > 0 || removedCount > 0 || addedCount > 0 {
+	if recoveredCount > 0 || removedCount > 0 || addedCount > 0 || deferredBackfillCount > 0 {
 		logger.LogSystemOperation(s.db, "payment_polling_recover", "system", nil, map[string]interface{}{
-			"recovered": recoveredCount,
-			"removed":   removedCount,
-			"added":     addedCount,
+			"recovered":         recoveredCount,
+			"removed":           removedCount,
+			"added":             addedCount,
+			"deferred_backfill": deferredBackfillCount,
 		})
 	}
 }
