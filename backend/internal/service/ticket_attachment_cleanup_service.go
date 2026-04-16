@@ -80,6 +80,7 @@ func (s *TicketAttachmentCleanupService) Stop() {
 
 // cleanupLoop 清理循环
 func (s *TicketAttachmentCleanupService) cleanupLoop(stopChan <-chan struct{}, doneChan chan struct{}) {
+	defer recoverBackgroundServicePanic("ticket_attachment_cleanup.cleanupLoop")
 	defer close(doneChan)
 
 	// 启动时执行一次

@@ -462,6 +462,7 @@ func (s *PluginManagerService) registerPluginWithTrigger(plugin *models.Plugin, 
 
 // healthCheckLoop 健康检查循环
 func (s *PluginManagerService) healthCheckLoop(stopChan <-chan struct{}) {
+	defer recoverBackgroundServicePanic("plugin_manager.healthCheckLoop")
 	ticker := time.NewTicker(s.healthCheckTick)
 	defer ticker.Stop()
 
@@ -1314,6 +1315,7 @@ func (s *PluginManagerService) tryEnqueuePluginExecutionAuditEntry(entry pluginE
 }
 
 func (s *PluginManagerService) pluginExecutionAuditLoop(stopChan <-chan struct{}, queue <-chan pluginExecutionAuditEntry) {
+	defer recoverBackgroundServicePanic("plugin_manager.pluginExecutionAuditLoop")
 	if queue == nil {
 		return
 	}

@@ -639,6 +639,7 @@ func (s *PaymentPollingService) wakeup() {
 
 // timeWheelLoop 时间轮主循环
 func (s *PaymentPollingService) timeWheelLoop(stopChan <-chan struct{}, doneChan chan struct{}) {
+	defer recoverBackgroundServicePanic("payment_polling.timeWheelLoop")
 	defer close(doneChan)
 
 	for {
@@ -702,7 +703,7 @@ func (s *PaymentPollingService) processDueTasks() {
 		s.mutex.Unlock()
 
 		// 检查付款状态
-		shouldContinue, newInterval := s.checkPaymentStatus(task)
+		shouldContinue, newInterval := s.safeCheckPaymentStatus(task)
 
 		if shouldContinue {
 			s.mutex.Lock()
@@ -724,6 +725,40 @@ func (s *PaymentPollingService) processDueTasks() {
 			// startup recovery and pending-order scanning will rebuild active tasks.
 		}
 	}
+}
+
+func (s *PaymentPollingService) safeCheckPaymentStatus(task *PollingTask) (shouldContinue bool, newInterval int) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			orderID := uint(0)
+			retryCount := 0
+			userID := uint(0)
+			if task != nil {
+				orderID = task.OrderID
+				retryCount = task.RetryCount
+				userID = task.UserID
+			}
+			logger.LogPaymentOperation(s.db, "payment_polling_panic", orderID, map[string]interface{}{
+				"panic":       fmt.Sprint(recovered),
+				"retry_count": retryCount,
+			})
+			s.emitPaymentHookAsync("payment.polling.failed", map[string]interface{}{
+				"order_id":    orderID,
+				"user_id":     userID,
+				"reason":      "panic",
+				"panic":       fmt.Sprint(recovered),
+				"retry_count": retryCount,
+				"source":      "payment_polling",
+			}, s.buildPaymentHookExecutionContext(nil, task, "payment_polling"))
+			if orderID > 0 {
+				s.removeFromQueue(orderID)
+			}
+			shouldContinue = false
+			newInterval = 0
+		}
+	}()
+
+	return s.checkPaymentStatus(task)
 }
 
 // checkPaymentStatus 检查付款状态

@@ -178,6 +178,7 @@ func (s *SerialGenerationService) recoverTasks() error {
 }
 
 func (s *SerialGenerationService) runLoop(stopChan <-chan struct{}, doneChan chan<- struct{}) {
+	defer recoverBackgroundServicePanic("serial_generation.runLoop")
 	defer close(doneChan)
 
 	for {

@@ -196,6 +196,7 @@ func (s *OrderCancelService) Stop() {
 
 // cancelLoop 取消循环
 func (s *OrderCancelService) cancelLoop(stopChan <-chan struct{}, doneChan chan struct{}) {
+	defer recoverBackgroundServicePanic("order_cancel.cancelLoop")
 	defer close(doneChan)
 
 	// 启动时立即执行一次
