@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"auralogic/internal/config"
 	"auralogic/internal/models"
 	"auralogic/internal/pkg/bizerr"
 
@@ -274,5 +275,116 @@ func TestVirtualBindingErrorsAreStructured(t *testing.T) {
 	}(), "virtual_binding.insufficientAvailable")
 	if got := allocateErr.Params["requested"]; got != 1 {
 		t.Fatalf("expected requested=1, got %#v", allocateErr.Params)
+	}
+}
+
+func TestBuildVirtualStockPresentationHonorsSwitches(t *testing.T) {
+	svc, _ := newVirtualInventoryServiceTestDB(t)
+	svc.cfg = &config.Config{
+		Order: config.OrderConfig{
+			EnableVirtualStockInlineIframe: true,
+		},
+	}
+
+	inventory := &models.VirtualInventory{
+		Type:              models.VirtualInventoryTypeScript,
+		AllowInlineIframe: true,
+	}
+	item := ScriptDeliveryItem{
+		Content: "READY",
+		Presentation: &ScriptDeliveryPresentation{
+			InlineIframe: &ScriptDeliveryInlineIframe{
+				Title:  "Console",
+				Height: 520,
+				Scope:  "both",
+				Src:    "/plugin-pages/demo",
+			},
+		},
+	}
+
+	presentation := svc.buildVirtualStockPresentation(inventory, item)
+	if len(presentation) == 0 {
+		t.Fatalf("expected presentation to be stored")
+	}
+	if !strings.Contains(string(presentation), "\"inline_iframe\"") {
+		t.Fatalf("expected inline iframe payload, got %s", presentation)
+	}
+
+	svc.cfg.Order.EnableVirtualStockInlineIframe = false
+	if blocked := svc.buildVirtualStockPresentation(inventory, item); len(blocked) != 0 {
+		t.Fatalf("expected global switch to suppress presentation, got %s", blocked)
+	}
+
+	svc.cfg.Order.EnableVirtualStockInlineIframe = true
+	inventory.AllowInlineIframe = false
+	if blocked := svc.buildVirtualStockPresentation(inventory, item); len(blocked) != 0 {
+		t.Fatalf("expected inventory switch to suppress presentation, got %s", blocked)
+	}
+}
+
+func TestGetStockByOrderNoHidesPresentationWhenInventoryDisablesIt(t *testing.T) {
+	svc, db := newVirtualInventoryServiceTestDB(t)
+
+	disabledInventory := &models.VirtualInventory{
+		Name:              "Disabled inline iframe",
+		Type:              models.VirtualInventoryTypeScript,
+		AllowInlineIframe: false,
+		IsActive:          true,
+	}
+	if err := db.Create(disabledInventory).Error; err != nil {
+		t.Fatalf("create disabled inventory: %v", err)
+	}
+	enabledInventory := &models.VirtualInventory{
+		Name:              "Enabled inline iframe",
+		Type:              models.VirtualInventoryTypeScript,
+		AllowInlineIframe: true,
+		IsActive:          true,
+	}
+	if err := db.Create(enabledInventory).Error; err != nil {
+		t.Fatalf("create enabled inventory: %v", err)
+	}
+
+	disabledPresentation := models.JSON(`{"inline_iframe":{"src":"/disabled"}}`)
+	enabledPresentation := models.JSON(`{"inline_iframe":{"src":"/enabled"}}`)
+	if err := db.Create(&models.VirtualProductStock{
+		VirtualInventoryID: disabledInventory.ID,
+		Content:            "CARD-1",
+		Status:             models.VirtualStockStatusSold,
+		OrderNo:            "ORDER-123",
+		Presentation:       disabledPresentation,
+	}).Error; err != nil {
+		t.Fatalf("create disabled stock: %v", err)
+	}
+	if err := db.Create(&models.VirtualProductStock{
+		VirtualInventoryID: enabledInventory.ID,
+		Content:            "CARD-2",
+		Status:             models.VirtualStockStatusSold,
+		OrderNo:            "ORDER-123",
+		Presentation:       enabledPresentation,
+	}).Error; err != nil {
+		t.Fatalf("create enabled stock: %v", err)
+	}
+
+	stocks, err := svc.GetStockByOrderNo("ORDER-123")
+	if err != nil {
+		t.Fatalf("get stock by order no: %v", err)
+	}
+	if len(stocks) != 2 {
+		t.Fatalf("expected 2 stocks, got %d", len(stocks))
+	}
+
+	for _, stock := range stocks {
+		switch stock.VirtualInventoryID {
+		case disabledInventory.ID:
+			if len(stock.Presentation) != 0 {
+				t.Fatalf("expected disabled inventory presentation to be removed, got %s", stock.Presentation)
+			}
+		case enabledInventory.ID:
+			if string(stock.Presentation) != string(enabledPresentation) {
+				t.Fatalf("expected enabled inventory presentation to remain, got %s", stock.Presentation)
+			}
+		default:
+			t.Fatalf("unexpected inventory id %d", stock.VirtualInventoryID)
+		}
 	}
 }

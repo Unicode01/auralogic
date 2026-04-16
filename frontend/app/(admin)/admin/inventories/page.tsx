@@ -21,6 +21,7 @@ import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
+import { Switch } from '@/components/ui/switch'
 import {
   Table,
   TableBody,
@@ -120,6 +121,7 @@ function InventoriesContent() {
     script_config: '',
     description: '',
     total_limit: 0,
+    allow_inline_iframe: false,
     is_active: true,
     notes: '',
   })
@@ -188,6 +190,7 @@ function InventoriesContent() {
         script_config: '',
         description: '',
         total_limit: 0,
+        allow_inline_iframe: false,
         is_active: true,
         notes: '',
       })
@@ -1016,6 +1019,7 @@ function InventoriesContent() {
               script_config: '',
               description: '',
               total_limit: 0,
+              allow_inline_iframe: false,
               is_active: true,
               notes: '',
             })
@@ -1107,22 +1111,41 @@ function InventoriesContent() {
             </div>
 
             {newVirtualInventory.type === 'script' && (
-              <div className="space-y-2">
-                <Label htmlFor="total_limit">{t.admin.scriptDeliveryLimit}</Label>
-                <p className="text-xs text-muted-foreground">{t.admin.scriptDeliveryLimitDesc}</p>
-                <Input
-                  id="total_limit"
-                  type="number"
-                  min={0}
-                  value={newVirtualInventory.total_limit}
-                  onChange={(e) =>
-                    setNewVirtualInventory({
-                      ...newVirtualInventory,
-                      total_limit: Math.max(0, parseInt(e.target.value) || 0),
-                    })
-                  }
-                  className="w-40"
-                />
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="total_limit">{t.admin.scriptDeliveryLimit}</Label>
+                  <p className="text-xs text-muted-foreground">{t.admin.scriptDeliveryLimitDesc}</p>
+                  <Input
+                    id="total_limit"
+                    type="number"
+                    min={0}
+                    value={newVirtualInventory.total_limit}
+                    onChange={(e) =>
+                      setNewVirtualInventory({
+                        ...newVirtualInventory,
+                        total_limit: Math.max(0, parseInt(e.target.value) || 0),
+                      })
+                    }
+                    className="w-40"
+                  />
+                </div>
+                <div className="flex items-center justify-between rounded-lg border border-border/70 bg-muted/20 px-3 py-2">
+                  <div className="pr-4">
+                    <Label>{t.admin.allowInlineIframe}</Label>
+                    <p className="text-xs text-muted-foreground">
+                      {t.admin.allowInlineIframeHint}
+                    </p>
+                  </div>
+                  <Switch
+                    checked={newVirtualInventory.allow_inline_iframe}
+                    onCheckedChange={(checked) =>
+                      setNewVirtualInventory({
+                        ...newVirtualInventory,
+                        allow_inline_iframe: checked,
+                      })
+                    }
+                  />
+                </div>
               </div>
             )}
 

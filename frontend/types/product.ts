@@ -95,11 +95,25 @@ export interface UpdateProductRequest extends Partial<CreateProductRequest> { }
 // Virtual Product Stock Types
 export type VirtualStockStatus = 'available' | 'sold' | 'reserved' | 'invalid'
 
+export interface VirtualStockInlineIframe {
+  title?: string
+  height?: number
+  scope?: 'user' | 'admin' | 'both' | string
+  button_label?: string
+  src?: string
+  html?: string
+}
+
+export interface VirtualStockPresentation {
+  inline_iframe?: VirtualStockInlineIframe
+}
+
 export interface VirtualProductStock {
   id: number
   virtual_inventory_id: number
   content: string
   remark?: string
+  presentation?: VirtualStockPresentation | null
   status: VirtualStockStatus
   order_id?: number
   order_no?: string

@@ -2938,6 +2938,8 @@ export const enTranslations = {
     scriptExampleBasic: 'Basic - Random Activation Codes',
     scriptExampleHttp: 'HTTP - External API Delivery',
     scriptExampleOrder: 'Order-Aware - Generate from Order Info',
+    scriptExampleInlineIframeSrc: 'Inline iframe - External Panel URL',
+    scriptExampleInlineIframeHtml: 'Inline iframe - Embedded HTML Panel',
     scriptExampleEmby: 'Emby - Register Account',
     scriptExampleInserted: 'Example script inserted',
     scriptPlaceholder:
@@ -3031,6 +3033,9 @@ export const enTranslations = {
     statusInvalid: 'Invalid',
     descriptionLabel: 'Description',
     activeStatusLabel: 'Active Status',
+    allowInlineIframe: 'Allow Inline iframe',
+    allowInlineIframeHint:
+      'Only applies to script-based virtual inventory. When enabled, the script can return presentation.inline_iframe to render a dedicated panel in the order detail page.',
     savingText: 'Saving...',
     stockItemList: 'Stock Item List',
     totalRecordsCount: '{count} records in total',
@@ -3736,6 +3741,9 @@ export const enTranslations = {
     showVirtualStockRemark: 'Show Virtual Stock Remark to Users',
     showVirtualStockRemarkHint:
       'When enabled, users can see the remark/notes of virtual product stock items on the order detail page',
+    enableVirtualStockInlineIframe: 'Enable Virtual Stock Inline iframe',
+    enableVirtualStockInlineIframeHint:
+      'Allow script-based virtual inventory to return inline panels on the order detail page. When disabled, these results are ignored silently.',
     stockLevelLow: 'Low',
     stockLevelMedium: 'Medium',
     stockLevelHigh: 'High',

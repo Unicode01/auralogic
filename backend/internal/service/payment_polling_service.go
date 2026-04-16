@@ -227,8 +227,20 @@ func (s *PaymentPollingService) AddToQueue(orderID, paymentMethodID uint) error 
 	}
 
 	s.mutex.Lock()
-	if _, exists := s.taskMap[orderID]; exists {
+	now := time.Now()
+	if task, exists := s.taskMap[orderID]; exists {
+		task.PaymentMethodID = paymentMethodID
+		task.AddedAt = now
+		task.NextCheckAt = now
+		task.CheckInterval = interval
+		task.RetryCount = 0
+		clonedTask := s.cloneTask(task)
+		if task.index >= 0 && task.index < len(s.taskHeap) {
+			heap.Fix(&s.taskHeap, task.index)
+		}
 		s.mutex.Unlock()
+		s.saveTaskToDB(clonedTask)
+		s.wakeup()
 		return nil
 	}
 
@@ -237,7 +249,6 @@ func (s *PaymentPollingService) AddToQueue(orderID, paymentMethodID uint) error 
 		return err
 	}
 
-	now := time.Now()
 	task := &PollingTask{
 		OrderID:         orderID,
 		UserID:          queueUserID,
