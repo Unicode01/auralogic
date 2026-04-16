@@ -617,6 +617,7 @@ export default function SettingsPage() {
   const [smsProvider, setSmsProvider] = useState('aliyun')
   const [invoiceEnabled, setInvoiceEnabled] = useState(false)
   const [showVirtualStockRemark, setShowVirtualStockRemark] = useState(false)
+  const [enableVirtualStockInlineIframe, setEnableVirtualStockInlineIframe] = useState(false)
   const [invoiceTemplateType, setInvoiceTemplateType] = useState('builtin')
   const [invoiceCustomTemplate, setInvoiceCustomTemplate] = useState('')
   const [pluginPlatformEnabled, setPluginPlatformEnabled] = useState(true)
@@ -1044,6 +1045,7 @@ export default function SettingsPage() {
     }
     if (settingsData?.order) {
       setShowVirtualStockRemark(!!settingsData.order.show_virtual_stock_remark)
+      setEnableVirtualStockInlineIframe(!!settingsData.order.enable_virtual_stock_inline_iframe)
     }
     if (settingsData?.plugin) {
       const allowedRuntimes =
@@ -4361,6 +4363,7 @@ export default function SettingsPage() {
                     virtual_script_timeout_max_ms:
                       parseInt(formData.get('virtual_script_timeout_max_ms') as string) || 10000,
                     show_virtual_stock_remark: showVirtualStockRemark,
+                    enable_virtual_stock_inline_iframe: enableVirtualStockInlineIframe,
                     high_concurrency_protection: {
                       enabled: formData.get('high_concurrency_enabled') === 'on',
                       mode: formData.get('high_concurrency_mode') || 'auto',
@@ -4686,6 +4689,18 @@ export default function SettingsPage() {
                     <Switch
                       checked={showVirtualStockRemark}
                       onCheckedChange={setShowVirtualStockRemark}
+                    />
+                  </div>
+                  <div className="mt-4 flex items-center justify-between">
+                    <div>
+                      <Label>{t.admin.enableVirtualStockInlineIframe}</Label>
+                      <p className="text-xs text-muted-foreground">
+                        {t.admin.enableVirtualStockInlineIframeHint}
+                      </p>
+                    </div>
+                    <Switch
+                      checked={enableVirtualStockInlineIframe}
+                      onCheckedChange={setEnableVirtualStockInlineIframe}
                     />
                   </div>
                 </div>

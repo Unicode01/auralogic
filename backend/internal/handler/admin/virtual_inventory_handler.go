@@ -71,6 +71,7 @@ func buildVirtualInventoryHookPayload(inventory *models.VirtualInventory) map[st
 		"script_config":        inventory.ScriptConfig,
 		"description":          inventory.Description,
 		"total_limit":          inventory.TotalLimit,
+		"allow_inline_iframe":  inventory.AllowInlineIframe,
 		"is_active":            inventory.IsActive,
 		"notes":                inventory.Notes,
 		"created_at":           inventory.CreatedAt,
@@ -121,6 +122,7 @@ func buildVirtualStockHookPayload(stock *models.VirtualProductStock) map[string]
 		"virtual_inventory_id": stock.VirtualInventoryID,
 		"content":              stock.Content,
 		"remark":               stock.Remark,
+		"presentation":         stock.Presentation,
 		"status":               stock.Status,
 		"order_id":             stock.OrderID,
 		"order_no":             stock.OrderNo,
@@ -162,15 +164,16 @@ func (h *VirtualInventoryHandler) ListVirtualInventories(c *gin.Context) {
 // CreateVirtualInventory 创建虚拟库存
 func (h *VirtualInventoryHandler) CreateVirtualInventory(c *gin.Context) {
 	var req struct {
-		Name         string `json:"name" binding:"required"`
-		SKU          string `json:"sku"`
-		Type         string `json:"type"`
-		Script       string `json:"script"`
-		ScriptConfig string `json:"script_config"`
-		Description  string `json:"description"`
-		TotalLimit   int64  `json:"total_limit"`
-		IsActive     bool   `json:"is_active"`
-		Notes        string `json:"notes"`
+		Name              string `json:"name" binding:"required"`
+		SKU               string `json:"sku"`
+		Type              string `json:"type"`
+		Script            string `json:"script"`
+		ScriptConfig      string `json:"script_config"`
+		Description       string `json:"description"`
+		TotalLimit        int64  `json:"total_limit"`
+		AllowInlineIframe bool   `json:"allow_inline_iframe"`
+		IsActive          bool   `json:"is_active"`
+		Notes             string `json:"notes"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -228,15 +231,16 @@ func (h *VirtualInventoryHandler) CreateVirtualInventory(c *gin.Context) {
 	}
 
 	inventory := &models.VirtualInventory{
-		Name:         req.Name,
-		SKU:          req.SKU,
-		Type:         invType,
-		Script:       req.Script,
-		ScriptConfig: req.ScriptConfig,
-		Description:  req.Description,
-		TotalLimit:   req.TotalLimit,
-		IsActive:     req.IsActive,
-		Notes:        req.Notes,
+		Name:              req.Name,
+		SKU:               req.SKU,
+		Type:              invType,
+		Script:            req.Script,
+		ScriptConfig:      req.ScriptConfig,
+		Description:       req.Description,
+		TotalLimit:        req.TotalLimit,
+		AllowInlineIframe: invType == models.VirtualInventoryTypeScript && req.AllowInlineIframe,
+		IsActive:          req.IsActive,
+		Notes:             req.Notes,
 	}
 
 	if err := h.service.CreateVirtualInventory(inventory); err != nil {
@@ -298,15 +302,16 @@ func (h *VirtualInventoryHandler) UpdateVirtualInventory(c *gin.Context) {
 	}
 
 	var req struct {
-		Name         string  `json:"name"`
-		SKU          string  `json:"sku"`
-		Type         string  `json:"type"`
-		Script       *string `json:"script"`
-		ScriptConfig *string `json:"script_config"`
-		Description  string  `json:"description"`
-		TotalLimit   *int64  `json:"total_limit"`
-		IsActive     *bool   `json:"is_active"`
-		Notes        string  `json:"notes"`
+		Name              string  `json:"name"`
+		SKU               string  `json:"sku"`
+		Type              string  `json:"type"`
+		Script            *string `json:"script"`
+		ScriptConfig      *string `json:"script_config"`
+		Description       string  `json:"description"`
+		TotalLimit        *int64  `json:"total_limit"`
+		AllowInlineIframe *bool   `json:"allow_inline_iframe"`
+		IsActive          *bool   `json:"is_active"`
+		Notes             string  `json:"notes"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -374,6 +379,13 @@ func (h *VirtualInventoryHandler) UpdateVirtualInventory(c *gin.Context) {
 		}
 		updates["type"] = req.Type
 	}
+	finalType := models.VirtualInventoryTypeStatic
+	if beforeInventory != nil {
+		finalType = beforeInventory.Type
+	}
+	if req.Type == "script" {
+		finalType = models.VirtualInventoryTypeScript
+	}
 	if req.Script != nil {
 		updates["script"] = *req.Script
 	}
@@ -388,6 +400,11 @@ func (h *VirtualInventoryHandler) UpdateVirtualInventory(c *gin.Context) {
 	}
 	if req.TotalLimit != nil {
 		updates["total_limit"] = *req.TotalLimit
+	}
+	if finalType != models.VirtualInventoryTypeScript {
+		updates["allow_inline_iframe"] = false
+	} else if req.AllowInlineIframe != nil {
+		updates["allow_inline_iframe"] = *req.AllowInlineIframe
 	}
 	if req.Notes != "" {
 		updates["notes"] = req.Notes
@@ -413,6 +430,7 @@ func (h *VirtualInventoryHandler) UpdateVirtualInventory(c *gin.Context) {
 				afterPayload["before_script_config"] = beforeInventory.ScriptConfig
 				afterPayload["before_description"] = beforeInventory.Description
 				afterPayload["before_total_limit"] = beforeInventory.TotalLimit
+				afterPayload["before_allow_inline_iframe"] = beforeInventory.AllowInlineIframe
 				afterPayload["before_is_active"] = beforeInventory.IsActive
 				afterPayload["before_notes"] = beforeInventory.Notes
 			}

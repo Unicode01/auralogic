@@ -2767,6 +2767,8 @@ export const zhTranslations = {
     scriptExampleBasic: '基础 - 生成随机激活码',
     scriptExampleHttp: 'HTTP - 调用外部API发货',
     scriptExampleOrder: '订单感知 - 根据订单信息生成',
+    scriptExampleInlineIframeSrc: '内联 iframe - 外部面板 URL',
+    scriptExampleInlineIframeHtml: '内联 iframe - 内嵌 HTML 面板',
     scriptExampleEmby: 'Emby - 注册账号',
     scriptExampleInserted: '已插入示例脚本',
     scriptPlaceholder:
@@ -2859,6 +2861,9 @@ export const zhTranslations = {
     statusInvalid: '已失效',
     descriptionLabel: '描述',
     activeStatusLabel: '启用状态',
+    allowInlineIframe: '允许返回内联 iframe',
+    allowInlineIframeHint:
+      '仅脚本型虚拟库存生效。开启后，脚本可返回 presentation.inline_iframe，在订单详情中显示专属面板。',
     savingText: '保存中...',
     stockItemList: '库存项列表',
     totalRecordsCount: '共 {count} 条记录',
@@ -3522,6 +3527,9 @@ export const zhTranslations = {
       '宿主允许的最大执行时长。脚本可在 script_config 中用 timeout_ms 请求更短或更长的超时，但最终不会超过这里。',
     showVirtualStockRemark: '向用户显示虚拟产品备注',
     showVirtualStockRemarkHint: '启用后，用户可以在订单详情页看到虚拟产品库存的备注信息',
+    enableVirtualStockInlineIframe: '启用虚拟库存内联 iframe',
+    enableVirtualStockInlineIframeHint:
+      '允许脚本型虚拟库存返回订单详情内联面板。关闭后会静默忽略这类返回值。',
     stockLevelLow: '库存紧张',
     stockLevelMedium: '库存适中',
     stockLevelHigh: '库存充足',

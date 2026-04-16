@@ -321,6 +321,7 @@ type OrderConfig struct {
 	MaxOrderItems                  int                                  `json:"max_order_items"`           // 单个订单最大商品项数，0表示使用默认值100
 	MaxItemQuantity                int                                  `json:"max_item_quantity"`         // 单个商品项最大数量，0表示使用默认值9999
 	ShowVirtualStockRemark         bool                                 `json:"show_virtual_stock_remark"` // 是否在用户侧显示虚拟产品备注
+	EnableVirtualStockInlineIframe bool                                 `json:"enable_virtual_stock_inline_iframe"`
 	StockDisplay                   StockDisplayConfig                   `json:"stock_display"`
 	VirtualDeliveryOrder           string                               `json:"virtual_delivery_order"`        // 虚拟库存发货顺序: random(随机), newest(先发新库存), oldest(先发老库存)
 	VirtualScriptTimeoutMaxMs      int                                  `json:"virtual_script_timeout_max_ms"` // 虚拟脚本发货允许的最大执行时长

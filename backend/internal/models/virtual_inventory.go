@@ -17,19 +17,20 @@ const (
 // VirtualInventory 虚拟库存表（存储卡密/激活码等虚拟商品的库存池）
 // 类似于实体库存 Inventory，可以独立创建，然后绑定到商品
 type VirtualInventory struct {
-	ID           uint                 `gorm:"primaryKey" json:"id"`
-	Name         string               `gorm:"type:varchar(255);not null" json:"name"`                 // 库存名称
-	SKU          string               `gorm:"type:varchar(100);index" json:"sku"`                     // SKU（可选）
-	Type         VirtualInventoryType `gorm:"type:varchar(20);not null;default:'static'" json:"type"` // 库存类型：static(静态卡密) / script(JS脚本)
-	Script       string               `gorm:"type:text" json:"script,omitempty"`                      // JS脚本内容（type=script时使用）
-	ScriptConfig string               `gorm:"type:text" json:"script_config,omitempty"`               // 脚本配置（JSON格式，传递给脚本的自定义参数）
-	Description  string               `gorm:"type:text" json:"description,omitempty"`                 // 描述
-	TotalLimit   int64                `gorm:"default:0" json:"total_limit"`                           // 脚本类型总发货次数限制（0=无限制）
-	IsActive     bool                 `gorm:"default:true" json:"is_active"`                          // 是否启用
-	Notes        string               `gorm:"type:text" json:"notes,omitempty"`                       // 备注
-	CreatedAt    time.Time            `json:"created_at"`
-	UpdatedAt    time.Time            `json:"updated_at"`
-	DeletedAt    gorm.DeletedAt       `gorm:"index" json:"-"`
+	ID                uint                 `gorm:"primaryKey" json:"id"`
+	Name              string               `gorm:"type:varchar(255);not null" json:"name"`                 // 库存名称
+	SKU               string               `gorm:"type:varchar(100);index" json:"sku"`                     // SKU（可选）
+	Type              VirtualInventoryType `gorm:"type:varchar(20);not null;default:'static'" json:"type"` // 库存类型：static(静态卡密) / script(JS脚本)
+	Script            string               `gorm:"type:text" json:"script,omitempty"`                      // JS脚本内容（type=script时使用）
+	ScriptConfig      string               `gorm:"type:text" json:"script_config,omitempty"`               // 脚本配置（JSON格式，传递给脚本的自定义参数）
+	Description       string               `gorm:"type:text" json:"description,omitempty"`                 // 描述
+	TotalLimit        int64                `gorm:"default:0" json:"total_limit"`                           // 脚本类型总发货次数限制（0=无限制）
+	AllowInlineIframe bool                 `gorm:"default:false" json:"allow_inline_iframe"`
+	IsActive          bool                 `gorm:"default:true" json:"is_active"`    // 是否启用
+	Notes             string               `gorm:"type:text" json:"notes,omitempty"` // 备注
+	CreatedAt         time.Time            `json:"created_at"`
+	UpdatedAt         time.Time            `json:"updated_at"`
+	DeletedAt         gorm.DeletedAt       `gorm:"index" json:"-"`
 
 	// 关联
 	Stocks          []VirtualProductStock            `gorm:"foreignKey:VirtualInventoryID" json:"stocks,omitempty"`
@@ -67,21 +68,22 @@ func (ProductVirtualInventoryBinding) TableName() string {
 
 // VirtualInventoryWithStats 虚拟库存及统计信息（用于前端展示）
 type VirtualInventoryWithStats struct {
-	ID           uint                 `json:"id"`
-	Name         string               `json:"name"`
-	SKU          string               `json:"sku"`
-	Type         VirtualInventoryType `json:"type"`
-	Script       string               `json:"script,omitempty"`
-	ScriptConfig string               `json:"script_config,omitempty"`
-	Description  string               `json:"description"`
-	TotalLimit   int64                `json:"total_limit"`
-	IsActive     bool                 `json:"is_active"`
-	Notes        string               `json:"notes"`
-	Total        int64                `json:"total"`
-	Available    int64                `json:"available"`
-	Reserved     int64                `json:"reserved"`
-	Sold         int64                `json:"sold"`
-	CreatedAt    time.Time            `json:"created_at"`
+	ID                uint                 `json:"id"`
+	Name              string               `json:"name"`
+	SKU               string               `json:"sku"`
+	Type              VirtualInventoryType `json:"type"`
+	Script            string               `json:"script,omitempty"`
+	ScriptConfig      string               `json:"script_config,omitempty"`
+	Description       string               `json:"description"`
+	TotalLimit        int64                `json:"total_limit"`
+	AllowInlineIframe bool                 `json:"allow_inline_iframe"`
+	IsActive          bool                 `json:"is_active"`
+	Notes             string               `json:"notes"`
+	Total             int64                `json:"total"`
+	Available         int64                `json:"available"`
+	Reserved          int64                `json:"reserved"`
+	Sold              int64                `json:"sold"`
+	CreatedAt         time.Time            `json:"created_at"`
 }
 
 // BindingWithVirtualInventoryInfo 绑定关系及虚拟库存详情（用于前端展示）

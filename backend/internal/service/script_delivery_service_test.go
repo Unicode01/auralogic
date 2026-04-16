@@ -213,3 +213,77 @@ func TestScriptDeliveryHTTPRequestHonorsExecutionDeadline(t *testing.T) {
 		t.Fatalf("expected deadline exceeded error, got %q", message)
 	}
 }
+
+func TestParseDeliveryResultNormalizesInlineIframePresentation(t *testing.T) {
+	svc := NewScriptDeliveryService(nil, &config.Config{})
+	vm := goja.New()
+
+	result, err := svc.parseDeliveryResult(vm.ToValue(map[string]interface{}{
+		"success": true,
+		"items": []interface{}{
+			map[string]interface{}{
+				"content": "ACCOUNT-READY",
+				"remark":  "Open the panel below",
+				"presentation": map[string]interface{}{
+					"inlineIframe": map[string]interface{}{
+						"title":       "Console",
+						"height":      "520",
+						"scope":       "user",
+						"buttonLabel": "Open Panel",
+						"src":         "/plugin-pages/demo?embedded=1",
+					},
+				},
+			},
+		},
+	}), 1)
+	if err != nil {
+		t.Fatalf("parse delivery result: %v", err)
+	}
+	if len(result.Items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(result.Items))
+	}
+
+	panel := result.Items[0].Presentation
+	if panel == nil || panel.InlineIframe == nil {
+		t.Fatalf("expected inline iframe presentation, got %#v", panel)
+	}
+	if panel.InlineIframe.Height != 520 {
+		t.Fatalf("expected height 520, got %d", panel.InlineIframe.Height)
+	}
+	if panel.InlineIframe.Scope != "user" {
+		t.Fatalf("expected scope user, got %q", panel.InlineIframe.Scope)
+	}
+	if panel.InlineIframe.ButtonLabel != "Open Panel" {
+		t.Fatalf("expected button label, got %q", panel.InlineIframe.ButtonLabel)
+	}
+}
+
+func TestParseDeliveryResultDropsDangerousInlineIframeSrc(t *testing.T) {
+	svc := NewScriptDeliveryService(nil, &config.Config{})
+	vm := goja.New()
+
+	result, err := svc.parseDeliveryResult(vm.ToValue(map[string]interface{}{
+		"success": true,
+		"items": []interface{}{
+			map[string]interface{}{
+				"content": "ACCOUNT-READY",
+				"presentation": map[string]interface{}{
+					"inline_iframe": map[string]interface{}{
+						"src":    "javascript:alert(1)",
+						"height": 100,
+						"scope":  "unknown",
+					},
+				},
+			},
+		},
+	}), 1)
+	if err != nil {
+		t.Fatalf("parse delivery result: %v", err)
+	}
+	if len(result.Items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(result.Items))
+	}
+	if result.Items[0].Presentation != nil {
+		t.Fatalf("expected dangerous inline iframe src to be ignored, got %#v", result.Items[0].Presentation)
+	}
+}

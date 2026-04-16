@@ -344,21 +344,22 @@ func (s *VirtualInventoryService) ListVirtualInventories(page, limit int, search
 			}
 		}
 		result = append(result, models.VirtualInventoryWithStats{
-			ID:           inv.ID,
-			Name:         inv.Name,
-			SKU:          inv.SKU,
-			Type:         inv.Type,
-			Script:       inv.Script,
-			ScriptConfig: inv.ScriptConfig,
-			Description:  inv.Description,
-			TotalLimit:   inv.TotalLimit,
-			IsActive:     inv.IsActive,
-			Notes:        inv.Notes,
-			Total:        stats["total"],
-			Available:    stats["available"],
-			Reserved:     stats["reserved"],
-			Sold:         stats["sold"],
-			CreatedAt:    inv.CreatedAt,
+			ID:                inv.ID,
+			Name:              inv.Name,
+			SKU:               inv.SKU,
+			Type:              inv.Type,
+			Script:            inv.Script,
+			ScriptConfig:      inv.ScriptConfig,
+			Description:       inv.Description,
+			TotalLimit:        inv.TotalLimit,
+			AllowInlineIframe: inv.AllowInlineIframe,
+			IsActive:          inv.IsActive,
+			Notes:             inv.Notes,
+			Total:             stats["total"],
+			Available:         stats["available"],
+			Reserved:          stats["reserved"],
+			Sold:              stats["sold"],
+			CreatedAt:         inv.CreatedAt,
 		})
 	}
 
@@ -662,21 +663,22 @@ func (s *VirtualInventoryService) GetVirtualInventoryWithStats(id uint) (*models
 	stats, _ := s.GetStockStats(id)
 
 	return &models.VirtualInventoryWithStats{
-		ID:           inventory.ID,
-		Name:         inventory.Name,
-		SKU:          inventory.SKU,
-		Type:         inventory.Type,
-		Script:       inventory.Script,
-		ScriptConfig: inventory.ScriptConfig,
-		Description:  inventory.Description,
-		TotalLimit:   inventory.TotalLimit,
-		IsActive:     inventory.IsActive,
-		Notes:        inventory.Notes,
-		Total:        stats["total"],
-		Available:    stats["available"],
-		Reserved:     stats["reserved"],
-		Sold:         stats["sold"],
-		CreatedAt:    inventory.CreatedAt,
+		ID:                inventory.ID,
+		Name:              inventory.Name,
+		SKU:               inventory.SKU,
+		Type:              inventory.Type,
+		Script:            inventory.Script,
+		ScriptConfig:      inventory.ScriptConfig,
+		Description:       inventory.Description,
+		TotalLimit:        inventory.TotalLimit,
+		AllowInlineIframe: inventory.AllowInlineIframe,
+		IsActive:          inventory.IsActive,
+		Notes:             inventory.Notes,
+		Total:             stats["total"],
+		Available:         stats["available"],
+		Reserved:          stats["reserved"],
+		Sold:              stats["sold"],
+		CreatedAt:         inventory.CreatedAt,
 	}, nil
 }
 
@@ -794,21 +796,22 @@ func (s *VirtualInventoryService) GetProductBindings(productID uint) ([]models.B
 		var invWithStats *models.VirtualInventoryWithStats
 		if binding.VirtualInventory != nil {
 			invWithStats = &models.VirtualInventoryWithStats{
-				ID:           binding.VirtualInventory.ID,
-				Name:         binding.VirtualInventory.Name,
-				SKU:          binding.VirtualInventory.SKU,
-				Type:         binding.VirtualInventory.Type,
-				Script:       binding.VirtualInventory.Script,
-				ScriptConfig: binding.VirtualInventory.ScriptConfig,
-				Description:  binding.VirtualInventory.Description,
-				TotalLimit:   binding.VirtualInventory.TotalLimit,
-				IsActive:     binding.VirtualInventory.IsActive,
-				Notes:        binding.VirtualInventory.Notes,
-				Total:        stats["total"],
-				Available:    stats["available"],
-				Reserved:     stats["reserved"],
-				Sold:         stats["sold"],
-				CreatedAt:    binding.VirtualInventory.CreatedAt,
+				ID:                binding.VirtualInventory.ID,
+				Name:              binding.VirtualInventory.Name,
+				SKU:               binding.VirtualInventory.SKU,
+				Type:              binding.VirtualInventory.Type,
+				Script:            binding.VirtualInventory.Script,
+				ScriptConfig:      binding.VirtualInventory.ScriptConfig,
+				Description:       binding.VirtualInventory.Description,
+				TotalLimit:        binding.VirtualInventory.TotalLimit,
+				AllowInlineIframe: binding.VirtualInventory.AllowInlineIframe,
+				IsActive:          binding.VirtualInventory.IsActive,
+				Notes:             binding.VirtualInventory.Notes,
+				Total:             stats["total"],
+				Available:         stats["available"],
+				Reserved:          stats["reserved"],
+				Sold:              stats["sold"],
+				CreatedAt:         binding.VirtualInventory.CreatedAt,
 			}
 		}
 
@@ -1704,6 +1707,9 @@ func (s *VirtualInventoryService) executeScriptDeliveryWithDB(db *gorm.DB, order
 					if result.Items[i].Remark != "" {
 						updates["remark"] = result.Items[i].Remark
 					}
+					if presentation := s.buildVirtualStockPresentation(&inventory, result.Items[i]); len(presentation) > 0 {
+						updates["presentation"] = presentation
+					}
 					if err := db.Model(&models.VirtualProductStock{}).
 						Where("id = ?", stock.ID).
 						Updates(updates).Error; err != nil {
@@ -1764,6 +1770,7 @@ func (s *VirtualInventoryService) executeScriptDeliveryWithDB(db *gorm.DB, order
 			stock := models.VirtualProductStock{
 				VirtualInventoryID: item.InventoryID,
 				Content:            result.Items[i].Content,
+				Presentation:       s.buildVirtualStockPresentation(&inventory, result.Items[i]),
 				Status:             models.VirtualStockStatusSold,
 				OrderNo:            orderNo,
 				OrderID:            &orderID,
@@ -1784,6 +1791,28 @@ func (s *VirtualInventoryService) executeScriptDeliveryWithDB(db *gorm.DB, order
 	}
 
 	return nil
+}
+
+func (s *VirtualInventoryService) buildVirtualStockPresentation(inventory *models.VirtualInventory, item ScriptDeliveryItem) models.JSON {
+	if inventory == nil || inventory.Type != models.VirtualInventoryTypeScript || !inventory.AllowInlineIframe {
+		return ""
+	}
+	if item.Presentation == nil || item.Presentation.InlineIframe == nil {
+		return ""
+	}
+	cfg := s.cfg
+	if cfg == nil {
+		cfg = config.GetConfig()
+	}
+	if cfg == nil || !cfg.Order.EnableVirtualStockInlineIframe {
+		return ""
+	}
+
+	payload, err := json.Marshal(item.Presentation)
+	if err != nil || len(payload) == 0 || string(payload) == "null" || string(payload) == "{}" {
+		return ""
+	}
+	return models.JSON(payload)
 }
 
 // ReleaseStock 释放预留库存（取消订单时）
@@ -1899,8 +1928,51 @@ func (s *VirtualInventoryService) GetStockByOrderID(orderID uint) ([]models.Virt
 // GetStockByOrderNo 根据订单号获取库存
 func (s *VirtualInventoryService) GetStockByOrderNo(orderNo string) ([]models.VirtualProductStock, error) {
 	var stocks []models.VirtualProductStock
-	err := s.db.Where("order_no = ?", orderNo).Find(&stocks).Error
-	return stocks, err
+	if err := s.db.Where("order_no = ?", orderNo).Find(&stocks).Error; err != nil {
+		return nil, err
+	}
+	if len(stocks) == 0 {
+		return stocks, nil
+	}
+
+	inventoryIDs := make([]uint, 0, len(stocks))
+	seenInventoryIDs := make(map[uint]struct{}, len(stocks))
+	for i := range stocks {
+		if len(stocks[i].Presentation) == 0 {
+			continue
+		}
+		if _, exists := seenInventoryIDs[stocks[i].VirtualInventoryID]; exists {
+			continue
+		}
+		seenInventoryIDs[stocks[i].VirtualInventoryID] = struct{}{}
+		inventoryIDs = append(inventoryIDs, stocks[i].VirtualInventoryID)
+	}
+	if len(inventoryIDs) == 0 {
+		return stocks, nil
+	}
+
+	var inventories []models.VirtualInventory
+	if err := s.db.Select("id, allow_inline_iframe").
+		Where("id IN ?", inventoryIDs).
+		Find(&inventories).Error; err != nil {
+		return nil, err
+	}
+
+	allowInlineIframeByInventory := make(map[uint]bool, len(inventories))
+	for _, inventory := range inventories {
+		allowInlineIframeByInventory[inventory.ID] = inventory.AllowInlineIframe
+	}
+
+	for i := range stocks {
+		if len(stocks[i].Presentation) == 0 {
+			continue
+		}
+		if !allowInlineIframeByInventory[stocks[i].VirtualInventoryID] {
+			stocks[i].Presentation = ""
+		}
+	}
+
+	return stocks, nil
 }
 
 // GetAvailableCountForProduct 获取商品可用库存数量（通过绑定关系）

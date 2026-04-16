@@ -663,6 +663,11 @@ func (h *OrderHandler) GetVirtualProducts(c *gin.Context) {
 			stocks[i].Remark = ""
 		}
 	}
+	if !h.cfg.Order.EnableVirtualStockInlineIframe {
+		for i := range stocks {
+			stocks[i].Presentation = ""
+		}
+	}
 
 	response.Success(c, gin.H{
 		"stocks": stocks,
