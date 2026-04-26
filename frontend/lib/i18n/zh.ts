@@ -4478,6 +4478,7 @@ export const zhTranslations = {
       'inventory.soldOut': '该规格已售罄',
       'inventory.stockInsufficient': '库存不足，当前可用数量：{available}',
       'inventory.purchaseBlocked': '当前库存无法购买',
+      'product.inventoryModeInvalid': '库存模式无效',
       'inventory.availableExceedsStock': '可售数量不能超过库存总量',
       'inventory.adjustedStockNegative': '调整后的库存不能为负数',
       'inventory.adjustedAvailableNegative': '调整后的可售数量不能为负数',

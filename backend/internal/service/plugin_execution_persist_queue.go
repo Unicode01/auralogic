@@ -27,7 +27,9 @@ func (s *PluginManagerService) startPluginExecutionPersistWorker(stopChan <-chan
 	s.executionPersistWorkerWG.Add(1)
 	go func(stopSignal <-chan struct{}, persistQueue <-chan *models.PluginExecution) {
 		defer s.executionPersistWorkerWG.Done()
-		s.pluginExecutionPersistLoop(stopSignal, persistQueue)
+		runBackgroundServiceWithStopChan("plugin_manager.pluginExecutionPersistLoop", stopSignal, func(stopChan <-chan struct{}) {
+			s.pluginExecutionPersistLoop(stopChan, persistQueue)
+		})
 	}(stopChan, queue)
 }
 

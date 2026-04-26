@@ -4742,6 +4742,7 @@ export const enTranslations = {
       'inventory.soldOut': 'This specification is sold out',
       'inventory.stockInsufficient': 'Insufficient stock, available quantity: {available}',
       'inventory.purchaseBlocked': 'Inventory purchase is blocked',
+      'product.inventoryModeInvalid': 'Inventory mode is invalid',
       'inventory.availableExceedsStock': 'Available quantity cannot exceed total stock',
       'inventory.adjustedStockNegative': 'Adjusted inventory cannot be negative',
       'inventory.adjustedAvailableNegative': 'Adjusted available quantity cannot be negative',
