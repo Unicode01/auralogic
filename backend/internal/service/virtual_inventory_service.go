@@ -119,6 +119,14 @@ func (s *VirtualInventoryService) getScriptPendingItemsWithDB(db *gorm.DB, order
 		return nil, err
 	}
 
+	return s.getScriptPendingItemsForLoadedOrderWithDB(db, &order)
+}
+
+func (s *VirtualInventoryService) getScriptPendingItemsForLoadedOrderWithDB(db *gorm.DB, order *models.Order) ([]scriptPendingItem, error) {
+	if order == nil {
+		return nil, nil
+	}
+
 	if len(order.VirtualInventoryBindings) == 0 {
 		return nil, nil
 	}
@@ -142,7 +150,7 @@ func (s *VirtualInventoryService) getScriptPendingItemsWithDB(db *gorm.DB, order
 		if err := db.Model(&models.VirtualProductStock{}).
 			Select("virtual_inventory_id, COUNT(*) as sold").
 			Where("order_no = ? AND status = ? AND virtual_inventory_id IN ?",
-				orderNo, models.VirtualStockStatusSold, inventoryIDs).
+				order.OrderNo, models.VirtualStockStatusSold, inventoryIDs).
 			Group("virtual_inventory_id").
 			Scan(&soldRows).Error; err != nil {
 			return nil, err
@@ -1483,16 +1491,30 @@ func (s *VirtualInventoryService) MarkScriptStockDeliveredWithoutExecution(order
 // CanAutoDeliver 检查订单的所有预留虚拟库存是否都属于自动发货商品
 // 如果存在任何非自动发货的预留库存，返回 false（不允许部分自动发货）
 func (s *VirtualInventoryService) CanAutoDeliver(orderNo string) (bool, error) {
+	var order models.Order
+	if err := s.db.Select("id, order_no, virtual_inventory_bindings, items").
+		Where("order_no = ?", orderNo).
+		First(&order).Error; err != nil {
+		return false, err
+	}
+	return s.canAutoDeliverLoadedOrderWithDB(s.db, &order)
+}
+
+func (s *VirtualInventoryService) canAutoDeliverLoadedOrderWithDB(db *gorm.DB, order *models.Order) (bool, error) {
+	if order == nil {
+		return false, nil
+	}
+
 	// 统计该订单所有预留的虚拟库存数量（旧流程）
 	var totalReserved int64
-	if err := s.db.Model(&models.VirtualProductStock{}).
-		Where("order_no = ? AND status = ?", orderNo, models.VirtualStockStatusReserved).
+	if err := db.Model(&models.VirtualProductStock{}).
+		Where("order_no = ? AND status = ?", order.OrderNo, models.VirtualStockStatusReserved).
 		Count(&totalReserved).Error; err != nil {
 		return false, err
 	}
 
 	// 统计新流程的脚本待发货数量
-	pendingItems, err := s.getScriptPendingItems(orderNo)
+	pendingItems, err := s.getScriptPendingItemsForLoadedOrderWithDB(db, order)
 	if err != nil {
 		return false, err
 	}
@@ -1507,7 +1529,7 @@ func (s *VirtualInventoryService) CanAutoDeliver(orderNo string) (bool, error) {
 	}
 
 	// 统计属于自动发货商品且库存已启用的预留库存数量（旧流程）
-	subQuery := s.db.Table("product_virtual_inventory_bindings pvib").
+	subQuery := db.Table("product_virtual_inventory_bindings pvib").
 		Select("pvib.virtual_inventory_id").
 		Joins("JOIN products p ON p.id = pvib.product_id").
 		Joins("JOIN virtual_inventories vi ON vi.id = pvib.virtual_inventory_id").
@@ -1515,9 +1537,9 @@ func (s *VirtualInventoryService) CanAutoDeliver(orderNo string) (bool, error) {
 
 	var autoDeliveryReserved int64
 	if totalReserved > 0 {
-		if err := s.db.Model(&models.VirtualProductStock{}).
+		if err := db.Model(&models.VirtualProductStock{}).
 			Where("order_no = ? AND status = ? AND virtual_inventory_id IN (?)",
-				orderNo, models.VirtualStockStatusReserved, subQuery).
+				order.OrderNo, models.VirtualStockStatusReserved, subQuery).
 			Count(&autoDeliveryReserved).Error; err != nil {
 			return false, err
 		}
@@ -1528,7 +1550,7 @@ func (s *VirtualInventoryService) CanAutoDeliver(orderNo string) (bool, error) {
 	if totalScriptPending > 0 {
 		// 查询所有 auto_delivery 且 is_active 的库存ID
 		var autoDeliveryInvIDs []uint
-		if err := s.db.Table("product_virtual_inventory_bindings pvib").
+		if err := db.Table("product_virtual_inventory_bindings pvib").
 			Select("DISTINCT pvib.virtual_inventory_id").
 			Joins("JOIN products p ON p.id = pvib.product_id").
 			Joins("JOIN virtual_inventories vi ON vi.id = pvib.virtual_inventory_id").
@@ -1721,7 +1743,7 @@ func (s *VirtualInventoryService) executeScriptDeliveryWithDB(db *gorm.DB, order
 	}
 
 	// === 新流程：处理 VirtualInventoryBindings（无占位记录） ===
-	pendingItems, err := s.getScriptPendingItemsWithDB(db, orderNo)
+	pendingItems, err := s.getScriptPendingItemsForLoadedOrderWithDB(db, &order)
 	if err != nil || len(pendingItems) == 0 {
 		return err
 	}

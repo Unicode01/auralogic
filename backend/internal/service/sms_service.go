@@ -308,6 +308,10 @@ func (s *SMSService) sendMarketingDirect(phone, phoneCode, message string, userI
 // ProcessDelayedSMS periodically moves ready items from the delayed set and sends them.
 // Skips items older than 10 minutes since verification codes expire by then.
 func (s *SMSService) ProcessDelayedSMS(ctx context.Context) {
+	runBackgroundServiceWithContext("sms.ProcessDelayedSMS", ctx, s.processDelayedSMSLoop)
+}
+
+func (s *SMSService) processDelayedSMSLoop(ctx context.Context) {
 	type delayedSMSPayload struct {
 		Phone     string `json:"phone"`
 		PhoneCode string `json:"phone_code"`

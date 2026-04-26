@@ -159,7 +159,7 @@ func finalizePendingPaymentOrderTx(tx *gorm.DB, order *models.Order, virtualSvc 
 
 	shouldAttemptAutoDelivery := false
 	if virtualSvc != nil && hasVirtualItems {
-		canAuto, err := virtualSvc.CanAutoDeliver(order.OrderNo)
+		canAuto, err := virtualSvc.canAutoDeliverLoadedOrderWithDB(tx, order)
 		if err != nil {
 			result.AutoDeliveryCheckErr = err
 			if options.StrictAutoDeliveryCheck {
@@ -176,9 +176,7 @@ func finalizePendingPaymentOrderTx(tx *gorm.DB, order *models.Order, virtualSvc 
 	}
 
 	if shouldAttemptAutoDelivery && virtualSvc != nil {
-		if err := tx.Transaction(func(deliveryTx *gorm.DB) error {
-			return virtualSvc.DeliverAutoDeliveryStockWithTx(deliveryTx, order.ID, order.OrderNo, nil)
-		}); err != nil {
+		if err := virtualSvc.DeliverAutoDeliveryStockWithTx(tx, order.ID, order.OrderNo, nil); err != nil {
 			result.VirtualDeliveryErr = err
 			if isVirtualOnly {
 				txUpdates["status"] = models.OrderStatusPending

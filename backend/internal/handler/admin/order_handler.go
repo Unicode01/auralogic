@@ -477,6 +477,7 @@ func (h *OrderHandler) GetOrder(c *gin.Context) {
 
 	// 获取该订单的虚拟产品库存（只有已付款后才返回）
 	var virtualStocks interface{}
+	hasPendingVirtualStock := false
 	if h.virtualInventoryService != nil && order.Status != models.OrderStatusPendingPayment && order.Status != models.OrderStatusDraft && order.Status != models.OrderStatusNeedResubmit {
 		stockList, err := h.virtualInventoryService.GetStockByOrderNo(order.OrderNo)
 		if err != nil {
@@ -489,6 +490,12 @@ func (h *OrderHandler) GetOrder(c *gin.Context) {
 				}
 			}
 			virtualStocks = stockList
+		}
+		if pending, err := h.virtualInventoryService.HasPendingVirtualStock(order.OrderNo); err != nil {
+			log.Printf("admin.get_order failed to check pending virtual stock: order_no=%s err=%v", order.OrderNo, err)
+			warnings = append(warnings, "Failed to check pending virtual stock")
+		} else {
+			hasPendingVirtualStock = pending
 		}
 	}
 
@@ -523,11 +530,12 @@ func (h *OrderHandler) GetOrder(c *gin.Context) {
 
 	// 返回订单信息和序列号
 	payload := gin.H{
-		"order":          order,
-		"serials":        serials,
-		"virtual_stocks": virtualStocks,
-		"payment_info":   paymentInfo,
-		"form_url":       h.buildShippingFormURL(order.FormToken),
+		"order":                     order,
+		"serials":                   serials,
+		"virtual_stocks":            virtualStocks,
+		"has_pending_virtual_stock": hasPendingVirtualStock,
+		"payment_info":              paymentInfo,
+		"form_url":                  h.buildShippingFormURL(order.FormToken),
 	}
 	if len(warnings) > 0 {
 		payload["warnings"] = warnings
