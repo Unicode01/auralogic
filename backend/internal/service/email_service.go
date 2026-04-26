@@ -129,11 +129,11 @@ func (s *EmailService) Start() {
 
 	go func() {
 		defer s.workerWG.Done()
-		s.processEmailQueueLoop(stopChan)
+		runBackgroundServiceWithStopChan("email.processEmailQueueLoop", stopChan, s.processEmailQueueLoop)
 	}()
 	go func() {
 		defer s.workerWG.Done()
-		s.processDelayedEmailsLoop(stopChan)
+		runBackgroundServiceWithStopChan("email.processDelayedEmailsLoop", stopChan, s.processDelayedEmailsLoop)
 	}()
 }
 
@@ -658,7 +658,7 @@ func (s *EmailService) queueEmail(to, subject, content, eventType string, orderI
 
 // ProcessDelayedEmails periodically moves ready items from the delayed set to the main queue.
 func (s *EmailService) ProcessDelayedEmails() {
-	s.processDelayedEmailsLoop(nil)
+	runBackgroundServiceWithStopChan("email.processDelayedEmailsLoop", nil, s.processDelayedEmailsLoop)
 }
 
 func (s *EmailService) processDelayedEmailsLoop(stopChan <-chan struct{}) {
@@ -711,7 +711,7 @@ func (s *EmailService) processDelayedEmailsLoop(stopChan <-chan struct{}) {
 
 // ProcessEmailQueue 处理邮件队列
 func (s *EmailService) ProcessEmailQueue() {
-	s.processEmailQueueLoop(nil)
+	runBackgroundServiceWithStopChan("email.processEmailQueueLoop", nil, s.processEmailQueueLoop)
 }
 
 func (s *EmailService) processEmailQueueLoop(stopChan <-chan struct{}) {

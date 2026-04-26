@@ -287,3 +287,33 @@ func TestParseDeliveryResultDropsDangerousInlineIframeSrc(t *testing.T) {
 		t.Fatalf("expected dangerous inline iframe src to be ignored, got %#v", result.Items[0].Presentation)
 	}
 }
+
+func TestExecuteDeliveryScriptRecoversFromHostPanic(t *testing.T) {
+	svc := NewScriptDeliveryService(nil, &config.Config{})
+
+	userID := uint(7)
+	inventory := &models.VirtualInventory{
+		ID:     99,
+		Script: "function onDeliver(order, config) { AuraLogic.order.getUser(); return { success: true, items: [{ content: 'OK' }] }; }",
+	}
+	order := &models.Order{
+		ID:          1,
+		OrderNo:     "ORDER-PANIC",
+		UserID:      &userID,
+		Status:      models.OrderStatusPendingPayment,
+		TotalAmount: 100,
+		Currency:    "USD",
+		CreatedAt:   time.Now().UTC(),
+	}
+
+	result, err := svc.ExecuteDeliveryScript(inventory, order, 1)
+	if err == nil {
+		t.Fatalf("expected panic to be converted into error")
+	}
+	if result != nil {
+		t.Fatalf("expected nil result on recovered panic, got %#v", result)
+	}
+	if !strings.Contains(err.Error(), "script delivery panic") {
+		t.Fatalf("expected recovered panic error, got %v", err)
+	}
+}
