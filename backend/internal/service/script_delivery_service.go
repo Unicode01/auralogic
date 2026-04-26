@@ -99,7 +99,14 @@ func (s *ScriptDeliveryService) ExecuteDeliveryScript(
 	inventory *models.VirtualInventory,
 	order *models.Order,
 	quantity int,
-) (*ScriptDeliveryResult, error) {
+) (result *ScriptDeliveryResult, err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			err = fmt.Errorf("script delivery panic: %v", recovered)
+			result = nil
+		}
+	}()
+
 	if inventory.Script == "" {
 		return nil, fmt.Errorf("inventory %d has no script", inventory.ID)
 	}
@@ -155,12 +162,12 @@ func (s *ScriptDeliveryService) ExecuteDeliveryScript(
 
 	// 准备参数
 	orderData := s.orderToJS(order, quantity)
-	result, err := fn(goja.Undefined(), vm.ToValue(orderData), vm.ToValue(configData))
+	resultValue, err := fn(goja.Undefined(), vm.ToValue(orderData), vm.ToValue(configData))
 	if err != nil {
 		return nil, fmt.Errorf("onDeliver execution error: %w", err)
 	}
 
-	return s.parseDeliveryResult(result, quantity)
+	return s.parseDeliveryResult(resultValue, quantity)
 }
 
 // registerAPIs 注册脚本API
