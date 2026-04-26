@@ -389,6 +389,9 @@ export default function AdminOrderDetailPage({ params }: { params: Promise<{ id:
   const order = data.data.order || data.data
   const serials = data.data.serials || []
   const virtualStocks = data.data.virtual_stocks || []
+  const hasPendingVirtualStock = Boolean(
+    data.data.has_pending_virtual_stock ?? data.data.hasPendingVirtualStock
+  )
   const paymentInfo = data.data.payment_info
   const orderNumber = order.orderNo || order.order_no
   const hasTracking = Boolean(order.trackingNo || order.tracking_no)
@@ -410,7 +413,9 @@ export default function AdminOrderDetailPage({ params }: { params: Promise<{ id:
   const canMarkPaid = order.status === 'pending_payment'
   const canUpdatePrice = canMarkPaid
   const canDeliverVirtual =
-    hasVirtualItems && (order.status === 'pending' || order.status === 'shipped')
+    hasVirtualItems &&
+    hasPendingVirtualStock &&
+    (order.status === 'pending' || order.status === 'shipped')
   const canEditShipping =
     (order.status === 'pending' || order.status === 'need_resubmit') && !isVirtualOnly
   const canRequestResubmit = order.status === 'pending' && !isVirtualOnly
